@@ -20,6 +20,65 @@ import { TwoMinuteTimer } from '../components/TwoMinuteTimer';
 import { isToday } from '../utils/dates';
 import type { MitCategory, TodoItem } from '../types';
 
+// Editable focus component
+function EditableFocus({ focus, onSetFocus }: { focus?: string; onSetFocus: (focus: string) => void }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [value, setValue] = useState(focus || '');
+
+  // Sync with prop changes
+  useEffect(() => {
+    setValue(focus || '');
+  }, [focus]);
+
+  const handleSave = () => {
+    setIsEditing(false);
+    if (value.trim() !== (focus || '')) {
+      onSetFocus(value.trim());
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleSave();
+    } else if (e.key === 'Escape') {
+      setValue(focus || '');
+      setIsEditing(false);
+    }
+  };
+
+  if (isEditing) {
+    return (
+      <div className="bg-accent/10 rounded border border-accent/30 p-4">
+        <div className="text-xs text-accent uppercase tracking-wide mb-1">today's focus</div>
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onBlur={handleSave}
+          onKeyDown={handleKeyDown}
+          placeholder="What's the ONE thing for today?"
+          className="w-full bg-transparent text-text font-medium outline-none placeholder:text-text-muted"
+          autoFocus
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="bg-accent/10 rounded border border-accent/30 p-4 cursor-pointer hover:bg-accent/15 transition-colors"
+      onClick={() => setIsEditing(true)}
+    >
+      <div className="text-xs text-accent uppercase tracking-wide mb-1">today's focus</div>
+      {focus ? (
+        <div className="text-text font-medium">{focus}</div>
+      ) : (
+        <div className="text-text-muted italic">click to set your focus...</div>
+      )}
+    </div>
+  );
+}
+
 interface TodayViewProps {
   selectedDate: string;
   onPrevious: () => void;
@@ -151,13 +210,11 @@ export function TodayView({ selectedDate, onPrevious, onNext, onDateSelect }: To
         onDateSelect={onDateSelect}
       />
 
-      {/* Daily focus - the ONE thing */}
-      {dayData.focus && (
-        <div className="bg-accent/10 rounded border border-accent/30 p-4">
-          <div className="text-xs text-accent uppercase tracking-wide mb-1">today's focus</div>
-          <div className="text-text font-medium">{dayData.focus}</div>
-        </div>
-      )}
+      {/* Daily focus - the ONE thing (editable) */}
+      <EditableFocus
+        focus={dayData.focus}
+        onSetFocus={(focus) => setFocus(selectedDate, focus)}
+      />
 
       {/* Daily inspiration */}
       <DailyInspiration selectedDate={selectedDate} />
