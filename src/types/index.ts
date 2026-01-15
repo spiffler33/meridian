@@ -25,6 +25,7 @@ export interface TodoItem {
   id: string;
   text: string;
   completed: boolean;
+  firstStep?: string; // Tiny first action to reduce activation energy
 }
 
 // MIT categories - the three pillars
@@ -40,6 +41,7 @@ export interface MitData {
 // All data for a single day
 export interface DailyData {
   date: string; // YYYY-MM-DD format
+  focus?: string; // The ONE thing for today
   mit: MitData;
   habits: Record<HabitId, boolean>;
   reflection: string;

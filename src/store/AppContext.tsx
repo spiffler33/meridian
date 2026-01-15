@@ -25,10 +25,12 @@ type Action =
   | { type: 'LOAD_STATE'; payload: AppState }
   | { type: 'SET_DAILY_DATA'; payload: { date: string; data: DailyData } }
   | { type: 'TOGGLE_HABIT'; payload: { date: string; habitId: HabitId } }
-  | { type: 'ADD_MIT'; payload: { date: string; category: MitCategory; text: string } }
+  | { type: 'ADD_MIT'; payload: { date: string; category: MitCategory; text: string; firstStep?: string } }
   | { type: 'UPDATE_MIT'; payload: { date: string; category: MitCategory; id: string; text: string } }
   | { type: 'DELETE_MIT'; payload: { date: string; category: MitCategory; id: string } }
   | { type: 'TOGGLE_MIT'; payload: { date: string; category: MitCategory; id: string } }
+  | { type: 'SET_MIT_FIRST_STEP'; payload: { date: string; category: MitCategory; id: string; firstStep: string } }
+  | { type: 'SET_FOCUS'; payload: { date: string; focus: string } }
   | { type: 'SET_REFLECTION'; payload: { date: string; reflection: string } }
   | { type: 'UPDATE_SETTINGS'; payload: Partial<AppSettings> }
   | { type: 'UPDATE_HABITS'; payload: HabitDefinition[] }
@@ -75,9 +77,9 @@ function appReducer(state: AppState, action: Action): AppState {
     }
 
     case 'ADD_MIT': {
-      const { date, category, text } = action.payload;
+      const { date, category, text, firstStep } = action.payload;
       const dayData = state.dailyData[date] || createEmptyDailyData(date);
-      const newItem: TodoItem = { id: generateId(), text, completed: false };
+      const newItem: TodoItem = { id: generateId(), text, completed: false, firstStep };
       return {
         ...state,
         dailyData: {
@@ -154,6 +156,42 @@ function appReducer(state: AppState, action: Action): AppState {
       };
     }
 
+    case 'SET_MIT_FIRST_STEP': {
+      const { date, category, id, firstStep } = action.payload;
+      const dayData = state.dailyData[date];
+      if (!dayData) return state;
+      return {
+        ...state,
+        dailyData: {
+          ...state.dailyData,
+          [date]: {
+            ...dayData,
+            mit: {
+              ...dayData.mit,
+              [category]: dayData.mit[category].map(item =>
+                item.id === id ? { ...item, firstStep } : item
+              ),
+            },
+          },
+        },
+      };
+    }
+
+    case 'SET_FOCUS': {
+      const { date, focus } = action.payload;
+      const dayData = state.dailyData[date] || createEmptyDailyData(date);
+      return {
+        ...state,
+        dailyData: {
+          ...state.dailyData,
+          [date]: {
+            ...dayData,
+            focus,
+          },
+        },
+      };
+    }
+
     case 'SET_REFLECTION': {
       const { date, reflection } = action.payload;
       const dayData = state.dailyData[date] || createEmptyDailyData(date);
@@ -216,10 +254,12 @@ interface AppContextType {
   // Daily data helpers
   getDailyData: (date: string) => DailyData;
   toggleHabit: (date: string, habitId: HabitId) => void;
-  addMit: (date: string, category: MitCategory, text: string) => void;
+  addMit: (date: string, category: MitCategory, text: string, firstStep?: string) => void;
   updateMit: (date: string, category: MitCategory, id: string, text: string) => void;
   deleteMit: (date: string, category: MitCategory, id: string) => void;
   toggleMit: (date: string, category: MitCategory, id: string) => void;
+  setMitFirstStep: (date: string, category: MitCategory, id: string, firstStep: string) => void;
+  setFocus: (date: string, focus: string) => void;
   setReflection: (date: string, reflection: string) => void;
   // Settings helpers
   updateSettings: (settings: Partial<AppSettings>) => void;
@@ -308,10 +348,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     state,
     getDailyData,
     toggleHabit: (date, habitId) => dispatch({ type: 'TOGGLE_HABIT', payload: { date, habitId } }),
-    addMit: (date, category, text) => dispatch({ type: 'ADD_MIT', payload: { date, category, text } }),
+    addMit: (date, category, text, firstStep) => dispatch({ type: 'ADD_MIT', payload: { date, category, text, firstStep } }),
     updateMit: (date, category, id, text) => dispatch({ type: 'UPDATE_MIT', payload: { date, category, id, text } }),
     deleteMit: (date, category, id) => dispatch({ type: 'DELETE_MIT', payload: { date, category, id } }),
     toggleMit: (date, category, id) => dispatch({ type: 'TOGGLE_MIT', payload: { date, category, id } }),
+    setMitFirstStep: (date, category, id, firstStep) => dispatch({ type: 'SET_MIT_FIRST_STEP', payload: { date, category, id, firstStep } }),
+    setFocus: (date, focus) => dispatch({ type: 'SET_FOCUS', payload: { date, focus } }),
     setReflection: (date, reflection) => dispatch({ type: 'SET_REFLECTION', payload: { date, reflection } }),
     updateSettings: settings => dispatch({ type: 'UPDATE_SETTINGS', payload: settings }),
     updateHabits: habits => dispatch({ type: 'UPDATE_HABITS', payload: habits }),
