@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Life Calendar - Design System
+ *
+ * Color palette inspired by Notion meets Hermes:
+ * - Mostly neutral, warm grays
+ * - One accent color (warm amber/gold) for highlights
+ * - Soft, calming feel
+ *
+ * Colors are defined in tailwind.config.js
+ */
+
+/* Base styles */
+html {
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  @apply bg-surface-50 text-surface-800 min-h-screen;
+}
+
+/* Focus styles for accessibility */
+*:focus-visible {
+  @apply outline-2 outline-offset-2 outline-accent-500;
+}
+
+/* Smooth transitions for interactive elements */
+button, input, textarea, [role="button"] {
+  @apply transition-colors duration-150;
+}
+
+/* Custom checkbox styling */
+input[type="checkbox"] {
+  @apply w-4 h-4 rounded border-surface-300 text-accent-600;
+}
+
+input[type="checkbox"]:focus {
+  @apply ring-accent-500;
+}
+
+/* Scrollbar styling (optional, for WebKit browsers) */
+::-webkit-scrollbar {
+  @apply w-2;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-surface-100;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-surface-300 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-surface-400;
+}
