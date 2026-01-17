@@ -43,6 +43,17 @@ function parseHash(): NavigationState {
 }
 
 function updateHash(state: NavigationState): void {
+  const today = getToday();
+  const currentYear = new Date().getFullYear();
+
+  // If on today view with today's date, use clean URL (no hash)
+  if (state.view === 'today' && state.selectedDate === today && state.selectedYear === currentYear) {
+    if (window.location.hash) {
+      history.replaceState(null, '', window.location.pathname);
+    }
+    return;
+  }
+
   const params = new URLSearchParams();
   params.set('view', state.view);
   params.set('date', state.selectedDate);
