@@ -367,10 +367,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           });
         }
 
-        // Load data for last 90 days
+        // Load data for last 14 days (UI needs ~1-2 weeks, AI fetches its own data on-demand)
         const todayStr = getToday(); // Local date
         const startDateObj = new Date();
-        startDateObj.setDate(startDateObj.getDate() - 90);
+        startDateObj.setDate(startDateObj.getDate() - 14);
         const startDateStr = `${startDateObj.getFullYear()}-${String(startDateObj.getMonth() + 1).padStart(2, '0')}-${String(startDateObj.getDate()).padStart(2, '0')}`;
 
         // Load completions, daily entries, and tasks in parallel
