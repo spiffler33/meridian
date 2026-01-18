@@ -4,7 +4,7 @@
  * Heatmap of habit completion. Terminal-style stats.
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../store/AppContext';
 import { useAuth } from '../store/AuthContext';
 import { getYearCalendarGrid, formatShortDate, getMonthAbbr, isToday, isFuture, parseDate } from '../utils/dates';
@@ -63,6 +63,11 @@ export function YearView({ selectedYear, onYearChange, onDateSelect }: YearViewP
 
   const habits = state.settings.habits;
   const weekStartsOn = state.settings.weekStartsOn;
+
+  // Update themeInput when year changes or themes load from Supabase
+  useEffect(() => {
+    setThemeInput(getYearTheme(selectedYear));
+  }, [selectedYear, getYearTheme]);
 
   const calendarGrid = useMemo(
     () => getYearCalendarGrid(selectedYear, weekStartsOn),
