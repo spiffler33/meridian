@@ -12,6 +12,7 @@ import type { HabitDefinition, HabitCategory } from '../types';
 import { DEFAULT_HABITS } from '../types';
 import { saveApiKey, loadApiKey, clearApiKey } from '../services/claude';
 import type { AiTone } from '../services/claude';
+import { createHabit, updateHabit as updateHabitInDb, deleteHabit as deleteHabitInDb } from '../services/data';
 
 interface HabitEditorProps {
   habit: HabitDefinition;
@@ -167,28 +168,55 @@ export function SettingsView() {
     }
   };
 
-  const handleAddHabit = () => {
+  const handleAddHabit = async () => {
     if (!newHabitLabel.trim()) return;
-    const habit: HabitDefinition = {
-      id: Date.now().toString(36) + Math.random().toString(36).substr(2, 9),
-      label: newHabitLabel.trim(),
-      description: '',
-      emoji: '',
-      category: 'health',
-    };
-    updateHabits([...state.settings.habits, habit]);
-    setNewHabitLabel('');
-    setAddingHabit(false);
+    try {
+      const newHabit = await createHabit({
+        label: newHabitLabel.trim(),
+        description: '',
+        category: 'health',
+        emoji: '',
+      });
+      // Convert to HabitDefinition format and update local state
+      const habitDef: HabitDefinition = {
+        id: newHabit.id,
+        label: newHabit.label,
+        description: newHabit.description || undefined,
+        category: newHabit.category as HabitDefinition['category'],
+        emoji: newHabit.emoji || undefined,
+      };
+      updateHabits([...state.settings.habits, habitDef]);
+      setNewHabitLabel('');
+      setAddingHabit(false);
+    } catch (err) {
+      console.error('Failed to create habit:', err);
+    }
   };
 
-  const handleUpdateHabit = (index: number, habit: HabitDefinition) => {
-    const newHabits = [...state.settings.habits];
-    newHabits[index] = habit;
-    updateHabits(newHabits);
+  const handleUpdateHabit = async (index: number, habit: HabitDefinition) => {
+    try {
+      await updateHabitInDb(habit.id, {
+        label: habit.label,
+        description: habit.description || null,
+        category: habit.category,
+        emoji: habit.emoji || null,
+      });
+      const newHabits = [...state.settings.habits];
+      newHabits[index] = habit;
+      updateHabits(newHabits);
+    } catch (err) {
+      console.error('Failed to update habit:', err);
+    }
   };
 
-  const handleDeleteHabit = (index: number) => {
-    updateHabits(state.settings.habits.filter((_, i) => i !== index));
+  const handleDeleteHabit = async (index: number) => {
+    const habit = state.settings.habits[index];
+    try {
+      await deleteHabitInDb(habit.id);
+      updateHabits(state.settings.habits.filter((_, i) => i !== index));
+    } catch (err) {
+      console.error('Failed to delete habit:', err);
+    }
   };
 
   return (
