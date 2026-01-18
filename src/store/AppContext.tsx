@@ -29,27 +29,36 @@ function createEmptyState(): AppState {
   };
 }
 import { addDays, getToday } from '../utils/dates';
-import { toggleCompletion, getCompletions, getHabits } from '../services/data';
+import {
+  toggleCompletion,
+  getCompletions,
+  getHabits,
+  upsertDailyEntry,
+  getDailyDataRange,
+  createTask,
+  updateTask,
+  deleteTask,
+  getAllYearThemes,
+  setYearTheme as setYearThemeInDb,
+} from '../services/data';
 
 // Action types for the reducer
 type Action =
   | { type: 'SET_HABITS'; payload: HabitDefinition[] }
   | { type: 'SET_COMPLETIONS'; payload: Record<string, Record<string, boolean>> }
+  | { type: 'SET_DAILY_ENTRIES'; payload: Record<string, { focus?: string; reflection?: string }> }
+  | { type: 'SET_TASKS'; payload: { date: string; category: MitCategory; tasks: TodoItem[] }[] }
+  | { type: 'SET_YEAR_THEMES'; payload: { year: number; theme: string }[] }
   | { type: 'TOGGLE_HABIT'; payload: { date: string; habitId: HabitId } }
-  | { type: 'ADD_MIT'; payload: { date: string; category: MitCategory; text: string; firstStep?: string } }
+  | { type: 'ADD_MIT'; payload: { date: string; category: MitCategory; item: TodoItem } }
   | { type: 'UPDATE_MIT'; payload: { date: string; category: MitCategory; id: string; text: string } }
   | { type: 'DELETE_MIT'; payload: { date: string; category: MitCategory; id: string } }
-  | { type: 'TOGGLE_MIT'; payload: { date: string; category: MitCategory; id: string } }
+  | { type: 'TOGGLE_MIT'; payload: { date: string; category: MitCategory; id: string; completed: boolean } }
   | { type: 'SET_MIT_FIRST_STEP'; payload: { date: string; category: MitCategory; id: string; firstStep: string } }
   | { type: 'SET_FOCUS'; payload: { date: string; focus: string } }
   | { type: 'SET_REFLECTION'; payload: { date: string; reflection: string } }
   | { type: 'UPDATE_SETTINGS'; payload: Partial<AppSettings> }
   | { type: 'SET_YEAR_THEME'; payload: { year: number; theme: string } };
-
-// Generate a simple unique ID
-function generateId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
-}
 
 // Reducer function
 function appReducer(state: AppState, action: Action): AppState {
@@ -78,6 +87,49 @@ function appReducer(state: AppState, action: Action): AppState {
       };
     }
 
+    case 'SET_DAILY_ENTRIES': {
+      const newDailyData = { ...state.dailyData };
+      for (const [date, entry] of Object.entries(action.payload)) {
+        newDailyData[date] = {
+          ...(newDailyData[date] || createEmptyDailyData(date)),
+          focus: entry.focus || '',
+          reflection: entry.reflection || '',
+        };
+      }
+      return {
+        ...state,
+        dailyData: newDailyData,
+      };
+    }
+
+    case 'SET_TASKS': {
+      const newDailyData = { ...state.dailyData };
+      for (const { date, category, tasks } of action.payload) {
+        const dayData = newDailyData[date] || createEmptyDailyData(date);
+        newDailyData[date] = {
+          ...dayData,
+          mit: {
+            ...dayData.mit,
+            [category]: tasks,
+          },
+        };
+      }
+      return {
+        ...state,
+        dailyData: newDailyData,
+      };
+    }
+
+    case 'SET_YEAR_THEMES': {
+      return {
+        ...state,
+        settings: {
+          ...state.settings,
+          yearThemes: action.payload,
+        },
+      };
+    }
+
     case 'TOGGLE_HABIT': {
       const { date, habitId } = action.payload;
       const dayData = state.dailyData[date] || createEmptyDailyData(date);
@@ -97,9 +149,8 @@ function appReducer(state: AppState, action: Action): AppState {
     }
 
     case 'ADD_MIT': {
-      const { date, category, text, firstStep } = action.payload;
+      const { date, category, item } = action.payload;
       const dayData = state.dailyData[date] || createEmptyDailyData(date);
-      const newItem: TodoItem = { id: generateId(), text, completed: false, firstStep };
       return {
         ...state,
         dailyData: {
@@ -108,7 +159,7 @@ function appReducer(state: AppState, action: Action): AppState {
             ...dayData,
             mit: {
               ...dayData.mit,
-              [category]: [...dayData.mit[category], newItem],
+              [category]: [...dayData.mit[category], item],
             },
           },
         },
@@ -156,7 +207,7 @@ function appReducer(state: AppState, action: Action): AppState {
     }
 
     case 'TOGGLE_MIT': {
-      const { date, category, id } = action.payload;
+      const { date, category, id, completed } = action.payload;
       const dayData = state.dailyData[date];
       if (!dayData) return state;
       return {
@@ -168,7 +219,7 @@ function appReducer(state: AppState, action: Action): AppState {
             mit: {
               ...dayData.mit,
               [category]: dayData.mit[category].map(item =>
-                item.id === id ? { ...item, completed: !item.completed } : item
+                item.id === id ? { ...item, completed } : item
               ),
             },
           },
@@ -307,15 +358,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           dispatch({ type: 'SET_HABITS', payload: DEFAULT_HABITS });
         }
 
-        // Load completions for last 90 days
+        // Load year themes
+        const yearThemes = await getAllYearThemes();
+        if (yearThemes.length > 0) {
+          dispatch({
+            type: 'SET_YEAR_THEMES',
+            payload: yearThemes.map(t => ({ year: t.year, theme: t.theme })),
+          });
+        }
+
+        // Load data for last 90 days
         const todayStr = getToday(); // Local date
         const startDateObj = new Date();
         startDateObj.setDate(startDateObj.getDate() - 90);
         const startDateStr = `${startDateObj.getFullYear()}-${String(startDateObj.getMonth() + 1).padStart(2, '0')}-${String(startDateObj.getDate()).padStart(2, '0')}`;
 
-        const completions = await getCompletions(startDateStr, todayStr);
+        // Load completions, daily entries, and tasks in parallel
+        const [completions, dailyData] = await Promise.all([
+          getCompletions(startDateStr, todayStr),
+          getDailyDataRange(startDateStr, todayStr),
+        ]);
 
-        // Convert to date -> habitId -> true map
+        // Convert completions to date -> habitId -> true map
         const completionMap: Record<string, Record<string, boolean>> = {};
         for (const c of completions) {
           if (!completionMap[c.date]) {
@@ -326,6 +390,50 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
         if (Object.keys(completionMap).length > 0) {
           dispatch({ type: 'SET_COMPLETIONS', payload: completionMap });
+        }
+
+        // Convert daily entries to date -> { focus, reflection } map
+        const entriesMap: Record<string, { focus?: string; reflection?: string }> = {};
+        for (const entry of dailyData.entries) {
+          entriesMap[entry.date] = {
+            focus: entry.focus || undefined,
+            reflection: entry.reflection || undefined,
+          };
+        }
+
+        if (Object.keys(entriesMap).length > 0) {
+          dispatch({ type: 'SET_DAILY_ENTRIES', payload: entriesMap });
+        }
+
+        // Convert tasks to grouped format
+        const taskGroups: { date: string; category: MitCategory; tasks: TodoItem[] }[] = [];
+        const tasksByDateCategory: Record<string, Record<string, TodoItem[]>> = {};
+
+        for (const task of dailyData.tasks) {
+          const date = task.date;
+          const category = task.category as MitCategory;
+          if (!tasksByDateCategory[date]) {
+            tasksByDateCategory[date] = {};
+          }
+          if (!tasksByDateCategory[date][category]) {
+            tasksByDateCategory[date][category] = [];
+          }
+          tasksByDateCategory[date][category].push({
+            id: task.id,
+            text: task.text,
+            completed: task.completed,
+            firstStep: task.first_step || undefined,
+          });
+        }
+
+        for (const [date, categories] of Object.entries(tasksByDateCategory)) {
+          for (const [category, tasks] of Object.entries(categories)) {
+            taskGroups.push({ date, category: category as MitCategory, tasks });
+          }
+        }
+
+        if (taskGroups.length > 0) {
+          dispatch({ type: 'SET_TASKS', payload: taskGroups });
         }
       } catch (err) {
         console.error('Failed to load from Supabase:', err);
@@ -414,21 +522,155 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [state.dailyData]
   );
 
+  // Add MIT with Supabase sync
+  const addMit = useCallback(
+    async (date: string, category: MitCategory, text: string, firstStep?: string) => {
+      try {
+        const task = await createTask({ date, category, text, firstStep });
+        const item: TodoItem = {
+          id: task.id,
+          text: task.text,
+          completed: task.completed,
+          firstStep: task.first_step || undefined,
+        };
+        dispatch({ type: 'ADD_MIT', payload: { date, category, item } });
+      } catch (err) {
+        console.error('Failed to create task:', err);
+      }
+    },
+    []
+  );
+
+  // Update MIT with Supabase sync
+  const updateMit = useCallback(
+    async (date: string, category: MitCategory, id: string, text: string) => {
+      // Update local state immediately
+      dispatch({ type: 'UPDATE_MIT', payload: { date, category, id, text } });
+
+      try {
+        await updateTask(id, { text });
+      } catch (err) {
+        console.error('Failed to update task:', err);
+      }
+    },
+    []
+  );
+
+  // Delete MIT with Supabase sync
+  const deleteMit = useCallback(
+    async (date: string, category: MitCategory, id: string) => {
+      // Update local state immediately
+      dispatch({ type: 'DELETE_MIT', payload: { date, category, id } });
+
+      try {
+        await deleteTask(id);
+      } catch (err) {
+        console.error('Failed to delete task:', err);
+      }
+    },
+    []
+  );
+
+  // Toggle MIT with Supabase sync
+  const toggleMit = useCallback(
+    async (date: string, category: MitCategory, id: string) => {
+      const dayData = state.dailyData[date];
+      if (!dayData) return;
+
+      const task = dayData.mit[category].find(t => t.id === id);
+      if (!task) return;
+
+      const newCompleted = !task.completed;
+
+      // Update local state immediately
+      dispatch({ type: 'TOGGLE_MIT', payload: { date, category, id, completed: newCompleted } });
+
+      try {
+        await updateTask(id, { completed: newCompleted });
+      } catch (err) {
+        console.error('Failed to toggle task:', err);
+        // Revert on error
+        dispatch({ type: 'TOGGLE_MIT', payload: { date, category, id, completed: task.completed } });
+      }
+    },
+    [state.dailyData]
+  );
+
+  // Set MIT first step with Supabase sync
+  const setMitFirstStep = useCallback(
+    async (date: string, category: MitCategory, id: string, firstStep: string) => {
+      // Update local state immediately
+      dispatch({ type: 'SET_MIT_FIRST_STEP', payload: { date, category, id, firstStep } });
+
+      try {
+        await updateTask(id, { first_step: firstStep });
+      } catch (err) {
+        console.error('Failed to update task first step:', err);
+      }
+    },
+    []
+  );
+
+  // Set focus with Supabase sync
+  const setFocus = useCallback(
+    async (date: string, focus: string) => {
+      // Update local state immediately
+      dispatch({ type: 'SET_FOCUS', payload: { date, focus } });
+
+      try {
+        await upsertDailyEntry(date, { focus });
+      } catch (err) {
+        console.error('Failed to save focus:', err);
+      }
+    },
+    []
+  );
+
+  // Set reflection with Supabase sync
+  const setReflection = useCallback(
+    async (date: string, reflection: string) => {
+      // Update local state immediately
+      dispatch({ type: 'SET_REFLECTION', payload: { date, reflection } });
+
+      try {
+        await upsertDailyEntry(date, { reflection });
+      } catch (err) {
+        console.error('Failed to save reflection:', err);
+      }
+    },
+    []
+  );
+
+  // Set year theme with Supabase sync
+  const setYearTheme = useCallback(
+    async (year: number, theme: string) => {
+      // Update local state immediately
+      dispatch({ type: 'SET_YEAR_THEME', payload: { year, theme } });
+
+      try {
+        await setYearThemeInDb(year, theme);
+      } catch (err) {
+        console.error('Failed to save year theme:', err);
+      }
+    },
+    []
+  );
+
   const value: AppContextType = {
     state,
     loading,
     getDailyData,
     toggleHabit,
-    addMit: (date, category, text, firstStep) => dispatch({ type: 'ADD_MIT', payload: { date, category, text, firstStep } }),
-    updateMit: (date, category, id, text) => dispatch({ type: 'UPDATE_MIT', payload: { date, category, id, text } }),
-    deleteMit: (date, category, id) => dispatch({ type: 'DELETE_MIT', payload: { date, category, id } }),
-    toggleMit: (date, category, id) => dispatch({ type: 'TOGGLE_MIT', payload: { date, category, id } }),
-    setMitFirstStep: (date, category, id, firstStep) => dispatch({ type: 'SET_MIT_FIRST_STEP', payload: { date, category, id, firstStep } }),
-    setFocus: (date, focus) => dispatch({ type: 'SET_FOCUS', payload: { date, focus } }),
-    setReflection: (date, reflection) => dispatch({ type: 'SET_REFLECTION', payload: { date, reflection } }),
+    addMit,
+    updateMit,
+    deleteMit,
+    toggleMit,
+    setMitFirstStep,
+    setFocus,
+    setReflection,
     updateSettings: settings => dispatch({ type: 'UPDATE_SETTINGS', payload: settings }),
     updateHabits: habits => dispatch({ type: 'SET_HABITS', payload: habits }),
-    setYearTheme: (year, theme) => dispatch({ type: 'SET_YEAR_THEME', payload: { year, theme } }),
+    setYearTheme,
     getYearTheme,
     getHabitCount,
     getHabitStreak,
