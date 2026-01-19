@@ -26,7 +26,7 @@ interface UseNavigationReturn extends NavigationState {
   goToNextWeek: () => void;
 }
 
-const VALID_VIEWS: ViewType[] = ['today', 'week', 'year', 'settings'];
+const VALID_VIEWS: ViewType[] = ['tower', 'habits', 'week', 'year', 'settings'];
 
 function parseHash(): NavigationState {
   const hash = window.location.hash.slice(1);
@@ -35,7 +35,7 @@ function parseHash(): NavigationState {
   const rawView = params.get('view');
   const view: ViewType = rawView && VALID_VIEWS.includes(rawView as ViewType)
     ? (rawView as ViewType)
-    : 'today';
+    : 'tower';
   const date = params.get('date') || getToday();
   const year = parseInt(params.get('year') || '') || new Date().getFullYear();
 
@@ -46,8 +46,8 @@ function updateHash(state: NavigationState): void {
   const today = getToday();
   const currentYear = new Date().getFullYear();
 
-  // If on today view with today's date, use clean URL (no hash)
-  if (state.view === 'today' && state.selectedDate === today && state.selectedYear === currentYear) {
+  // If on tower view with today's date, use clean URL (no hash)
+  if (state.view === 'tower' && state.selectedDate === today && state.selectedYear === currentYear) {
     if (window.location.hash) {
       history.replaceState(null, '', window.location.pathname);
     }
@@ -93,7 +93,7 @@ export function useNavigation(): UseNavigationReturn {
   const goToToday = useCallback(() => {
     setState(prev => ({
       ...prev,
-      view: 'today',
+      view: 'tower',
       selectedDate: getToday(),
       selectedYear: new Date().getFullYear(),
     }));

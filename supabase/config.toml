@@ -1,0 +1,5 @@
+[api]
+enabled = true
+
+[functions.parse-task]
+verify_jwt = false

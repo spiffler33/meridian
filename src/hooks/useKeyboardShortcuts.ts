@@ -41,8 +41,11 @@ export function useKeyboardShortcuts({
       switch (event.key.toLowerCase()) {
         case 't':
           event.preventDefault();
-          onGoToToday();
-          onViewChange('today');
+          onViewChange('tower');
+          break;
+        case 'h':
+          event.preventDefault();
+          onViewChange('habits');
           break;
         case 'w':
           event.preventDefault();
@@ -55,6 +58,10 @@ export function useKeyboardShortcuts({
         case 's':
           event.preventDefault();
           onViewChange('settings');
+          break;
+        case '0':
+          event.preventDefault();
+          onGoToToday();
           break;
         case 'arrowleft':
           event.preventDefault();

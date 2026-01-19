@@ -47,7 +47,7 @@ export function Reflection({ value, onChange }: ReflectionProps) {
     <div className="bg-bg-card rounded border border-border p-4">
       <div className="flex items-center justify-between mb-3">
         <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">
-          notes
+          thoughts
         </span>
         <span className="text-xs text-text-muted font-mono">
           {isSaving ? 'saving' : charCount > 0 ? `${charCount}` : ''}
@@ -57,7 +57,7 @@ export function Reflection({ value, onChange }: ReflectionProps) {
       <textarea
         value={localValue}
         onChange={handleChange}
-        placeholder="write here"
+        placeholder="what's on your mind?"
         className="w-full h-28 text-sm text-text bg-transparent rounded p-0 border-none focus:ring-0 outline-none resize-none placeholder:text-text-muted"
       />
     </div>

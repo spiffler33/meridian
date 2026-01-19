@@ -13,9 +13,10 @@ import type {
   HabitCompletion,
   Task,
   YearTheme,
+  TowerItemRow,
   UpdateTables,
 } from '../types/database';
-import type { HabitCategory, MitCategory } from '../types';
+import type { HabitCategory, MitCategory, TowerStatus, TowerEffort, TowerItem } from '../types';
 
 // ============================================================================
 // Error Handling
@@ -58,6 +59,15 @@ export interface TaskInput {
   category: MitCategory;
   text: string;
   firstStep?: string | null;
+}
+
+export interface TowerItemInput {
+  text: string;
+  status?: TowerStatus;
+  waitingOn?: string | null;
+  expectsBy?: string | null;
+  effort?: TowerEffort | null;
+  isEvent?: boolean;
 }
 
 // ============================================================================
@@ -797,5 +807,181 @@ export async function getHabitStreak(habitId: string): Promise<{ current: number
   return { current: currentStreak, longest: longestStreak };
 }
 
+// ============================================================================
+// Tower Items
+// ============================================================================
+
+/**
+ * Convert database row to domain model
+ */
+function toTowerItem(row: TowerItemRow): TowerItem {
+  return {
+    id: row.id,
+    text: row.text,
+    status: row.status,
+    waitingOn: row.waiting_on ?? undefined,
+    expectsBy: row.expects_by ?? undefined,
+    effort: row.effort ?? undefined,
+    isEvent: row.is_event,
+    lastTouched: row.last_touched,
+    createdAt: row.created_at,
+    doneAt: row.done_at ?? undefined,
+  };
+}
+
+/**
+ * Get all tower items for the current user (excludes done by default)
+ */
+export async function getTowerItems(includeDone = false): Promise<TowerItem[]> {
+  const userId = await getCurrentUserId();
+
+  let query = supabase
+    .from('tower_items')
+    .select('*')
+    .eq('user_id', userId);
+
+  if (!includeDone) {
+    query = query.neq('status', 'done');
+  }
+
+  // Surfacing logic: expects_by ASC (nulls last), then last_touched ASC (oldest first)
+  query = query
+    .order('expects_by', { ascending: true, nullsFirst: false })
+    .order('last_touched', { ascending: true });
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new DataServiceError(`Failed to fetch tower items: ${error.message}`, error.code);
+  }
+
+  return (data || []).map(toTowerItem);
+}
+
+/**
+ * Get tower items by status
+ */
+export async function getTowerItemsByStatus(status: TowerStatus): Promise<TowerItem[]> {
+  const userId = await getCurrentUserId();
+
+  const { data, error } = await supabase
+    .from('tower_items')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('status', status)
+    .order('expects_by', { ascending: true, nullsFirst: false })
+    .order('last_touched', { ascending: true });
+
+  if (error) {
+    throw new DataServiceError(`Failed to fetch tower items by status: ${error.message}`, error.code);
+  }
+
+  return (data || []).map(toTowerItem);
+}
+
+/**
+ * Create a new tower item
+ */
+export async function createTowerItem(item: TowerItemInput): Promise<TowerItem> {
+  const userId = await getCurrentUserId();
+
+  const { data, error } = await supabase
+    .from('tower_items')
+    .insert({
+      user_id: userId,
+      text: item.text,
+      status: item.status ?? 'active',
+      waiting_on: item.waitingOn ?? null,
+      expects_by: item.expectsBy ?? null,
+      effort: item.effort ?? null,
+      is_event: item.isEvent ?? false,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    throw new DataServiceError(`Failed to create tower item: ${error.message}`, error.code);
+  }
+
+  return toTowerItem(data);
+}
+
+/**
+ * Update a tower item
+ */
+export async function updateTowerItem(
+  id: string,
+  updates: Partial<TowerItemInput>
+): Promise<TowerItem> {
+  const userId = await getCurrentUserId();
+
+  const updateData: UpdateTables<'tower_items'> = {
+    last_touched: new Date().toISOString(),
+  };
+
+  if (updates.text !== undefined) updateData.text = updates.text;
+  if (updates.status !== undefined) updateData.status = updates.status;
+  if (updates.waitingOn !== undefined) updateData.waiting_on = updates.waitingOn;
+  if (updates.expectsBy !== undefined) updateData.expects_by = updates.expectsBy;
+  if (updates.effort !== undefined) updateData.effort = updates.effort;
+  if (updates.isEvent !== undefined) updateData.is_event = updates.isEvent;
+
+  const { data, error } = await supabase
+    .from('tower_items')
+    .update(updateData)
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select()
+    .single();
+
+  if (error) {
+    throw new DataServiceError(`Failed to update tower item: ${error.message}`, error.code);
+  }
+
+  return toTowerItem(data);
+}
+
+/**
+ * Mark a tower item as done
+ */
+export async function completeTowerItem(id: string): Promise<TowerItem> {
+  const userId = await getCurrentUserId();
+
+  const { data, error } = await supabase
+    .from('tower_items')
+    .update({
+      status: 'done',
+      done_at: new Date().toISOString(),
+      last_touched: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select()
+    .single();
+
+  if (error) {
+    throw new DataServiceError(`Failed to complete tower item: ${error.message}`, error.code);
+  }
+
+  return toTowerItem(data);
+}
+
+/**
+ * Delete a tower item permanently
+ */
+export async function deleteTowerItem(id: string): Promise<void> {
+  const userId = await getCurrentUserId();
+
+  const { error } = await supabase
+    .from('tower_items')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', userId);
+
+  if (error) {
+    throw new DataServiceError(`Failed to delete tower item: ${error.message}`, error.code);
+  }
+}
+
 // Re-export types for convenience
-export type { Habit, DailyEntry, HabitCompletion, Task, YearTheme, Profile } from '../types/database';
+export type { Habit, DailyEntry, HabitCompletion, Task, YearTheme, Profile, TowerItemRow } from '../types/database';

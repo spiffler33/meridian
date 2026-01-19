@@ -14,11 +14,18 @@ import type {
   HabitId,
   MitCategory,
   HabitDefinition,
+  TowerItem,
+  TowerStatus,
 } from '../types';
 import { createEmptyDailyData, DEFAULT_HABITS } from '../types';
 
+// Extended state with tower items
+interface ExtendedAppState extends AppState {
+  tower: TowerItem[];
+}
+
 // Create initial state with EMPTY habits (will load from Supabase)
-function createEmptyState(): AppState {
+function createEmptyState(): ExtendedAppState {
   return {
     settings: {
       habits: [], // Start empty - will load from Supabase
@@ -26,6 +33,7 @@ function createEmptyState(): AppState {
       weekStartsOn: 1,
     },
     dailyData: {},
+    tower: [],
   };
 }
 import { addDays, getToday } from '../utils/dates';
@@ -40,7 +48,13 @@ import {
   deleteTask,
   getAllYearThemes,
   setYearTheme as setYearThemeInDb,
+  getTowerItems,
+  createTowerItem,
+  updateTowerItem,
+  completeTowerItem,
+  deleteTowerItem,
 } from '../services/data';
+import type { TowerItemInput } from '../services/data';
 
 // Action types for the reducer
 type Action =
@@ -58,10 +72,14 @@ type Action =
   | { type: 'SET_FOCUS'; payload: { date: string; focus: string } }
   | { type: 'SET_REFLECTION'; payload: { date: string; reflection: string } }
   | { type: 'UPDATE_SETTINGS'; payload: Partial<AppSettings> }
-  | { type: 'SET_YEAR_THEME'; payload: { year: number; theme: string } };
+  | { type: 'SET_YEAR_THEME'; payload: { year: number; theme: string } }
+  | { type: 'SET_TOWER_ITEMS'; payload: TowerItem[] }
+  | { type: 'ADD_TOWER_ITEM'; payload: TowerItem }
+  | { type: 'UPDATE_TOWER_ITEM'; payload: TowerItem }
+  | { type: 'DELETE_TOWER_ITEM'; payload: string };
 
 // Reducer function
-function appReducer(state: AppState, action: Action): AppState {
+function appReducer(state: ExtendedAppState, action: Action): ExtendedAppState {
   switch (action.type) {
     case 'SET_HABITS': {
       return {
@@ -300,6 +318,30 @@ function appReducer(state: AppState, action: Action): AppState {
       };
     }
 
+    case 'SET_TOWER_ITEMS': {
+      return { ...state, tower: action.payload };
+    }
+
+    case 'ADD_TOWER_ITEM': {
+      return { ...state, tower: [...state.tower, action.payload] };
+    }
+
+    case 'UPDATE_TOWER_ITEM': {
+      return {
+        ...state,
+        tower: state.tower.map(item =>
+          item.id === action.payload.id ? action.payload : item
+        ),
+      };
+    }
+
+    case 'DELETE_TOWER_ITEM': {
+      return {
+        ...state,
+        tower: state.tower.filter(item => item.id !== action.payload),
+      };
+    }
+
     default:
       return state;
   }
@@ -307,7 +349,7 @@ function appReducer(state: AppState, action: Action): AppState {
 
 // Context type
 interface AppContextType {
-  state: AppState;
+  state: ExtendedAppState;
   loading: boolean;
   getDailyData: (date: string) => DailyData;
   toggleHabit: (date: string, habitId: HabitId) => void;
@@ -324,6 +366,12 @@ interface AppContextType {
   getYearTheme: (year: number) => string;
   getHabitCount: (date: string) => number;
   getHabitStreak: (habitId: HabitId, fromDate?: string) => number;
+  // Tower methods
+  getTowerItemsByStatus: (status: TowerStatus) => TowerItem[];
+  addTowerItem: (input: TowerItemInput) => Promise<void>;
+  updateTowerItemById: (id: string, updates: Partial<TowerItemInput>) => Promise<void>;
+  completeTowerItemById: (id: string) => Promise<void>;
+  deleteTowerItemById: (id: string) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -435,6 +483,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (taskGroups.length > 0) {
           dispatch({ type: 'SET_TASKS', payload: taskGroups });
         }
+
+        // Load tower items
+        const towerItems = await getTowerItems();
+        dispatch({ type: 'SET_TOWER_ITEMS', payload: towerItems });
       } catch (err) {
         console.error('Failed to load from Supabase:', err);
         // Fall back to defaults on error
@@ -656,6 +708,70 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  // ============================================================================
+  // Tower Methods
+  // ============================================================================
+
+  const getTowerItemsByStatusFn = useCallback(
+    (status: TowerStatus): TowerItem[] => {
+      return state.tower.filter(item => item.status === status);
+    },
+    [state.tower]
+  );
+
+  const addTowerItemFn = useCallback(
+    async (input: TowerItemInput) => {
+      try {
+        const item = await createTowerItem(input);
+        dispatch({ type: 'ADD_TOWER_ITEM', payload: item });
+      } catch (err) {
+        console.error('Failed to create tower item:', err);
+      }
+    },
+    []
+  );
+
+  const updateTowerItemByIdFn = useCallback(
+    async (id: string, updates: Partial<TowerItemInput>) => {
+      try {
+        const item = await updateTowerItem(id, updates);
+        dispatch({ type: 'UPDATE_TOWER_ITEM', payload: item });
+      } catch (err) {
+        console.error('Failed to update tower item:', err);
+      }
+    },
+    []
+  );
+
+  const completeTowerItemByIdFn = useCallback(
+    async (id: string) => {
+      try {
+        const item = await completeTowerItem(id);
+        dispatch({ type: 'UPDATE_TOWER_ITEM', payload: item });
+      } catch (err) {
+        console.error('Failed to complete tower item:', err);
+      }
+    },
+    []
+  );
+
+  const deleteTowerItemByIdFn = useCallback(
+    async (id: string) => {
+      // Optimistic update
+      dispatch({ type: 'DELETE_TOWER_ITEM', payload: id });
+
+      try {
+        await deleteTowerItem(id);
+      } catch (err) {
+        console.error('Failed to delete tower item:', err);
+        // Reload tower items on error
+        const items = await getTowerItems();
+        dispatch({ type: 'SET_TOWER_ITEMS', payload: items });
+      }
+    },
+    []
+  );
+
   const value: AppContextType = {
     state,
     loading,
@@ -674,6 +790,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     getYearTheme,
     getHabitCount,
     getHabitStreak,
+    // Tower
+    getTowerItemsByStatus: getTowerItemsByStatusFn,
+    addTowerItem: addTowerItemFn,
+    updateTowerItemById: updateTowerItemByIdFn,
+    completeTowerItemById: completeTowerItemByIdFn,
+    deleteTowerItemById: deleteTowerItemByIdFn,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

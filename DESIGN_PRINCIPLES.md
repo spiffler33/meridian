@@ -5,6 +5,9 @@
 **Terminal Meets Journal**
 A productivity tool that feels like a well-worn terminal, not a corporate app. Clean typography, purposeful density, and respect for the user's intelligence.
 
+**Steer Attention, Don't Manage Tasks**
+Traditional todo apps treat tasks as atomic, binary objects. We treat attention as the scarce resource. Surface what matters now, hide the rest accountably. The system remembers so the brain can let go.
+
 ---
 
 ## Visual Language
@@ -40,8 +43,10 @@ A productivity tool that feels like a well-worn terminal, not a corporate app. C
 ### Input Philosophy
 - Direct manipulation over modal dialogs
 - Inline editing everywhere possible
-- Keyboard-first, mouse-supported
+- Keyboard-first, mouse-supported (touch-first on mobile)
 - Immediate feedback, no loading spinners where avoidable
+- Log-first capture: natural language in, structure derived by AI
+- Zero friction capture beats perfect categorization
 
 ### Feedback Style
 - Subtle state changes (opacity, underline, color shift)
@@ -54,6 +59,14 @@ A productivity tool that feels like a well-worn terminal, not a corporate app. C
 - URL-based state (shareable, bookmarkable)
 - Minimal clicks to reach any view
 - No nested menus or dropdowns where avoidable
+
+### Fog of War
+- Show only what's actionable now (1-3 items)
+- Hide everything else, but accountably (follow up, someday)
+- Hidden items have reasons ("waiting on dad", "blocked until Tuesday")
+- Blocked is a stable state, not a failure
+- Actions surface before events (actionable NOW beats time-bound reminders)
+- isEvent distinguishes "things you DO" from "things you SHOW UP to"
 
 ---
 
@@ -79,14 +92,17 @@ A productivity tool that feels like a well-worn terminal, not a corporate app. C
 ## Content Philosophy
 
 ### What We Track
-- Daily focus (one thing that matters)
-- MITs: Most Important Tasks (work, self, family)
+- Tower items (stateful: active, waiting, someday, done)
+- Expectations ("expects by") — not due dates, psychologically different
+- Waiting states (who/what is blocking progress)
+- Item type (isEvent) — actions vs events have different surfacing logic
+- Thoughts (unstructured) vs Tower items (committed actions)
 - Habits (binary completions, streaks matter)
 - Reflections (end-of-day thoughts)
 
 ### What We Don't Track
 - Time spent (not a time tracker)
-- Detailed task metadata (no due dates, priorities, tags)
+- Priorities or tags (surfacing logic handles importance)
 - Goals beyond "done/not done"
 - Anything that adds friction without adding insight
 
@@ -123,7 +139,7 @@ A productivity tool that feels like a well-worn terminal, not a corporate app. C
 ## Anti-Patterns (What We Avoid)
 
 - Gamification (no points, badges, leaderboards)
-- Social comparison (friends for accountability, not competition)
+- Social comparison (friends for body doubling and accountability, not competition)
 - Notification spam (user initiates, not app)
 - Dark patterns (no guilt, no streaks as punishment)
 - Feature creep (every addition must justify cognitive cost)

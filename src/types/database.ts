@@ -316,6 +316,56 @@ export type Database = {
           }
         ]
       }
+      tower_items: {
+        Row: {
+          id: string
+          user_id: string
+          text: string
+          status: 'active' | 'waiting' | 'someday' | 'done'
+          waiting_on: string | null
+          expects_by: string | null
+          effort: 'quick' | 'medium' | 'deep' | null
+          is_event: boolean
+          last_touched: string
+          created_at: string
+          done_at: string | null
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          text: string
+          status?: 'active' | 'waiting' | 'someday' | 'done'
+          waiting_on?: string | null
+          expects_by?: string | null
+          effort?: 'quick' | 'medium' | 'deep' | null
+          is_event?: boolean
+          last_touched?: string
+          created_at?: string
+          done_at?: string | null
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          text?: string
+          status?: 'active' | 'waiting' | 'someday' | 'done'
+          waiting_on?: string | null
+          expects_by?: string | null
+          effort?: 'quick' | 'medium' | 'deep' | null
+          is_event?: boolean
+          last_touched?: string
+          created_at?: string
+          done_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'tower_items_user_id_fkey'
+            columns: ['user_id']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          }
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -346,3 +396,4 @@ export type Task = Tables<'tasks'>
 export type YearTheme = Tables<'year_themes'>
 export type Friendship = Tables<'friendships'>
 export type Activity = Tables<'activities'>
+export type TowerItemRow = Tables<'tower_items'>

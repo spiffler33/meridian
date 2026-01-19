@@ -50,7 +50,8 @@ export function Layout({
   onTodayClick,
   children,
 }: LayoutProps) {
-  const showTodayButton = currentView !== 'settings' && !isToday(selectedDate);
+  // Show "back to today" when viewing past dates on habits/week views
+  const showTodayButton = (currentView === 'habits' || currentView === 'week') && !isToday(selectedDate);
 
   return (
     <div className="min-h-screen flex flex-col bg-bg text-text">
@@ -64,10 +65,16 @@ export function Layout({
 
             <nav className="flex items-center">
               <NavItem
-                label="day"
+                label="tower"
                 shortcut="t"
-                isActive={currentView === 'today'}
-                onClick={() => onViewChange('today')}
+                isActive={currentView === 'tower'}
+                onClick={() => onViewChange('tower')}
+              />
+              <NavItem
+                label="habits"
+                shortcut="h"
+                isActive={currentView === 'habits'}
+                onClick={() => onViewChange('habits')}
               />
               <NavItem
                 label="week"

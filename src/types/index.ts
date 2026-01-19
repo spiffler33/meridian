@@ -67,7 +67,27 @@ export interface AppState {
 }
 
 // View types for navigation
-export type ViewType = 'today' | 'week' | 'year' | 'settings';
+export type ViewType = 'tower' | 'habits' | 'week' | 'year' | 'settings';
+
+// Tower item status
+export type TowerStatus = 'active' | 'waiting' | 'someday' | 'done';
+
+// Tower effort estimate
+export type TowerEffort = 'quick' | 'medium' | 'deep';
+
+// A single tower item (attention steering)
+export interface TowerItem {
+  id: string;
+  text: string;
+  status: TowerStatus;
+  waitingOn?: string;
+  expectsBy?: string;  // YYYY-MM-DD
+  effort?: TowerEffort;
+  isEvent: boolean;  // false = action (DO it), true = event (SHOW UP)
+  lastTouched: string; // ISO timestamp
+  createdAt: string;   // ISO timestamp
+  doneAt?: string;     // ISO timestamp
+}
 
 // Default habit definitions - easily customizable
 export const DEFAULT_HABITS: HabitDefinition[] = [

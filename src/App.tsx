@@ -11,7 +11,8 @@ import { AuthProvider, useAuth } from './store/AuthContext';
 import { Layout } from './components/Layout';
 import { useNavigation } from './hooks/useNavigation';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
-import { TodayView } from './views/TodayView';
+import TowerView from './views/TowerView';
+import { HabitsView } from './views/HabitsView';
 import { WeekView } from './views/WeekView';
 import { YearView } from './views/YearView';
 import { SettingsView } from './views/SettingsView';
@@ -29,16 +30,18 @@ function AppContent() {
     onNextDay: nav.goToNextDay,
   });
 
-  const handleDateSelect = (date: string) => {
+  const handleHabitsDateSelect = (date: string) => {
     nav.setSelectedDate(date);
-    nav.setView('today');
+    nav.setView('habits');
   };
 
   const renderView = () => {
     switch (nav.view) {
-      case 'today':
+      case 'tower':
+        return <TowerView />;
+      case 'habits':
         return (
-          <TodayView
+          <HabitsView
             selectedDate={nav.selectedDate}
             onPrevious={nav.goToPreviousDay}
             onNext={nav.goToNextDay}
@@ -49,7 +52,7 @@ function AppContent() {
         return (
           <WeekView
             selectedDate={nav.selectedDate}
-            onDateSelect={handleDateSelect}
+            onDateSelect={handleHabitsDateSelect}
             onPreviousWeek={nav.goToPreviousWeek}
             onNextWeek={nav.goToNextWeek}
           />
@@ -59,7 +62,7 @@ function AppContent() {
           <YearView
             selectedYear={nav.selectedYear}
             onYearChange={nav.setSelectedYear}
-            onDateSelect={handleDateSelect}
+            onDateSelect={handleHabitsDateSelect}
           />
         );
       case 'settings':
