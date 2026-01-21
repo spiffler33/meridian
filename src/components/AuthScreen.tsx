@@ -67,7 +67,7 @@ export function AuthScreen() {
       <div className="w-full max-w-xs">
         {/* Title */}
         <h1 className="text-lg font-mono text-text-secondary mb-8 text-center tracking-wider">
-          STOIC CALENDAR
+          MERIDIAN
         </h1>
 
         {/* Form */}

@@ -1,0 +1,1434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tower Mobile App Business Plan</title>
+    <style>
+        :root {
+            --bg: #0a0a0b;
+            --bg-card: #141416;
+            --bg-hover: #1a1a1d;
+            --border: #2a2a2e;
+            --text: #e8e8e8;
+            --text-muted: #888;
+            --accent: #4ade80;
+            --accent-dim: #22c55e;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --info: #3b82f6;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            padding: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1, h2, h3 {
+            font-weight: 500;
+            letter-spacing: 0.05em;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 1rem;
+            margin-bottom: 2rem;
+            text-transform: uppercase;
+            color: var(--accent);
+        }
+
+        h2 {
+            font-size: 1.1rem;
+            margin: 2rem 0 1rem;
+            color: var(--text);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        h3 {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            margin: 1.5rem 0 0.5rem;
+        }
+
+        p {
+            margin-bottom: 1rem;
+            color: var(--text-muted);
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .card-accent {
+            border-left: 3px solid var(--accent);
+        }
+
+        .card-warning {
+            border-left: 3px solid var(--warning);
+        }
+
+        .card-danger {
+            border-left: 3px solid var(--danger);
+        }
+
+        .card-info {
+            border-left: 3px solid var(--info);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1rem;
+            margin: 1rem 0;
+        }
+
+        .stat {
+            text-align: center;
+            padding: 1rem;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            font-size: 0.85rem;
+        }
+
+        th, td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th {
+            color: var(--text-muted);
+            font-weight: 500;
+            text-transform: uppercase;
+            font-size: 0.7rem;
+            letter-spacing: 0.1em;
+        }
+
+        tr:hover {
+            background: var(--bg-hover);
+        }
+
+        .collapsible {
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .collapsible::before {
+            content: '[+]';
+            color: var(--accent);
+            font-size: 0.8rem;
+        }
+
+        .collapsible.active::before {
+            content: '[-]';
+        }
+
+        .content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+
+        .content.show {
+            max-height: 2000px;
+        }
+
+        input[type="number"], input[type="range"], select {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 0.5rem;
+            border-radius: 4px;
+            font-family: inherit;
+            width: 100%;
+        }
+
+        input[type="range"] {
+            padding: 0;
+            height: 8px;
+            -webkit-appearance: none;
+            background: var(--border);
+            border-radius: 4px;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            background: var(--accent);
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        label {
+            display: block;
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 2px;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .badge-success {
+            background: rgba(74, 222, 128, 0.2);
+            color: var(--accent);
+        }
+
+        .badge-warning {
+            background: rgba(245, 158, 11, 0.2);
+            color: var(--warning);
+        }
+
+        .badge-danger {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--danger);
+        }
+
+        .progress-bar {
+            height: 8px;
+            background: var(--border);
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 0.5rem 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--accent);
+            transition: width 0.3s ease;
+        }
+
+        .meter {
+            display: flex;
+            gap: 2px;
+            margin: 0.5rem 0;
+        }
+
+        .meter-segment {
+            flex: 1;
+            height: 8px;
+            background: var(--border);
+            border-radius: 2px;
+        }
+
+        .meter-segment.filled {
+            background: var(--accent);
+        }
+
+        .meter-segment.warning {
+            background: var(--warning);
+        }
+
+        .meter-segment.danger {
+            background: var(--danger);
+        }
+
+        .decision-box {
+            background: var(--bg-card);
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            padding: 2rem;
+            text-align: center;
+            margin: 2rem 0;
+        }
+
+        .decision-box.go {
+            border-color: var(--accent);
+        }
+
+        .decision-box.caution {
+            border-color: var(--warning);
+        }
+
+        .decision-box.stop {
+            border-color: var(--danger);
+        }
+
+        .verdict {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 1rem;
+        }
+
+        .tab {
+            padding: 0.75rem 1.5rem;
+            cursor: pointer;
+            color: var(--text-muted);
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .tab:hover {
+            color: var(--text);
+        }
+
+        .tab.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .highlight {
+            color: var(--accent);
+        }
+
+        .warning-text {
+            color: var(--warning);
+        }
+
+        .danger-text {
+            color: var(--danger);
+        }
+
+        ul {
+            margin: 1rem 0;
+            padding-left: 1.5rem;
+        }
+
+        li {
+            margin-bottom: 0.5rem;
+            color: var(--text-muted);
+        }
+
+        .source-link {
+            color: var(--info);
+            text-decoration: none;
+            font-size: 0.75rem;
+        }
+
+        .source-link:hover {
+            text-decoration: underline;
+        }
+
+        .calculator-result {
+            background: var(--bg);
+            border: 1px solid var(--accent);
+            border-radius: 4px;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+
+        .scenario-selector {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .scenario-btn {
+            flex: 1;
+            padding: 1rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+
+        .scenario-btn:hover {
+            border-color: var(--accent);
+            color: var(--text);
+        }
+
+        .scenario-btn.active {
+            border-color: var(--accent);
+            background: rgba(74, 222, 128, 0.1);
+            color: var(--accent);
+        }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 1rem;
+            }
+
+            .grid {
+                grid-template-columns: 1fr;
+            }
+
+            .scenario-selector {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Tower Mobile App // Business Plan</h1>
+
+    <div class="card card-accent">
+        <p style="color: var(--text); margin-bottom: 0;">
+            <strong>Executive Summary:</strong> Tower is an ADHD-focused attention steering app. This plan analyzes the viability of building native iOS/Android apps, monetization strategies, and go/no-go scenarios.
+        </p>
+    </div>
+
+    <!-- MARKET ANALYSIS -->
+    <h2 class="collapsible" onclick="toggleSection(this)">Market Analysis</h2>
+    <div class="content show">
+        <div class="grid">
+            <div class="card">
+                <div class="stat">
+                    <div class="stat-value">$2.8B</div>
+                    <div class="stat-label">ADHD Apps Market (2026)</div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="stat">
+                    <div class="stat-value">15.6%</div>
+                    <div class="stat-label">CAGR Growth Rate</div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="stat">
+                    <div class="stat-value">$773M</div>
+                    <div class="stat-label">US Market Size (2025)</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Market Drivers</h3>
+            <ul>
+                <li>Rising ADHD diagnosis rates, especially in adults</li>
+                <li>48% of new ADHD apps use AI-powered personalization (mid-2024)</li>
+                <li>Neurotypical productivity apps don't serve ADHD brains well</li>
+                <li>Remote work increased demand for attention management tools</li>
+            </ul>
+        </div>
+
+        <p class="source-link">Sources: <a href="https://www.industryresearch.co/market-reports/adhd-apps-market-300618" target="_blank">Industry Research</a>, <a href="https://www.datainsightsmarket.com/reports/adhd-apps-528471" target="_blank">Data Insights Market</a></p>
+    </div>
+
+    <!-- COMPETITOR ANALYSIS -->
+    <h2 class="collapsible" onclick="toggleSection(this)">Competitor Analysis</h2>
+    <div class="content">
+        <table>
+            <thead>
+                <tr>
+                    <th>App</th>
+                    <th>Focus</th>
+                    <th>Pricing</th>
+                    <th>AI Features</th>
+                    <th>Threat Level</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>Inflow</strong></td>
+                    <td>ADHD coaching & CBT</td>
+                    <td>$48/mo or $200/yr</td>
+                    <td>Basic</td>
+                    <td><span class="badge badge-warning">Medium</span></td>
+                </tr>
+                <tr>
+                    <td><strong>Todoist</strong></td>
+                    <td>General task mgmt</td>
+                    <td>Free / $4/mo</td>
+                    <td>AI prioritization</td>
+                    <td><span class="badge badge-danger">High</span></td>
+                </tr>
+                <tr>
+                    <td><strong>Structured</strong></td>
+                    <td>Time blocking</td>
+                    <td>Free (iOS only)</td>
+                    <td>None</td>
+                    <td><span class="badge badge-success">Low</span></td>
+                </tr>
+                <tr>
+                    <td><strong>Forest</strong></td>
+                    <td>Focus gamification</td>
+                    <td>$4 one-time</td>
+                    <td>None</td>
+                    <td><span class="badge badge-success">Low</span></td>
+                </tr>
+                <tr>
+                    <td><strong>Freedom</strong></td>
+                    <td>App/site blocking</td>
+                    <td>$7/mo</td>
+                    <td>None</td>
+                    <td><span class="badge badge-success">Low</span></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="card card-accent">
+            <h3>Tower's Differentiation</h3>
+            <ul>
+                <li><strong>Attention steering</strong> vs task management (unique positioning)</li>
+                <li><strong>AI natural language capture</strong> with brain dump support</li>
+                <li><strong>isEvent model</strong> distinguishes actions from appointments</li>
+                <li><strong>Minimal UI</strong> that doesn't overwhelm ADHD brains</li>
+                <li><strong>2-minute timer</strong> for activation energy battles</li>
+            </ul>
+        </div>
+
+        <p class="source-link">Sources: <a href="https://www.choosingtherapy.com/inflow-adhd-app-review/" target="_blank">Choosing Therapy</a>, <a href="https://fluidwave.com/blog/productivity-apps-for-adhd" target="_blank">Fluidwave</a></p>
+    </div>
+
+    <!-- DEVELOPMENT COSTS -->
+    <h2 class="collapsible" onclick="toggleSection(this)">Development Costs</h2>
+    <div class="content">
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab(this, 'dev-react-native')">React Native</div>
+            <div class="tab" onclick="switchTab(this, 'dev-flutter')">Flutter</div>
+            <div class="tab" onclick="switchTab(this, 'dev-native')">Native iOS/Android</div>
+        </div>
+
+        <div id="dev-react-native" class="tab-content active">
+            <div class="card card-accent">
+                <h3>React Native (Recommended)</h3>
+                <p>Best choice: Your existing React codebase shares ~70% of logic. Tailwind-like styling available via NativeWind.</p>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Approach</th>
+                            <th>Cost Range</th>
+                            <th>Timeline</th>
+                            <th>Risk</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>You + Claude Code (DIY)</td>
+                            <td class="highlight">$0 - $500</td>
+                            <td>4-8 weeks</td>
+                            <td><span class="badge badge-warning">Medium</span></td>
+                        </tr>
+                        <tr>
+                            <td>Freelancer (India/Asia)</td>
+                            <td>$5,000 - $15,000</td>
+                            <td>4-6 weeks</td>
+                            <td><span class="badge badge-warning">Medium</span></td>
+                        </tr>
+                        <tr>
+                            <td>Freelancer (US/EU)</td>
+                            <td>$15,000 - $40,000</td>
+                            <td>4-6 weeks</td>
+                            <td><span class="badge badge-success">Low</span></td>
+                        </tr>
+                        <tr>
+                            <td>Agency</td>
+                            <td>$50,000 - $100,000</td>
+                            <td>8-12 weeks</td>
+                            <td><span class="badge badge-success">Low</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="card">
+                <h3>Why React Native for Tower?</h3>
+                <ul>
+                    <li>90% code reuse between iOS and Android</li>
+                    <li>Your existing React/TypeScript skills transfer directly</li>
+                    <li>Supabase SDK works identically on mobile</li>
+                    <li>Expo simplifies build/deploy pipeline</li>
+                    <li>Large community, abundant resources for Claude Code assistance</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="dev-flutter" class="tab-content">
+            <div class="card">
+                <h3>Flutter</h3>
+                <p>Excellent performance, but requires learning Dart. Less code reuse from your existing React codebase.</p>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Approach</th>
+                            <th>Cost Range</th>
+                            <th>Timeline</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Freelancer</td>
+                            <td>$10,000 - $40,000</td>
+                            <td>6-10 weeks</td>
+                        </tr>
+                        <tr>
+                            <td>Agency</td>
+                            <td>$60,000 - $120,000</td>
+                            <td>10-14 weeks</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p class="warning-text">Not recommended: Requires learning new language, less transferable code.</p>
+            </div>
+        </div>
+
+        <div id="dev-native" class="tab-content">
+            <div class="card card-danger">
+                <h3>Native iOS + Android (Separate)</h3>
+                <p>Best performance but 2x development cost. Only makes sense at scale.</p>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Platform</th>
+                            <th>Cost Range</th>
+                            <th>Timeline</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>iOS (Swift)</td>
+                            <td>$30,000 - $80,000</td>
+                            <td>8-12 weeks</td>
+                        </tr>
+                        <tr>
+                            <td>Android (Kotlin)</td>
+                            <td>$30,000 - $80,000</td>
+                            <td>8-12 weeks</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Total</strong></td>
+                            <td class="danger-text">$60,000 - $160,000</td>
+                            <td>12-20 weeks</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p class="danger-text">Not recommended for MVP stage.</p>
+            </div>
+        </div>
+
+        <p class="source-link">Sources: <a href="https://medium.com/front-end-weekly/how-much-does-it-cost-to-develop-a-react-native-app-in-2025-real-world-examples-included-ef992e2308a9" target="_blank">Medium</a>, <a href="https://www.reactsquad.io/blog/cost-to-hire-react-native-developers" target="_blank">ReactSquad</a></p>
+    </div>
+
+    <!-- ONGOING COSTS -->
+    <h2 class="collapsible" onclick="toggleSection(this)">Ongoing Costs Calculator</h2>
+    <div class="content">
+        <div class="grid">
+            <div class="card">
+                <h3>Platform Fees</h3>
+                <table>
+                    <tr>
+                        <td>Apple Developer Program</td>
+                        <td class="highlight">$99/year</td>
+                    </tr>
+                    <tr>
+                        <td>Google Play (one-time)</td>
+                        <td class="highlight">$25</td>
+                    </tr>
+                    <tr>
+                        <td>Apple Commission (< $1M)</td>
+                        <td>15%</td>
+                    </tr>
+                    <tr>
+                        <td>Google Commission (< $1M)</td>
+                        <td>15%</td>
+                    </tr>
+                    <tr>
+                        <td>Subscription commission (Year 2+)</td>
+                        <td>15% (both)</td>
+                    </tr>
+                </table>
+            </div>
+
+            <div class="card">
+                <h3>Backend (Supabase)</h3>
+                <table>
+                    <tr>
+                        <td>Pro Plan</td>
+                        <td class="highlight">$25/month</td>
+                    </tr>
+                    <tr>
+                        <td>Included MAUs</td>
+                        <td>100,000</td>
+                    </tr>
+                    <tr>
+                        <td>Overage per MAU</td>
+                        <td>$0.00325</td>
+                    </tr>
+                    <tr>
+                        <td>Edge Functions</td>
+                        <td>Included compute credits</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>AI API Cost Calculator</h3>
+            <div class="grid">
+                <div class="form-group">
+                    <label>Monthly Active Users</label>
+                    <input type="number" id="calc-mau" value="1000" min="0" onchange="calculateCosts()">
+                </div>
+                <div class="form-group">
+                    <label>AI Calls per User per Day</label>
+                    <input type="number" id="calc-calls" value="5" min="0" onchange="calculateCosts()">
+                </div>
+                <div class="form-group">
+                    <label>Avg Tokens per Call (input+output)</label>
+                    <input type="number" id="calc-tokens" value="500" min="0" onchange="calculateCosts()">
+                </div>
+                <div class="form-group">
+                    <label>Model</label>
+                    <select id="calc-model" onchange="calculateCosts()">
+                        <option value="haiku">Claude Haiku 3.5 ($1.30/M avg)</option>
+                        <option value="haiku45">Claude Haiku 4.5 ($3/M avg)</option>
+                        <option value="sonnet" selected>Claude Sonnet ($9/M avg)</option>
+                        <option value="opus">Claude Opus 4.5 ($15/M avg)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="calculator-result">
+                <div class="grid">
+                    <div>
+                        <div class="stat-label">Monthly API Cost</div>
+                        <div class="stat-value" id="result-monthly">$0</div>
+                    </div>
+                    <div>
+                        <div class="stat-label">Cost per User</div>
+                        <div class="stat-value" id="result-per-user">$0</div>
+                    </div>
+                    <div>
+                        <div class="stat-label">Annual Cost</div>
+                        <div class="stat-value" id="result-annual">$0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <p class="source-link">Sources: <a href="https://platform.claude.com/docs/en/about-claude/pricing" target="_blank">Claude Pricing</a>, <a href="https://supabase.com/pricing" target="_blank">Supabase Pricing</a></p>
+    </div>
+
+    <!-- MONETIZATION STRATEGIES -->
+    <h2 class="collapsible" onclick="toggleSection(this)">Monetization Strategies</h2>
+    <div class="content">
+        <div class="scenario-selector">
+            <div class="scenario-btn active" onclick="selectMonetization(this, 'subscription')">
+                <strong>Subscription</strong><br>
+                <small>$5-10/month</small>
+            </div>
+            <div class="scenario-btn" onclick="selectMonetization(this, 'byok')">
+                <strong>BYOK</strong><br>
+                <small>Free + User's API key</small>
+            </div>
+            <div class="scenario-btn" onclick="selectMonetization(this, 'hybrid')">
+                <strong>Hybrid</strong><br>
+                <small>Freemium + BYOK Pro</small>
+            </div>
+        </div>
+
+        <div id="mon-subscription" class="monetization-detail">
+            <div class="card card-accent">
+                <h3>Subscription Model</h3>
+                <p>You provide the AI, users pay monthly. Simple value proposition.</p>
+
+                <table>
+                    <tr>
+                        <th>Tier</th>
+                        <th>Price</th>
+                        <th>Features</th>
+                    </tr>
+                    <tr>
+                        <td>Free</td>
+                        <td>$0</td>
+                        <td>Basic Tower (no AI), 3 active items, manual entry only</td>
+                    </tr>
+                    <tr>
+                        <td>Pro</td>
+                        <td>$6.99/mo or $59/yr</td>
+                        <td>AI capture, unlimited items, habit sync, insights</td>
+                    </tr>
+                    <tr>
+                        <td>Annual Discount</td>
+                        <td>$4.99/mo effective</td>
+                        <td>2 months free (common industry practice)</td>
+                    </tr>
+                </table>
+
+                <h3>Pros</h3>
+                <ul>
+                    <li>Predictable revenue</li>
+                    <li>Users don't need to manage API keys</li>
+                    <li>Higher perceived value</li>
+                </ul>
+
+                <h3>Cons</h3>
+                <ul>
+                    <li>You absorb AI costs (margin risk)</li>
+                    <li>Heavy users can cost more than they pay</li>
+                    <li>Requires hitting pricing sweet spot</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="mon-byok" class="monetization-detail" style="display: none;">
+            <div class="card card-info">
+                <h3>Bring Your Own Key (BYOK)</h3>
+                <p>Users provide their own Claude API key. You build the interface, they pay Anthropic directly.</p>
+
+                <table>
+                    <tr>
+                        <th>Tier</th>
+                        <th>Price</th>
+                        <th>Features</th>
+                    </tr>
+                    <tr>
+                        <td>Free (BYOK)</td>
+                        <td>$0</td>
+                        <td>Full features, user provides API key</td>
+                    </tr>
+                    <tr>
+                        <td>Tip Jar / Donations</td>
+                        <td>Optional</td>
+                        <td>Support development</td>
+                    </tr>
+                </table>
+
+                <h3>Pros</h3>
+                <ul>
+                    <li>Zero AI cost to you</li>
+                    <li>Appeals to power users who already have API keys</li>
+                    <li>No margin concerns</li>
+                </ul>
+
+                <h3>Cons</h3>
+                <ul>
+                    <li>High friction: users must get API key</li>
+                    <li>Limits addressable market significantly</li>
+                    <li>Hard to monetize beyond donations</li>
+                    <li>Most ADHD users won't complete key setup</li>
+                </ul>
+
+                <div class="card card-warning">
+                    <p><strong>Warning:</strong> BYOK works well for developer tools (JetBrains, VS Code, Warp) where users are technical. For consumer ADHD apps, this is likely too much friction.</p>
+                </div>
+            </div>
+        </div>
+
+        <div id="mon-hybrid" class="monetization-detail" style="display: none;">
+            <div class="card card-accent">
+                <h3>Hybrid Model (Recommended)</h3>
+                <p>Best of both worlds: easy entry for most users, power option for technical users.</p>
+
+                <table>
+                    <tr>
+                        <th>Tier</th>
+                        <th>Price</th>
+                        <th>Features</th>
+                    </tr>
+                    <tr>
+                        <td>Free</td>
+                        <td>$0</td>
+                        <td>Basic Tower, 5 AI calls/day, manual entry</td>
+                    </tr>
+                    <tr>
+                        <td>Pro</td>
+                        <td>$6.99/mo</td>
+                        <td>Unlimited AI (you pay), all features</td>
+                    </tr>
+                    <tr>
+                        <td>Pro BYOK</td>
+                        <td>$2.99/mo</td>
+                        <td>All features, user provides API key</td>
+                    </tr>
+                </table>
+
+                <h3>Why This Works</h3>
+                <ul>
+                    <li>Free tier demonstrates value (limit prevents abuse)</li>
+                    <li>Pro tier is simple for most users</li>
+                    <li>BYOK tier captures technical users who want control</li>
+                    <li>BYOK users still pay (you provide value beyond API)</li>
+                </ul>
+            </div>
+        </div>
+
+        <p class="source-link">Sources: <a href="https://www.revenuecat.com/blog/growth/2025-app-monetization-trends/" target="_blank">RevenueCat</a>, <a href="https://blog.jetbrains.com/ai/2025/12/bring-your-own-key-byok-is-now-live-in-jetbrains-ides/" target="_blank">JetBrains</a></p>
+    </div>
+
+    <!-- REVENUE PROJECTIONS -->
+    <h2 class="collapsible" onclick="toggleSection(this)">Revenue & Break-Even Calculator</h2>
+    <div class="content">
+        <div class="card">
+            <h3>Interactive Scenario Builder</h3>
+
+            <div class="grid">
+                <div class="form-group">
+                    <label>Monthly Price</label>
+                    <input type="number" id="rev-price" value="6.99" min="0" step="0.01" onchange="calculateRevenue()">
+                </div>
+                <div class="form-group">
+                    <label>Paid Subscribers (Month 12)</label>
+                    <input type="range" id="rev-subs" value="500" min="50" max="5000" step="50" onchange="updateSubsLabel(); calculateRevenue()">
+                    <span id="rev-subs-label">500 subscribers</span>
+                </div>
+                <div class="form-group">
+                    <label>Initial Development Cost</label>
+                    <input type="number" id="rev-dev" value="500" min="0" onchange="calculateRevenue()">
+                </div>
+                <div class="form-group">
+                    <label>Monthly Fixed Costs</label>
+                    <input type="number" id="rev-fixed" value="150" min="0" onchange="calculateRevenue()">
+                </div>
+            </div>
+
+            <div class="calculator-result">
+                <h3>Year 1 Projection (Gradual Growth)</h3>
+                <div class="grid">
+                    <div>
+                        <div class="stat-label">Gross Revenue (Year 1)</div>
+                        <div class="stat-value" id="rev-gross">$0</div>
+                    </div>
+                    <div>
+                        <div class="stat-label">After Apple/Google (15%)</div>
+                        <div class="stat-value" id="rev-net">$0</div>
+                    </div>
+                    <div>
+                        <div class="stat-label">Total Costs</div>
+                        <div class="stat-value" id="rev-costs">$0</div>
+                    </div>
+                    <div>
+                        <div class="stat-label">Profit/Loss</div>
+                        <div class="stat-value" id="rev-profit">$0</div>
+                    </div>
+                </div>
+                <div style="margin-top: 1rem;">
+                    <div class="stat-label">Break-Even Subscribers Needed</div>
+                    <div class="stat-value" id="rev-breakeven">0</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- USER ACQUISITION -->
+    <h2 class="collapsible" onclick="toggleSection(this)">User Acquisition & Marketing</h2>
+    <div class="content">
+        <div class="card card-warning">
+            <h3>CAC Reality Check</h3>
+            <p>Productivity apps have notoriously high customer acquisition costs:</p>
+
+            <div class="grid">
+                <div class="stat">
+                    <div class="stat-value warning-text">$80-160</div>
+                    <div class="stat-label">Avg CAC (Productivity Apps)</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value highlight">$10-30</div>
+                    <div class="stat-label">Organic/Viral Target</div>
+                </div>
+            </div>
+
+            <p><strong>Translation:</strong> If you pay $100 to acquire a user who pays $7/month, you need 14+ months of retention to break even on that user.</p>
+        </div>
+
+        <div class="card">
+            <h3>Low-Cost Acquisition Strategies</h3>
+
+            <table>
+                <tr>
+                    <th>Channel</th>
+                    <th>Cost</th>
+                    <th>Effort</th>
+                    <th>Expected CAC</th>
+                </tr>
+                <tr>
+                    <td><strong>ADHD Reddit/Communities</strong></td>
+                    <td>$0</td>
+                    <td>High (authentic engagement)</td>
+                    <td class="highlight">$0-5</td>
+                </tr>
+                <tr>
+                    <td><strong>TikTok/Reels (ADHD content)</strong></td>
+                    <td>$0</td>
+                    <td>Medium (content creation)</td>
+                    <td class="highlight">$5-15</td>
+                </tr>
+                <tr>
+                    <td><strong>ASO (App Store Optimization)</strong></td>
+                    <td>$0-500</td>
+                    <td>Medium</td>
+                    <td class="highlight">$10-20</td>
+                </tr>
+                <tr>
+                    <td><strong>ProductHunt Launch</strong></td>
+                    <td>$0</td>
+                    <td>Medium</td>
+                    <td class="highlight">$5-10</td>
+                </tr>
+                <tr>
+                    <td><strong>ADHD Blogger/YouTuber Reviews</strong></td>
+                    <td>$0-500</td>
+                    <td>Medium</td>
+                    <td>$15-30</td>
+                </tr>
+                <tr>
+                    <td>Apple Search Ads</td>
+                    <td>$$</td>
+                    <td>Low</td>
+                    <td class="warning-text">$50-100+</td>
+                </tr>
+                <tr>
+                    <td>Facebook/Instagram Ads</td>
+                    <td>$$$</td>
+                    <td>Low</td>
+                    <td class="danger-text">$80-150+</td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="card card-accent">
+            <h3>ADHD Community Strategy (Recommended)</h3>
+            <p>ADHD communities are highly engaged and share tools that work. Your personal story + authentic product = powerful organic growth.</p>
+
+            <ul>
+                <li><strong>r/ADHD</strong> (1.7M members) - share your journey building for yourself</li>
+                <li><strong>ADHD TikTok</strong> - short demos of the "brain dump to structured items" flow</li>
+                <li><strong>ADHD Twitter/X</strong> - connect with ADHD coaches, therapists</li>
+                <li><strong>How I Organize podcast</strong> interviews</li>
+            </ul>
+
+            <p><strong>Key insight:</strong> Don't market. Share your story of building a tool for your own ADHD brain. Authenticity converts.</p>
+        </div>
+
+        <p class="source-link">Sources: <a href="https://survicate.com/blog/app-user-acquisition-cost/" target="_blank">Survicate</a>, <a href="https://mapendo.co/blog/app-user-acquisition-cost-2025" target="_blank">Mapendo</a></p>
+    </div>
+
+    <!-- RISK ANALYSIS -->
+    <h2 class="collapsible" onclick="toggleSection(this)">Risk Analysis</h2>
+    <div class="content">
+        <div class="grid">
+            <div class="card card-danger">
+                <h3>Platform Risk: Apple Sherlock</h3>
+                <div class="meter">
+                    <div class="meter-segment filled"></div>
+                    <div class="meter-segment filled"></div>
+                    <div class="meter-segment warning"></div>
+                    <div class="meter-segment"></div>
+                    <div class="meter-segment"></div>
+                </div>
+                <p><strong>Medium-Low Risk</strong></p>
+                <p>Apple's Focus Modes are generic. ADHD-specific features (brain dump parsing, attention steering, 2-min timer psychology) are too niche for Apple to build.</p>
+                <p><strong>Mitigation:</strong> Differentiate on ADHD-specific psychology, not just features.</p>
+            </div>
+
+            <div class="card card-warning">
+                <h3>AI Cost Escalation</h3>
+                <div class="meter">
+                    <div class="meter-segment filled"></div>
+                    <div class="meter-segment filled"></div>
+                    <div class="meter-segment filled"></div>
+                    <div class="meter-segment warning"></div>
+                    <div class="meter-segment"></div>
+                </div>
+                <p><strong>Medium Risk</strong></p>
+                <p>Heavy users could cost more in API fees than they pay in subscription.</p>
+                <p><strong>Mitigation:</strong> Use Haiku for parsing (cheapest), implement rate limits on free tier, offer BYOK for power users.</p>
+            </div>
+
+            <div class="card card-danger">
+                <h3>Competition from Inflow/Todoist</h3>
+                <div class="meter">
+                    <div class="meter-segment filled"></div>
+                    <div class="meter-segment filled"></div>
+                    <div class="meter-segment filled"></div>
+                    <div class="meter-segment"></div>
+                    <div class="meter-segment"></div>
+                </div>
+                <p><strong>Medium Risk</strong></p>
+                <p>Established players have more resources and users.</p>
+                <p><strong>Mitigation:</strong> Focus on "attention steering" positioning (unique), not general task management.</p>
+            </div>
+
+            <div class="card card-warning">
+                <h3>Low Retention</h3>
+                <div class="meter">
+                    <div class="meter-segment filled"></div>
+                    <div class="meter-segment filled"></div>
+                    <div class="meter-segment filled"></div>
+                    <div class="meter-segment warning"></div>
+                    <div class="meter-segment"></div>
+                </div>
+                <p><strong>Medium Risk</strong></p>
+                <p>Productivity apps have notoriously low retention. ADHD users may try and abandon.</p>
+                <p><strong>Mitigation:</strong> Design for ADHD brains specifically (less overwhelming, trust the algorithm).</p>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>App Store Rejection Risk</h3>
+            <p><span class="badge badge-success">Low Risk</span> Tower doesn't violate any obvious guidelines. Apps with AI features are common. No medical claims = no regulatory issues.</p>
+        </div>
+
+        <p class="source-link">Sources: <a href="https://www.getinflow.io/post/best-apps-for-adhd" target="_blank">Inflow</a>, <a href="https://www.igeeksblog.com/best-adhd-apps-for-iphone/" target="_blank">iGeeksBlog</a></p>
+    </div>
+
+    <!-- SCENARIO ANALYSIS -->
+    <h2 class="collapsible" onclick="toggleSection(this)">Scenario Analysis: Go or No-Go?</h2>
+    <div class="content">
+        <div class="scenario-selector">
+            <div class="scenario-btn active" onclick="selectScenario(this, 'bootstrap')">
+                <strong>Bootstrap</strong><br>
+                <small>You build it</small>
+            </div>
+            <div class="scenario-btn" onclick="selectScenario(this, 'freelancer')">
+                <strong>Freelancer</strong><br>
+                <small>Hire help</small>
+            </div>
+            <div class="scenario-btn" onclick="selectScenario(this, 'aggressive')">
+                <strong>Aggressive</strong><br>
+                <small>Agency + marketing</small>
+            </div>
+        </div>
+
+        <div id="scenario-bootstrap" class="scenario-content">
+            <div class="decision-box go">
+                <div class="verdict highlight">GO</div>
+                <p>Low risk, high learning, potential upside</p>
+            </div>
+
+            <div class="card">
+                <h3>Bootstrap Scenario</h3>
+                <table>
+                    <tr>
+                        <td>Development</td>
+                        <td class="highlight">$0-500 (you + Claude Code)</td>
+                    </tr>
+                    <tr>
+                        <td>Timeline</td>
+                        <td>4-8 weeks</td>
+                    </tr>
+                    <tr>
+                        <td>Year 1 Costs</td>
+                        <td>~$2,000 (hosting, Apple fee, misc)</td>
+                    </tr>
+                    <tr>
+                        <td>Break-even</td>
+                        <td>~25 paid subscribers</td>
+                    </tr>
+                    <tr>
+                        <td>Risk if fails</td>
+                        <td>~$2,000 + your time</td>
+                    </tr>
+                </table>
+
+                <h3>Why GO</h3>
+                <ul>
+                    <li>Minimal financial risk</li>
+                    <li>You learn React Native (valuable skill)</li>
+                    <li>You already have a working product to port</li>
+                    <li>Even 50 paying users = validation + income</li>
+                    <li>Claude Code accelerates development significantly</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="scenario-freelancer" class="scenario-content" style="display: none;">
+            <div class="decision-box caution">
+                <div class="verdict warning-text">CAUTION</div>
+                <p>Viable but validate demand first</p>
+            </div>
+
+            <div class="card">
+                <h3>Freelancer Scenario</h3>
+                <table>
+                    <tr>
+                        <td>Development</td>
+                        <td class="warning-text">$10,000-25,000</td>
+                    </tr>
+                    <tr>
+                        <td>Timeline</td>
+                        <td>4-8 weeks</td>
+                    </tr>
+                    <tr>
+                        <td>Year 1 Costs</td>
+                        <td>~$12,000-27,000</td>
+                    </tr>
+                    <tr>
+                        <td>Break-even</td>
+                        <td>~200-400 paid subscribers</td>
+                    </tr>
+                    <tr>
+                        <td>Risk if fails</td>
+                        <td>$12,000-27,000</td>
+                    </tr>
+                </table>
+
+                <h3>Recommendation</h3>
+                <ul>
+                    <li><strong>First:</strong> Launch web version, validate with 50+ paying users</li>
+                    <li><strong>Then:</strong> Use revenue to fund mobile development</li>
+                    <li>Or: Build MVP yourself, hire for polish</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="scenario-aggressive" class="scenario-content" style="display: none;">
+            <div class="decision-box stop">
+                <div class="verdict danger-text">NO-GO</div>
+                <p>Too much risk for unvalidated market</p>
+            </div>
+
+            <div class="card card-danger">
+                <h3>Aggressive Scenario</h3>
+                <table>
+                    <tr>
+                        <td>Development (agency)</td>
+                        <td class="danger-text">$50,000-100,000</td>
+                    </tr>
+                    <tr>
+                        <td>Marketing (Year 1)</td>
+                        <td class="danger-text">$20,000-50,000</td>
+                    </tr>
+                    <tr>
+                        <td>Year 1 Costs</td>
+                        <td class="danger-text">$75,000-155,000</td>
+                    </tr>
+                    <tr>
+                        <td>Break-even</td>
+                        <td>~1,500-3,000 paid subscribers</td>
+                    </tr>
+                    <tr>
+                        <td>Risk if fails</td>
+                        <td class="danger-text">$75,000+</td>
+                    </tr>
+                </table>
+
+                <h3>Why NO-GO</h3>
+                <ul>
+                    <li>Unvalidated market demand</li>
+                    <li>Paid ads have terrible CAC for productivity apps</li>
+                    <li>Competing against well-funded incumbents</li>
+                    <li>Risk far outweighs potential return at this stage</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- FINAL RECOMMENDATION -->
+    <h2>Final Recommendation</h2>
+    <div class="decision-box go">
+        <div class="verdict highlight">BUILD IT YOURSELF</div>
+        <p style="font-size: 1rem; max-width: 600px; margin: 0 auto;">
+            Use React Native + Expo. Port your existing code with Claude Code assistance.
+            Target 4-8 weeks of evenings/weekends. Launch at $6.99/month.
+            The ADHD market is real, your product is differentiated, and your risk is minimal.
+        </p>
+    </div>
+
+    <div class="card card-accent">
+        <h3>Recommended Action Plan</h3>
+        <ol style="padding-left: 1.5rem; color: var(--text);">
+            <li><strong>Week 1-2:</strong> Set up React Native/Expo project, port UI components</li>
+            <li><strong>Week 3-4:</strong> Integrate Supabase, port authentication</li>
+            <li><strong>Week 5-6:</strong> Port Tower view, AI capture, test on both platforms</li>
+            <li><strong>Week 7:</strong> Polish, App Store assets, beta test with 5-10 ADHD users</li>
+            <li><strong>Week 8:</strong> Submit to App Store & Play Store</li>
+            <li><strong>Post-launch:</strong> Share journey on r/ADHD, ADHD Twitter, iterate based on feedback</li>
+        </ol>
+    </div>
+
+    <div class="card">
+        <h3>Key Success Metrics</h3>
+        <table>
+            <tr>
+                <th>Metric</th>
+                <th>Month 3 Target</th>
+                <th>Month 12 Target</th>
+            </tr>
+            <tr>
+                <td>Downloads</td>
+                <td>500</td>
+                <td>5,000</td>
+            </tr>
+            <tr>
+                <td>Free → Paid Conversion</td>
+                <td>5%</td>
+                <td>8%</td>
+            </tr>
+            <tr>
+                <td>Paid Subscribers</td>
+                <td>25</td>
+                <td>400</td>
+            </tr>
+            <tr>
+                <td>MRR</td>
+                <td>$175</td>
+                <td>$2,800</td>
+            </tr>
+            <tr>
+                <td>Day 7 Retention</td>
+                <td>30%</td>
+                <td>40%</td>
+            </tr>
+        </table>
+    </div>
+
+    <script>
+        // Collapsible sections
+        function toggleSection(element) {
+            element.classList.toggle('active');
+            const content = element.nextElementSibling;
+            content.classList.toggle('show');
+        }
+
+        // Tab switching
+        function switchTab(tab, contentId) {
+            const parent = tab.parentElement;
+            const tabs = parent.querySelectorAll('.tab');
+            tabs.forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+
+            const contents = parent.parentElement.querySelectorAll('.tab-content');
+            contents.forEach(c => c.classList.remove('active'));
+            document.getElementById(contentId).classList.add('active');
+        }
+
+        // Cost calculator
+        function calculateCosts() {
+            const mau = parseInt(document.getElementById('calc-mau').value) || 0;
+            const calls = parseInt(document.getElementById('calc-calls').value) || 0;
+            const tokens = parseInt(document.getElementById('calc-tokens').value) || 0;
+            const model = document.getElementById('calc-model').value;
+
+            const modelPrices = {
+                haiku: 1.30,      // avg of $0.80 input + $4 output per MTok
+                haiku45: 3.00,   // avg of $1 + $5
+                sonnet: 9.00,    // avg of $3 + $15
+                opus: 15.00      // avg of $5 + $25
+            };
+
+            const pricePerMToken = modelPrices[model];
+            const tokensPerMonth = mau * calls * 30 * tokens;
+            const monthlyCost = (tokensPerMonth / 1000000) * pricePerMToken;
+            const costPerUser = mau > 0 ? monthlyCost / mau : 0;
+            const annualCost = monthlyCost * 12;
+
+            document.getElementById('result-monthly').textContent = '$' + monthlyCost.toFixed(2);
+            document.getElementById('result-per-user').textContent = '$' + costPerUser.toFixed(2);
+            document.getElementById('result-annual').textContent = '$' + annualCost.toFixed(2);
+        }
+
+        // Revenue calculator
+        function updateSubsLabel() {
+            const subs = document.getElementById('rev-subs').value;
+            document.getElementById('rev-subs-label').textContent = subs + ' subscribers';
+        }
+
+        function calculateRevenue() {
+            const price = parseFloat(document.getElementById('rev-price').value) || 0;
+            const subsMonth12 = parseInt(document.getElementById('rev-subs').value) || 0;
+            const devCost = parseFloat(document.getElementById('rev-dev').value) || 0;
+            const fixedCost = parseFloat(document.getElementById('rev-fixed').value) || 0;
+
+            // Gradual growth: assume linear growth from 0 to target over 12 months
+            // Month 1: ~8% of target, Month 12: 100% of target
+            let totalRevenue = 0;
+            for (let month = 1; month <= 12; month++) {
+                const monthSubs = Math.floor(subsMonth12 * (month / 12));
+                totalRevenue += monthSubs * price;
+            }
+
+            const grossRevenue = totalRevenue;
+            const netRevenue = grossRevenue * 0.85; // After 15% commission
+            const totalCosts = devCost + (fixedCost * 12);
+            const profit = netRevenue - totalCosts;
+
+            // Break-even: monthly revenue needed to cover monthly costs
+            const monthlyNeeded = fixedCost / 0.85; // Accounting for commission
+            const breakEvenSubs = Math.ceil(monthlyNeeded / price);
+
+            document.getElementById('rev-gross').textContent = '$' + grossRevenue.toFixed(0);
+            document.getElementById('rev-net').textContent = '$' + netRevenue.toFixed(0);
+            document.getElementById('rev-costs').textContent = '$' + totalCosts.toFixed(0);
+            document.getElementById('rev-profit').textContent = (profit >= 0 ? '+' : '') + '$' + profit.toFixed(0);
+            document.getElementById('rev-profit').style.color = profit >= 0 ? 'var(--accent)' : 'var(--danger)';
+            document.getElementById('rev-breakeven').textContent = breakEvenSubs + ' subscribers/month';
+        }
+
+        // Monetization selector
+        function selectMonetization(btn, type) {
+            const buttons = document.querySelectorAll('.scenario-selector .scenario-btn');
+            buttons.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+
+            document.querySelectorAll('.monetization-detail').forEach(d => d.style.display = 'none');
+            document.getElementById('mon-' + type).style.display = 'block';
+        }
+
+        // Scenario selector
+        function selectScenario(btn, type) {
+            const parent = btn.parentElement;
+            const buttons = parent.querySelectorAll('.scenario-btn');
+            buttons.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+
+            document.querySelectorAll('.scenario-content').forEach(c => c.style.display = 'none');
+            document.getElementById('scenario-' + type).style.display = 'block';
+        }
+
+        // Initialize calculators
+        calculateCosts();
+        calculateRevenue();
+    </script>
+</body>
+</html>

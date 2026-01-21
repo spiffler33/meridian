@@ -60,7 +60,7 @@ export function Layout({
         <div className="max-w-content mx-auto px-4">
           <div className="flex items-center justify-between h-12">
             <span className="text-sm font-medium text-text-secondary">
-              calendar
+              meridian
             </span>
 
             <nav className="flex items-center">
