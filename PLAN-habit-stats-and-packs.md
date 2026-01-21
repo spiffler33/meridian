@@ -15,7 +15,17 @@
 - `src/services/data.ts` - added `getHabitCompletionDates()`
 - `src/views/HabitsView.tsx` - popover state and data fetching
 
-**Phase 2: NOT STARTED**
+**Phase 2: COMPLETE**
+- `supabase/migrations/20260121_create_packs.sql` - database tables
+- `src/types/database.ts` - Pack and PackSession database types
+- `src/types/index.ts` - Pack, PackSession, PackWithCount domain types
+- `src/services/data.ts` - CRUD for packs and pack_sessions
+- `src/store/AppContext.tsx` - packs state and methods
+- `src/components/PacksSection.tsx` - main packs UI with progress bars
+- `src/components/PackLogModal.tsx` - log a session
+- `src/components/PackHistoryModal.tsx` - view session history
+- `src/components/PackCreateModal.tsx` - create new pack
+- `src/views/HabitsView.tsx` - integrated PacksSection
 
 ---
 

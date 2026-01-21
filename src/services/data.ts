@@ -15,8 +15,10 @@ import type {
   YearTheme,
   TowerItemRow,
   UpdateTables,
+  Pack as PackRow,
+  PackSession as PackSessionRow,
 } from '../types/database';
-import type { HabitCategory, MitCategory, TowerStatus, TowerEffort, TowerItem } from '../types';
+import type { HabitCategory, MitCategory, TowerStatus, TowerEffort, TowerItem, Pack, PackSession, PackWithCount } from '../types';
 
 // ============================================================================
 // Error Handling
@@ -1001,6 +1003,220 @@ export async function deleteTowerItem(id: string): Promise<void> {
 
   if (error) {
     throw new DataServiceError(`Failed to delete tower item: ${error.message}`, error.code);
+  }
+}
+
+// ============================================================================
+// Packs
+// ============================================================================
+
+/**
+ * Convert database row to domain model
+ */
+function toPack(row: PackRow): Pack {
+  return {
+    id: row.id,
+    label: row.label,
+    total: row.total,
+    createdAt: row.created_at,
+    archivedAt: row.archived_at ?? undefined,
+  };
+}
+
+/**
+ * Convert database row to domain model
+ */
+function toPackSession(row: PackSessionRow): PackSession {
+  return {
+    id: row.id,
+    packId: row.pack_id,
+    date: row.date,
+    note: row.note ?? undefined,
+    createdAt: row.created_at,
+  };
+}
+
+export interface PackInput {
+  label: string;
+  total: number;
+}
+
+export interface PackSessionInput {
+  packId: string;
+  date: string;
+  note?: string | null;
+}
+
+/**
+ * Get all packs for the current user (non-archived by default)
+ * Returns packs with their used count
+ */
+export async function getPacks(includeArchived = false): Promise<PackWithCount[]> {
+  const userId = await getCurrentUserId();
+
+  let query = supabase
+    .from('packs')
+    .select(`
+      *,
+      pack_sessions(count)
+    `)
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+
+  if (!includeArchived) {
+    query = query.is('archived_at', null);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new DataServiceError(`Failed to fetch packs: ${error.message}`, error.code);
+  }
+
+  return (data || []).map(row => ({
+    ...toPack(row),
+    used: (row.pack_sessions as { count: number }[])[0]?.count ?? 0,
+  }));
+}
+
+/**
+ * Create a new pack
+ */
+export async function createPack(pack: PackInput): Promise<Pack> {
+  const userId = await getCurrentUserId();
+
+  const { data, error } = await supabase
+    .from('packs')
+    .insert({
+      user_id: userId,
+      label: pack.label,
+      total: pack.total,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    throw new DataServiceError(`Failed to create pack: ${error.message}`, error.code);
+  }
+
+  return toPack(data);
+}
+
+/**
+ * Update a pack
+ */
+export async function updatePack(
+  id: string,
+  updates: Partial<PackInput>
+): Promise<Pack> {
+  const userId = await getCurrentUserId();
+
+  const { data, error } = await supabase
+    .from('packs')
+    .update(updates)
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select()
+    .single();
+
+  if (error) {
+    throw new DataServiceError(`Failed to update pack: ${error.message}`, error.code);
+  }
+
+  return toPack(data);
+}
+
+/**
+ * Archive a pack (soft delete)
+ */
+export async function archivePack(id: string): Promise<void> {
+  const userId = await getCurrentUserId();
+
+  const { error } = await supabase
+    .from('packs')
+    .update({ archived_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('user_id', userId);
+
+  if (error) {
+    throw new DataServiceError(`Failed to archive pack: ${error.message}`, error.code);
+  }
+}
+
+/**
+ * Get all sessions for a pack
+ */
+export async function getPackSessions(packId: string): Promise<PackSession[]> {
+  const { data, error } = await supabase
+    .from('pack_sessions')
+    .select('*')
+    .eq('pack_id', packId)
+    .order('date', { ascending: false });
+
+  if (error) {
+    throw new DataServiceError(`Failed to fetch pack sessions: ${error.message}`, error.code);
+  }
+
+  return (data || []).map(toPackSession);
+}
+
+/**
+ * Log a new session for a pack
+ */
+export async function createPackSession(session: PackSessionInput): Promise<PackSession> {
+  const { data, error } = await supabase
+    .from('pack_sessions')
+    .insert({
+      pack_id: session.packId,
+      date: session.date,
+      note: session.note ?? null,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    throw new DataServiceError(`Failed to create pack session: ${error.message}`, error.code);
+  }
+
+  return toPackSession(data);
+}
+
+/**
+ * Update a pack session
+ */
+export async function updatePackSession(
+  id: string,
+  updates: { date?: string; note?: string | null }
+): Promise<PackSession> {
+  const updateData: { date?: string; note?: string | null } = {};
+  if (updates.date !== undefined) updateData.date = updates.date;
+  if (updates.note !== undefined) updateData.note = updates.note;
+
+  const { data, error } = await supabase
+    .from('pack_sessions')
+    .update(updateData)
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) {
+    throw new DataServiceError(`Failed to update pack session: ${error.message}`, error.code);
+  }
+
+  return toPackSession(data);
+}
+
+/**
+ * Delete a pack session
+ */
+export async function deletePackSession(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('pack_sessions')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    throw new DataServiceError(`Failed to delete pack session: ${error.message}`, error.code);
   }
 }
 

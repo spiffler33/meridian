@@ -89,6 +89,29 @@ export interface TowerItem {
   doneAt?: string;     // ISO timestamp
 }
 
+// Pack - finite counter with sessions
+export interface Pack {
+  id: string;
+  label: string;
+  total: number;
+  createdAt: string;
+  archivedAt?: string;
+}
+
+// Pack Session - a single logged session within a pack
+export interface PackSession {
+  id: string;
+  packId: string;
+  date: string;
+  note?: string;
+  createdAt: string;
+}
+
+// Pack with session count (for UI)
+export interface PackWithCount extends Pack {
+  used: number;
+}
+
 // Default habit definitions - easily customizable
 export const DEFAULT_HABITS: HabitDefinition[] = [
   {

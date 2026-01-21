@@ -366,6 +366,73 @@ export type Database = {
           }
         ]
       }
+      packs: {
+        Row: {
+          id: string
+          user_id: string
+          label: string
+          total: number
+          created_at: string
+          archived_at: string | null
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          label: string
+          total: number
+          created_at?: string
+          archived_at?: string | null
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          label?: string
+          total?: number
+          created_at?: string
+          archived_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'packs_user_id_fkey'
+            columns: ['user_id']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          }
+        ]
+      }
+      pack_sessions: {
+        Row: {
+          id: string
+          pack_id: string
+          date: string
+          note: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          pack_id: string
+          date: string
+          note?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          pack_id?: string
+          date?: string
+          note?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'pack_sessions_pack_id_fkey'
+            columns: ['pack_id']
+            isOneToOne: false
+            referencedRelation: 'packs'
+            referencedColumns: ['id']
+          }
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -397,3 +464,5 @@ export type YearTheme = Tables<'year_themes'>
 export type Friendship = Tables<'friendships'>
 export type Activity = Tables<'activities'>
 export type TowerItemRow = Tables<'tower_items'>
+export type Pack = Tables<'packs'>
+export type PackSession = Tables<'pack_sessions'>

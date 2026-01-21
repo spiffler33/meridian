@@ -16,12 +16,14 @@ import type {
   HabitDefinition,
   TowerItem,
   TowerStatus,
+  PackWithCount,
 } from '../types';
 import { createEmptyDailyData, DEFAULT_HABITS } from '../types';
 
-// Extended state with tower items
+// Extended state with tower items and packs
 interface ExtendedAppState extends AppState {
   tower: TowerItem[];
+  packs: PackWithCount[];
 }
 
 // Create initial state with EMPTY habits (will load from Supabase)
@@ -34,6 +36,7 @@ function createEmptyState(): ExtendedAppState {
     },
     dailyData: {},
     tower: [],
+    packs: [],
   };
 }
 import { addDays, getToday } from '../utils/dates';
@@ -53,8 +56,13 @@ import {
   updateTowerItem,
   completeTowerItem,
   deleteTowerItem,
+  getPacks,
+  createPack,
+  archivePack,
+  createPackSession,
+  deletePackSession,
 } from '../services/data';
-import type { TowerItemInput } from '../services/data';
+import type { TowerItemInput, PackInput, PackSessionInput } from '../services/data';
 
 // Action types for the reducer
 type Action =
@@ -76,7 +84,11 @@ type Action =
   | { type: 'SET_TOWER_ITEMS'; payload: TowerItem[] }
   | { type: 'ADD_TOWER_ITEM'; payload: TowerItem }
   | { type: 'UPDATE_TOWER_ITEM'; payload: TowerItem }
-  | { type: 'DELETE_TOWER_ITEM'; payload: string };
+  | { type: 'DELETE_TOWER_ITEM'; payload: string }
+  | { type: 'SET_PACKS'; payload: PackWithCount[] }
+  | { type: 'ADD_PACK'; payload: PackWithCount }
+  | { type: 'UPDATE_PACK_COUNT'; payload: { id: string; delta: number } }
+  | { type: 'DELETE_PACK'; payload: string };
 
 // Reducer function
 function appReducer(state: ExtendedAppState, action: Action): ExtendedAppState {
@@ -342,6 +354,32 @@ function appReducer(state: ExtendedAppState, action: Action): ExtendedAppState {
       };
     }
 
+    case 'SET_PACKS': {
+      return { ...state, packs: action.payload };
+    }
+
+    case 'ADD_PACK': {
+      return { ...state, packs: [action.payload, ...state.packs] };
+    }
+
+    case 'UPDATE_PACK_COUNT': {
+      return {
+        ...state,
+        packs: state.packs.map(pack =>
+          pack.id === action.payload.id
+            ? { ...pack, used: pack.used + action.payload.delta }
+            : pack
+        ),
+      };
+    }
+
+    case 'DELETE_PACK': {
+      return {
+        ...state,
+        packs: state.packs.filter(pack => pack.id !== action.payload),
+      };
+    }
+
     default:
       return state;
   }
@@ -372,6 +410,11 @@ interface AppContextType {
   updateTowerItemById: (id: string, updates: Partial<TowerItemInput>) => Promise<void>;
   completeTowerItemById: (id: string) => Promise<void>;
   deleteTowerItemById: (id: string) => Promise<void>;
+  // Packs methods
+  addPack: (input: PackInput) => Promise<void>;
+  archivePackById: (id: string) => Promise<void>;
+  logPackSession: (input: PackSessionInput) => Promise<void>;
+  removePackSession: (packId: string, sessionId: string) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -484,9 +527,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           dispatch({ type: 'SET_TASKS', payload: taskGroups });
         }
 
-        // Load tower items
-        const towerItems = await getTowerItems();
+        // Load tower items and packs in parallel
+        const [towerItems, packs] = await Promise.all([
+          getTowerItems(),
+          getPacks(),
+        ]);
         dispatch({ type: 'SET_TOWER_ITEMS', payload: towerItems });
+        dispatch({ type: 'SET_PACKS', payload: packs });
       } catch (err) {
         if (import.meta.env.DEV) console.error('Failed to load from Supabase:', err);
         // Fall back to defaults on error
@@ -772,6 +819,65 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  // ============================================================================
+  // Packs Methods
+  // ============================================================================
+
+  const addPackFn = useCallback(
+    async (input: PackInput) => {
+      try {
+        const pack = await createPack(input);
+        dispatch({ type: 'ADD_PACK', payload: { ...pack, used: 0 } });
+      } catch (err) {
+        if (import.meta.env.DEV) console.error('Failed to create pack:', err);
+      }
+    },
+    []
+  );
+
+  const archivePackByIdFn = useCallback(
+    async (id: string) => {
+      // Optimistic update
+      dispatch({ type: 'DELETE_PACK', payload: id });
+
+      try {
+        await archivePack(id);
+      } catch (err) {
+        if (import.meta.env.DEV) console.error('Failed to archive pack:', err);
+        // Reload packs on error
+        const packs = await getPacks();
+        dispatch({ type: 'SET_PACKS', payload: packs });
+      }
+    },
+    []
+  );
+
+  const logPackSessionFn = useCallback(
+    async (input: PackSessionInput) => {
+      try {
+        await createPackSession(input);
+        // Optimistic update: increment the used count
+        dispatch({ type: 'UPDATE_PACK_COUNT', payload: { id: input.packId, delta: 1 } });
+      } catch (err) {
+        if (import.meta.env.DEV) console.error('Failed to log pack session:', err);
+      }
+    },
+    []
+  );
+
+  const removePackSessionFn = useCallback(
+    async (packId: string, sessionId: string) => {
+      try {
+        await deletePackSession(sessionId);
+        // Optimistic update: decrement the used count
+        dispatch({ type: 'UPDATE_PACK_COUNT', payload: { id: packId, delta: -1 } });
+      } catch (err) {
+        if (import.meta.env.DEV) console.error('Failed to delete pack session:', err);
+      }
+    },
+    []
+  );
+
   const value: AppContextType = {
     state,
     loading,
@@ -796,6 +902,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     updateTowerItemById: updateTowerItemByIdFn,
     completeTowerItemById: completeTowerItemByIdFn,
     deleteTowerItemById: deleteTowerItemByIdFn,
+    // Packs
+    addPack: addPackFn,
+    archivePackById: archivePackByIdFn,
+    logPackSession: logPackSessionFn,
+    removePackSession: removePackSessionFn,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

@@ -10,6 +10,7 @@ import { useApp } from '../store/AppContext';
 import { DateNavigation } from '../components/DateNavigation';
 import { HabitGrid } from '../components/HabitGrid';
 import { HabitStatsPopover } from '../components/HabitStatsPopover';
+import { PacksSection } from '../components/PacksSection';
 import { Reflection } from '../components/Reflection';
 import { AiInsight } from '../components/AiInsight';
 import { DailyInspiration } from '../components/DailyInspiration';
@@ -40,6 +41,10 @@ export function HabitsView({ selectedDate, onPrevious, onNext, onDateSelect }: H
     toggleHabit,
     setReflection,
     getHabitStreak,
+    addPack,
+    archivePackById,
+    logPackSession,
+    removePackSession,
   } = useApp();
 
   const [popover, setPopover] = useState<PopoverState | null>(null);
@@ -143,6 +148,19 @@ export function HabitsView({ selectedDate, onPrevious, onNext, onDateSelect }: H
           />
         </div>
       )}
+
+      {/* Packs */}
+      <PacksSection
+        packs={state.packs}
+        onLogSession={async (packId, date, note) => {
+          await logPackSession({ packId, date, note });
+        }}
+        onRemoveSession={removePackSession}
+        onCreatePack={async (label, total) => {
+          await addPack({ label, total });
+        }}
+        onArchivePack={archivePackById}
+      />
 
       {/* Reflection */}
       <Reflection
