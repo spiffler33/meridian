@@ -6,6 +6,19 @@
 
 ---
 
+## Status
+
+**Phase 1: COMPLETE** (merged to main)
+- `src/utils/habitStats.ts` - pure calculation functions
+- `src/components/HabitStatsPopover.tsx` - popover UI
+- `src/components/HabitGrid.tsx` - split click targets (dot toggles, label opens stats)
+- `src/services/data.ts` - added `getHabitCompletionDates()`
+- `src/views/HabitsView.tsx` - popover state and data fetching
+
+**Phase 2: NOT STARTED**
+
+---
+
 ## The Ask
 
 1. **See streaks in context** — "15 days no alcohol *this month*"
