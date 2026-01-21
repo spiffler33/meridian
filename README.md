@@ -1,4 +1,4 @@
-# Life Calendar
+# Meridian
 
 A personal "life cockpit" web app for daily execution and long-term perspective. Built for focus, clarity, and low-friction daily tracking.
 
@@ -192,7 +192,7 @@ Configure in Settings whether weeks start on Monday or Sunday.
 
 ## Data Model
 
-All data is stored in `localStorage` under the key `life-calendar-data`. The structure:
+All data is stored in `localStorage` under the key `meridian-data`. The structure:
 
 ```typescript
 interface AppState {

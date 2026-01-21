@@ -23,7 +23,7 @@ export const THEMES: ThemeConfig[] = [
   { name: 'mono', label: 'Mono', description: 'Stark minimalist' },
 ];
 
-const STORAGE_KEY = 'life-calendar-theme';
+const STORAGE_KEY = 'meridian-theme';
 const VALID_THEMES: ThemeName[] = ['dark', 'matrix', 'paper', 'midnight', 'mono'];
 
 function isValidTheme(value: unknown): value is ThemeName {
