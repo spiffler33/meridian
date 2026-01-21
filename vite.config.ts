@@ -6,5 +6,5 @@ export default defineConfig({
   plugins: [react()],
   // For GitHub Pages: set to your repo name (e.g., '/meridian/')
   // For local dev or custom domain: use '/'
-  base: '/meridian/',
+  base: '/',
 })
