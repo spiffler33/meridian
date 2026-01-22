@@ -233,20 +233,24 @@ export async function upsertDailyEntry(
 ): Promise<DailyEntry> {
   const userId = await getCurrentUserId();
 
+  // Build upsert object with only defined fields to avoid overwriting existing data
+  const upsertData: {
+    user_id: string;
+    date: string;
+    updated_at: string;
+    focus?: string;
+    reflection?: string;
+  } = {
+    user_id: userId,
+    date,
+    updated_at: new Date().toISOString(),
+  };
+  if (data.focus !== undefined) upsertData.focus = data.focus;
+  if (data.reflection !== undefined) upsertData.reflection = data.reflection;
+
   const { data: result, error } = await supabase
     .from('daily_entries')
-    .upsert(
-      {
-        user_id: userId,
-        date,
-        focus: data.focus,
-        reflection: data.reflection,
-        updated_at: new Date().toISOString(),
-      },
-      {
-        onConflict: 'user_id,date',
-      }
-    )
+    .upsert(upsertData, { onConflict: 'user_id,date' })
     .select()
     .single();
 

@@ -12,7 +12,6 @@ import { HabitGrid } from '../components/HabitGrid';
 import { HabitStatsPopover } from '../components/HabitStatsPopover';
 import { PacksSection } from '../components/PacksSection';
 import { Reflection } from '../components/Reflection';
-import { AiInsight } from '../components/AiInsight';
 import { DailyInspiration } from '../components/DailyInspiration';
 import { getHabitCompletionDates } from '../services/data';
 import { calculateHabitStats } from '../utils/habitStats';
@@ -166,18 +165,6 @@ export function HabitsView({ selectedDate, onPrevious, onNext, onDateSelect }: H
       <Reflection
         value={dayData.reflection}
         onChange={value => setReflection(selectedDate, value)}
-      />
-
-      {/* AI Insight */}
-      <AiInsight
-        selectedDate={selectedDate}
-        habits={habits}
-        completedHabits={dayData.habits}
-        streaks={habitStreaks}
-        tasksCompleted={0}
-        totalTasks={0}
-        reflection={dayData.reflection}
-        dailyData={state.dailyData}
       />
     </div>
   );

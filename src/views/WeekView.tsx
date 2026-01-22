@@ -4,7 +4,9 @@
  * 7-day overview. Factual stats per day.
  */
 
+import { useMemo } from 'react';
 import { useApp } from '../store/AppContext';
+import { AiInsight } from '../components/AiInsight';
 import { getWeekDates, formatShortDate, getDayOfWeek, isToday, getWeekNumber } from '../utils/dates';
 
 interface WeekViewProps {
@@ -68,10 +70,20 @@ function DayCard({ date, mitCount, habitCount, hasReflection, isSelected, onClic
 }
 
 export function WeekView({ selectedDate, onDateSelect, onPreviousWeek, onNextWeek }: WeekViewProps) {
-  const { state, getDailyData, getHabitCount } = useApp();
+  const { state, getDailyData, getHabitCount, getHabitStreak } = useApp();
   const weekDates = getWeekDates(selectedDate, state.settings.weekStartsOn);
   const weekNumber = getWeekNumber(selectedDate);
   const habits = state.settings.habits;
+  const selectedDayData = getDailyData(selectedDate);
+
+  // Calculate streaks for all habits (for AI insight)
+  const habitStreaks = useMemo(() => {
+    const streaks: Record<string, number> = {};
+    for (const habit of habits) {
+      streaks[habit.id] = getHabitStreak(habit.id, selectedDate);
+    }
+    return streaks;
+  }, [habits, getHabitStreak, selectedDate]);
 
   // Stats
   let totalMits = 0;
@@ -152,6 +164,18 @@ export function WeekView({ selectedDate, onDateSelect, onPreviousWeek, onNextWee
           );
         })}
       </div>
+
+      {/* AI Insight */}
+      <AiInsight
+        selectedDate={selectedDate}
+        habits={habits}
+        completedHabits={selectedDayData.habits}
+        streaks={habitStreaks}
+        tasksCompleted={completedMits}
+        totalTasks={totalMits}
+        reflection={selectedDayData.reflection}
+        dailyData={state.dailyData}
+      />
     </div>
   );
 }
