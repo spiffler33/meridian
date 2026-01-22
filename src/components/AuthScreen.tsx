@@ -25,7 +25,7 @@ export function AuthScreen() {
   useEffect(() => {
     const interval = setInterval(() => {
       setSymbolIndex(i => (i + 1) % MERIDIAN_SYMBOLS.length);
-    }, 1000);
+    }, 60000);
     return () => clearInterval(interval);
   }, []);
 
