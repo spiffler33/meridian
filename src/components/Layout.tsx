@@ -43,6 +43,14 @@ function NavItem({ label, shortcut, isActive, onClick }: NavItemProps) {
   );
 }
 
+// Meridian symbols - rotates based on hour of day
+const MERIDIAN_SYMBOLS = ['◐', '☉', '│', '✦', '◉'];
+
+function getMeridianSymbol(): string {
+  const hour = new Date().getHours();
+  return MERIDIAN_SYMBOLS[hour % MERIDIAN_SYMBOLS.length];
+}
+
 export function Layout({
   currentView,
   selectedDate,
@@ -52,6 +60,7 @@ export function Layout({
 }: LayoutProps) {
   // Show "back to today" when viewing past dates on habits/week views
   const showTodayButton = (currentView === 'habits' || currentView === 'week') && !isToday(selectedDate);
+  const meridianSymbol = getMeridianSymbol();
 
   return (
     <div className="min-h-screen flex flex-col bg-bg text-text">
@@ -59,8 +68,8 @@ export function Layout({
       <header className="border-b border-border">
         <div className="max-w-content mx-auto px-4">
           <div className="flex items-center justify-between h-12">
-            <span className="text-sm font-medium text-text-secondary">
-              meridian
+            <span className="text-sm font-medium text-text-secondary italic tracking-[0.3em]">
+              <span className="opacity-60 mr-1">{meridianSymbol}</span>M E R I D I A N
             </span>
 
             <nav className="flex items-center">
