@@ -68,8 +68,8 @@ export function Layout({
       <header className="border-b border-border">
         <div className="max-w-content mx-auto px-4">
           <div className="flex items-center justify-between h-12">
-            <span className="text-[12px] font-medium text-text-secondary italic tracking-[0.25em]">
-              <span className="opacity-50 mr-1">{meridianSymbol}</span>M E R I D I A N
+            <span className="text-lg text-text-secondary opacity-50">
+              {meridianSymbol}
             </span>
 
             <nav className="flex items-center">
