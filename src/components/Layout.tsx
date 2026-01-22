@@ -4,6 +4,7 @@
  * Minimal shell. Nav tabs at top.
  */
 
+import { useState, useEffect } from 'react';
 import type { ViewType } from '../types';
 import { isToday } from '../utils/dates';
 
@@ -43,13 +44,7 @@ function NavItem({ label, shortcut, isActive, onClick }: NavItemProps) {
   );
 }
 
-// Meridian symbols - rotates based on hour of day
 const MERIDIAN_SYMBOLS = ['◐', '☉', '│', '✦', '◉'];
-
-function getMeridianSymbol(): string {
-  const hour = new Date().getHours();
-  return MERIDIAN_SYMBOLS[hour % MERIDIAN_SYMBOLS.length];
-}
 
 export function Layout({
   currentView,
@@ -58,9 +53,17 @@ export function Layout({
   onTodayClick,
   children,
 }: LayoutProps) {
+  const [symbolIndex, setSymbolIndex] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setSymbolIndex(i => (i + 1) % MERIDIAN_SYMBOLS.length);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Show "back to today" when viewing past dates on habits/week views
   const showTodayButton = (currentView === 'habits' || currentView === 'week') && !isToday(selectedDate);
-  const meridianSymbol = getMeridianSymbol();
 
   return (
     <div className="min-h-screen flex flex-col bg-bg text-text">
@@ -69,7 +72,7 @@ export function Layout({
         <div className="max-w-content mx-auto px-4">
           <div className="flex items-center justify-between h-12">
             <span className="text-lg text-text-secondary opacity-50">
-              {meridianSymbol}
+              {MERIDIAN_SYMBOLS[symbolIndex]}
             </span>
 
             <nav className="flex items-center">
