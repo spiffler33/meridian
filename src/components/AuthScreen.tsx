@@ -11,6 +11,13 @@ import { getUsernameError } from '../services/auth';
 
 type AuthMode = 'login' | 'signup';
 
+const MERIDIAN_SYMBOLS = ['◐', '☉', '│', '✦', '◉'];
+
+function getMeridianSymbol(): string {
+  const hour = new Date().getHours();
+  return MERIDIAN_SYMBOLS[hour % MERIDIAN_SYMBOLS.length];
+}
+
 export function AuthScreen() {
   const { login, signup, loading, error, clearError } = useAuth();
   const [mode, setMode] = useState<AuthMode>('login');
@@ -110,8 +117,8 @@ export function AuthScreen() {
 
       <div className="w-full max-w-xs">
         {/* Title */}
-        <h1 className="text-lg font-mono text-text-secondary mb-2 text-center tracking-wider">
-          MERIDIAN
+        <h1 className="text-sm font-medium text-text-secondary italic tracking-[0.25em] mb-2 text-center">
+          <span className="opacity-50 mr-1">{getMeridianSymbol()}</span>M E R I D I A N
         </h1>
 
         {/* What is this link */}
