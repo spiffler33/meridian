@@ -197,7 +197,7 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 **Steps**: entity definitions for the 9 ported tables; reimplement all ~35 exports against fold-state + journal appends. Preserve exactly: `getPacks()` session counts (manual aggregation), tower ordering `expects_by ASC NULLS LAST, last_touched ASC`, `sort_order` assignment for `createHabit`/`createTask`, `updateTask`'s `completed_at` set/clear side-effect, `updateTowerItem`'s `last_touched` bump, soft-delete semantics on `habits`/`packs`.
 **Done-criteria**: `npx tsc -b` exit 0; `npm test -- --run` exit 0 with tests asserting the four preserved behaviours above; `grep -c "supabase" src/services/data.ts` → `0`; every function name exported before the phase is still exported after (`node -e` diff of the export list against a pre-phase snapshot → empty).
 `depends_on: [2, 3]` · `weight: heavy` · `live_model: no` · `coder: opus` · `verify_class: sample` · `kind: seam-design`
-- [ ] done
+- [x] done — 65 tests; all 46 exports byte-identical; verified against the real 303-event seed
 
 ### Phase 7 — Rewire the app shell
 **Goal**: first paint from IndexedDB, no auth gate, outbox flushed on the right triggers.
