@@ -93,11 +93,12 @@ Phase 0 exports **all** rows regardless of owner. Phase 5 seeds only the profile
 
 ## DECISIONS — ratified before the run; phases implement these verbatim
 
-**DECISION 1 — AI features and CSP.** Keep `claude.ts` (daily insight), drop the `parse-task` edge-function path.
-- `src/services/ai.ts` `parseTowerInput()` keeps its existing local fallback as its only behaviour; the `supabase.functions.invoke` call is deleted. `explainWhyThis()` is already pure client-side and is untouched.
-- `src/services/claude.ts` stays, with `apiKey` read from IndexedDB instead of `profiles.claude_api_key`.
-- CSP `connect-src` is therefore exactly: `'self' https://api.github.com https://api.anthropic.com`.
-- `script-src 'self'`; no other host is permitted anywhere.
+**DECISION 1 — AI is on life support; full rebuild is a LATER plan.** Ratified 2026-08-23: do the bare minimum to keep the app coherent, invest nothing in AI quality now.
+- `src/services/ai.ts` `parseTowerInput()` — delete the `supabase.functions.invoke('parse-task')` call; its existing local fallback (`{ text: trimmed, status: 'active' }`) becomes its only behaviour. The Tower brain-dump keeps working, just without parsing.
+- `src/services/claude.ts` — unchanged logic. Only the key source moves: `loadApiKey()` reads from the IndexedDB `meta` store instead of `profiles.claude_api_key`. Smallest possible diff; do not redesign, do not add retries, do not change the model.
+- The existing API-key field in `SettingsView` is repointed at IndexedDB. No new AI UI.
+- CSP `connect-src` is therefore exactly: `'self' https://api.github.com https://api.anthropic.com`. `script-src 'self'`.
+- **Out of scope for this run**: any improvement to insight quality, prompt, model choice, or bringing back server-side parsing. Leave the seams obvious for the later rebuild.
 
 **DECISION 2 — Auth is removed entirely.** No login screen; the app opens straight to Today. Delete `src/services/auth.ts`, `src/store/AuthContext.tsx`, `src/components/AuthScreen.tsx`. `LoadingScreen` is kept only if the IndexedDB first-paint needs it. Safe on public Pages: no data is served by the origin — a stranger loading the URL gets an empty local app and cannot fetch anything without the PAT.
 
@@ -109,8 +110,10 @@ Phase 0 exports **all** rows regardless of owner. Phase 5 seeds only the profile
 
 > **SECURITY DEBT — act on this.** The key was pasted into a chat transcript. Rotate it in the Supabase dashboard as soon as Phase 0 has produced a verified export, and before the project is left idle. Tracked as the first item in "After the run".
 
-**DECISION 6 — Which profile(s) to seed.** *(pending ratification — see the question posed with this plan)*
-Default if unanswered: seed **`vats` only** (`ba1d1269-aa10-436b-bb42-c784c1fcbf17`). `mingz` and `mansi` are other people's accounts and are out of scope for a single-user local app; `testuser` holds 70 tower items and 42 completions that may be real early history worth merging. Phase 5 is BLOCKED until this is answered; every other phase is unaffected.
+**DECISION 6 — Seed `vats` only.** Ratified 2026-08-23: `ba1d1269-aa10-436b-bb42-c784c1fcbf17`. `testuser`, `mingz` and `mansi` are exported in Phase 0 for the record and are NOT seeded.
+Phase 5 target counts, pre-registered: habits 12 · daily_entries 9 · habit_completions 176 · tasks 0 · year_themes 1 · tower_items 84 · packs 2 · pack_sessions (those whose parent pack is vats-owned) · profile 1.
+
+**DECISION 7 — All work lands on branch `local-first`, never `main`.** `.github/workflows/deploy.yml` fires on push to `main` and would deploy a half-migrated app over the live meridian.spiffler.xyz that is in daily use. Phase commits stay on the branch; the branch is pushed (safe — no workflow trigger); `main` is merged only after the Phase 12 acceptance drill passes.
 
 ---
 
@@ -181,7 +184,6 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 **Scope**: scratchpad transform script; writes into the `meridian-data` clone. No app code.
 **Steps**: filter every table to the `user_id`(s) named in DECISION 6 (`pack_sessions` via its parent `packs.user_id`); map the 9 ported tables to entities; `ts` from `created_at`/`updated_at` where the source has it, else a fixed floor timestamp; `device: "seed"`; `seq` monotonic in emission order; one `upsert` event per row. Skip `friendships` and `activities`. Drop the `user_id` column itself — the local model has no owner concept.
 **Done-criteria**: replay the produced file through Phase 2's `fold()` → per-entity counts exactly equal the DECISION 6 owner's row counts from the table above; `warnings[]` is empty; every line parses as JSON with all seven required event fields present; `grep -c user_id journal/*.seed.jsonl` → `0`.
-**Blocked until DECISION 6 is ratified.**
 `depends_on: [0, 2]` · `weight: light` · `live_model: no` · `coder: sonnet` · `verify_class: complete` · `kind: transcription`
 - [ ] done
 
