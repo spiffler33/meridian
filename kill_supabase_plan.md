@@ -164,7 +164,7 @@ Phase 5 target counts, pre-registered: habits 12 · daily_entries 9 · habit_com
 Tests 2–5 are acceptance C; test 7 is acceptance F.
 **Why opus**: the delete-vs-later-upsert precedence and the tie-break ordering are the two judgment calls in the whole rework, and a silent error here corrupts data irrecoverably rather than failing loudly.
 `depends_on: [1]` · `weight: heavy` · `live_model: no` · `coder: opus` · `verify_class: complete` · `kind: seam-design`
-- [ ] done
+- [x] done — 18 tests; order key now (ts,device,seq,id) after review found it non-total; deep-copy on fold
 
 ### Phase 3 — IndexedDB layer
 **Goal**: the local working copy, durable across app kill.
@@ -172,7 +172,7 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 **Steps**: one database, stores `state`, `journalCache`, `outbox`, `meta` (deviceId, seq, token, lastBackupAt, lastBackupError, skippedContextPrompt, theme). Typed accessors; `nextSeq()` persists before returning. `requestPersistence()` wrapping `navigator.storage.persist()`.
 **Done-criteria**: `npm test -- --run src/lib/db.test.ts` exit 0, covering: round-trip through each store; `nextSeq()` strictly increasing across a simulated close/reopen; outbox entries survive close/reopen; `requestPersistence()` returns the boolean and never throws when the API is absent.
 `depends_on: [1]` · `weight: heavy` · `live_model: no` · `coder: opus` · `verify_class: sample` · `kind: recipe`
-- [ ] done
+- [x] done — 32 tests; enqueue validation, real error causes, dead-handle recovery, strict durability
 
 ### Phase 4 — GitHub contents-API sync client
 **Goal**: SHA-conditional, race-safe, idempotent transport.
@@ -180,7 +180,7 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 **Steps**: `listJournal()`, `getFile(path)`, `putFile(path, content, sha)`, `appendLines(path, lines)`, `verifyAccess(token)`. 409/SHA mismatch → refetch and retry (bounded). Serialize every write under one Web Locks name; fall back to an in-module promise chain where `navigator.locks` is absent.
 **Done-criteria**: `npm test -- --run src/lib/github.test.ts` exit 0 with mocked `fetch`, covering: a 409 triggers exactly one refetch and the retry succeeds; a 401 surfaces a typed auth error rather than throwing raw; two concurrent `appendLines` calls to the same path issue their PUTs strictly in sequence; `listJournal` groups `YYYY-MM.<device>.jsonl` by device; the retry is bounded and gives up with a typed error.
 `depends_on: [1]` · `weight: heavy` · `live_model: no` · `coder: opus` · `verify_class: sample` · `kind: recipe`
-- [ ] done
+- [x] done — 38 tests; 30s abort, ratelimit vs auth, newline guard, 409-on-GET as absent
 
 ### Phase 5 — Seed journal from the Phase 0 export
 **Goal**: turn the export into `journal/YYYY-MM.seed.jsonl` so a fresh device restores real history.
