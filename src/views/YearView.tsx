@@ -6,7 +6,6 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../store/AppContext';
-import { useAuth } from '../store/AuthContext';
 import { getYearCalendarGrid, formatShortDate, getMonthAbbr, isToday, isFuture, parseDate } from '../utils/dates';
 
 interface YearViewProps {
@@ -54,8 +53,7 @@ function DayCell({ date, habitCount, totalHabits, onClick }: DayCellProps) {
 }
 
 export function YearView({ selectedYear, onYearChange, onDateSelect }: YearViewProps) {
-  const { state, getHabitCount, getYearTheme, setYearTheme } = useApp();
-  const { profile, updateProfile } = useAuth();
+  const { state, getHabitCount, getYearTheme, setYearTheme, profile, updateProfile } = useApp();
   const [editingTheme, setEditingTheme] = useState(false);
   const [themeInput, setThemeInput] = useState(getYearTheme(selectedYear));
   const [editingContext, setEditingContext] = useState(false);

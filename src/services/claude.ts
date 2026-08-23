@@ -2,13 +2,14 @@
  * Claude API Service
  *
  * Client-side integration with Claude API for daily insights.
- * API key stored in Supabase profile (syncs across devices).
+ * The API key lives in the IndexedDB `meta` store: device-local, and the one
+ * store that is never journalled, so it cannot reach the data repo.
  */
 
 import type { HistoricalAnalytics, HabitAnalytics } from '../utils/analytics';
-import { supabase } from './supabase';
+import { deleteMeta, getMeta, setMeta } from '../lib/db';
 
-// Local cache to avoid repeated DB reads
+// Local cache to avoid repeated reads
 let cachedApiKey: string | null = null;
 
 export type AiTone = 'stoic' | 'friendly' | 'wise';
@@ -25,48 +26,26 @@ const TONE_INSTRUCTIONS: Record<AiTone, string> = {
 };
 
 export async function saveApiKey(key: string): Promise<void> {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('Not authenticated');
-
-  const { error } = await supabase
-    .from('profiles')
-    .update({ claude_api_key: key })
-    .eq('id', user.id);
-
-  if (error) throw error;
-  cachedApiKey = key;
+  await setMeta('claudeApiKey', key);
+  cachedApiKey = key.length > 0 ? key : null;
 }
 
 export async function loadApiKey(): Promise<string> {
   if (cachedApiKey !== null) return cachedApiKey;
 
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return '';
-
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('claude_api_key')
-    .eq('id', user.id)
-    .single();
-
-  if (error || !data) return '';
-  cachedApiKey = data.claude_api_key ?? '';
-  return cachedApiKey;
+  const stored = await getMeta<string>('claudeApiKey', '');
+  // Only a real key is cached. Caching the empty string turned "no key yet"
+  // into a permanent answer: one saved in another tab would never be read.
+  if (stored.length > 0) cachedApiKey = stored;
+  return stored;
 }
 
 export async function clearApiKey(): Promise<void> {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return;
-
-  await supabase
-    .from('profiles')
-    .update({ claude_api_key: null })
-    .eq('id', user.id);
-
+  await deleteMeta('claudeApiKey');
   cachedApiKey = null;
 }
 
-// Clear cache on logout (call this from AuthContext)
+// Drop the cached key so the next read goes back to the store
 export function clearApiKeyCache(): void {
   cachedApiKey = null;
 }

@@ -2,7 +2,7 @@
  * Life Calendar - Core Type Definitions
  *
  * This file defines the data model for the entire app.
- * All data is stored in localStorage and persisted across sessions.
+ * All data is stored in IndexedDB and persisted across sessions.
  */
 
 // Unique identifier for habits

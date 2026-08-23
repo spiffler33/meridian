@@ -1,8 +1,9 @@
 /**
  * App State Management using React Context
  *
- * Supabase is the source of truth for authenticated users.
- * Habits and completions are loaded from and saved to Supabase.
+ * IndexedDB is the source of truth this renders from. First paint reads the
+ * local store and never waits on the network; the GitHub sync runs in the
+ * background afterwards and re-renders when it lands.
  */
 
 import { createContext, useContext, useReducer, useEffect, useCallback, useRef, useState } from 'react';
@@ -26,11 +27,11 @@ interface ExtendedAppState extends AppState {
   packs: PackWithCount[];
 }
 
-// Create initial state with EMPTY habits (will load from Supabase)
+// Create initial state with EMPTY habits (will load from the local store)
 function createEmptyState(): ExtendedAppState {
   return {
     settings: {
-      habits: [], // Start empty - will load from Supabase
+      habits: [], // Start empty - will load from the local store
       yearThemes: [],
       weekStartsOn: 1,
     },
@@ -61,15 +62,47 @@ import {
   archivePack,
   createPackSession,
   deletePackSession,
+  getProfile,
+  updateProfile as updateProfileInStore,
 } from '../services/data';
-import type { TowerItemInput, PackInput, PackSessionInput } from '../services/data';
+import type { TowerItemInput, PackInput, PackSessionInput, Profile } from '../services/data';
+import { requestPersistence, setMeta } from '../lib/db';
+import { installSyncTriggers, scheduleFlush, syncDown } from '../lib/sync';
+
+/**
+ * What a caller may change on the profile.
+ *
+ * Its id and creation date are not theirs, and neither is `claude_api_key`:
+ * a profile write becomes a journal event, so permitting the key here would
+ * type-check a path that carries a live credential into the data repo. The key
+ * lives in the IndexedDB `meta` store, which is never journalled.
+ */
+export type ProfileUpdates = Partial<Omit<Profile, 'id' | 'created_at' | 'claude_api_key'>>;
+
+/**
+ * The inclusive date range a load covered.
+ *
+ * A reload REPLACES this window rather than merging into it. Merging made a
+ * deletion invisible: the payload only carries what still exists, so a date
+ * whose last habit tick or last MIT was removed on another device kept
+ * rendering it until a page reload.
+ */
+interface DateWindow {
+  start: string;
+  end: string;
+}
+
+/** ISO dates sort lexicographically, so plain comparison is the range test. */
+function withinWindow(date: string, window: DateWindow): boolean {
+  return date >= window.start && date <= window.end;
+}
 
 // Action types for the reducer
 type Action =
   | { type: 'SET_HABITS'; payload: HabitDefinition[] }
-  | { type: 'SET_COMPLETIONS'; payload: Record<string, Record<string, boolean>> }
+  | { type: 'SET_COMPLETIONS'; payload: { window: DateWindow; completions: Record<string, Record<string, boolean>> } }
   | { type: 'SET_DAILY_ENTRIES'; payload: Record<string, { focus?: string; reflection?: string; isHoliday?: boolean }> }
-  | { type: 'SET_TASKS'; payload: { date: string; category: MitCategory; tasks: TodoItem[] }[] }
+  | { type: 'SET_TASKS'; payload: { window: DateWindow; groups: { date: string; category: MitCategory; tasks: TodoItem[] }[] } }
   | { type: 'SET_YEAR_THEMES'; payload: { year: number; theme: string }[] }
   | { type: 'TOGGLE_HABIT'; payload: { date: string; habitId: HabitId } }
   | { type: 'ADD_MIT'; payload: { date: string; category: MitCategory; item: TodoItem } }
@@ -105,8 +138,15 @@ function appReducer(state: ExtendedAppState, action: Action): ExtendedAppState {
     }
 
     case 'SET_COMPLETIONS': {
+      const { window, completions } = action.payload;
       const newDailyData = { ...state.dailyData };
-      for (const [date, habits] of Object.entries(action.payload)) {
+      // Clear the whole loaded window first. Whatever the payload does not
+      // carry was deleted, and must stop rendering without a page reload.
+      for (const [date, dayData] of Object.entries(newDailyData)) {
+        if (!withinWindow(date, window)) continue;
+        newDailyData[date] = { ...dayData, habits: {} };
+      }
+      for (const [date, habits] of Object.entries(completions)) {
         newDailyData[date] = {
           ...(newDailyData[date] || createEmptyDailyData(date)),
           habits,
@@ -135,8 +175,15 @@ function appReducer(state: ExtendedAppState, action: Action): ExtendedAppState {
     }
 
     case 'SET_TASKS': {
+      const { window, groups } = action.payload;
       const newDailyData = { ...state.dailyData };
-      for (const { date, category, tasks } of action.payload) {
+      // Same replacement rule as SET_COMPLETIONS: a date+category whose last
+      // MIT was deleted elsewhere has no entry in the payload at all.
+      for (const [date, dayData] of Object.entries(newDailyData)) {
+        if (!withinWindow(date, window)) continue;
+        newDailyData[date] = { ...dayData, mit: createEmptyDailyData(date).mit };
+      }
+      for (const { date, category, tasks } of groups) {
         const dayData = newDailyData[date] || createEmptyDailyData(date);
         newDailyData[date] = {
           ...dayData,
@@ -406,6 +453,8 @@ function appReducer(state: ExtendedAppState, action: Action): ExtendedAppState {
 interface AppContextType {
   state: ExtendedAppState;
   loading: boolean;
+  profile: Profile | null;
+  updateProfile: (updates: ProfileUpdates) => Promise<void>;
   getDailyData: (date: string) => DailyData;
   toggleHabit: (date: string, habitId: HabitId) => void;
   addMit: (date: string, category: MitCategory, text: string, firstStep?: string) => void;
@@ -440,130 +489,176 @@ const AppContext = createContext<AppContextType | null>(null);
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, createEmptyState());
   const [loading, setLoading] = useState(true);
+  const [profile, setProfile] = useState<Profile | null>(null);
   const initializedRef = useRef(false);
 
-  // Load data from Supabase on mount
-  useEffect(() => {
-    const loadFromSupabase = async () => {
-      if (initializedRef.current) return;
-      initializedRef.current = true;
+  /**
+   * Read everything the UI needs out of the local store.
+   *
+   * Every call below is served from IndexedDB, so this never waits on the
+   * network. It is safe to repeat: the background sync calls it again once
+   * newly fetched events have landed.
+   */
+  const loadLocalData = useCallback(async () => {
+    try {
+      const storedHabits = await getHabits();
 
-      try {
-        // Load habits from Supabase
-        const supabaseHabits = await getHabits();
-
-        if (supabaseHabits.length > 0) {
-          // Convert to HabitDefinition format
-          const habits: HabitDefinition[] = supabaseHabits.map(h => ({
-            id: h.id,
-            label: h.label,
-            description: h.description || undefined,
-            category: h.category as HabitDefinition['category'],
-            emoji: h.emoji || undefined,
-          }));
-          dispatch({ type: 'SET_HABITS', payload: habits });
-        } else {
-          // No habits in Supabase - use defaults
-          dispatch({ type: 'SET_HABITS', payload: DEFAULT_HABITS });
-        }
-
-        // Load year themes
-        const yearThemes = await getAllYearThemes();
-        if (yearThemes.length > 0) {
-          dispatch({
-            type: 'SET_YEAR_THEMES',
-            payload: yearThemes.map(t => ({ year: t.year, theme: t.theme })),
-          });
-        }
-
-        // Load data for last 14 days (UI needs ~1-2 weeks, AI fetches its own data on-demand)
-        const todayStr = getToday(); // Local date
-        const startDateObj = new Date();
-        startDateObj.setDate(startDateObj.getDate() - 14);
-        const startDateStr = `${startDateObj.getFullYear()}-${String(startDateObj.getMonth() + 1).padStart(2, '0')}-${String(startDateObj.getDate()).padStart(2, '0')}`;
-
-        // Load completions, daily entries, and tasks in parallel
-        const [completions, dailyData] = await Promise.all([
-          getCompletions(startDateStr, todayStr),
-          getDailyDataRange(startDateStr, todayStr),
-        ]);
-
-        // Convert completions to date -> habitId -> true map
-        const completionMap: Record<string, Record<string, boolean>> = {};
-        for (const c of completions) {
-          if (!completionMap[c.date]) {
-            completionMap[c.date] = {};
-          }
-          completionMap[c.date][c.habit_id] = true;
-        }
-
-        if (Object.keys(completionMap).length > 0) {
-          dispatch({ type: 'SET_COMPLETIONS', payload: completionMap });
-        }
-
-        // Convert daily entries to date -> { focus, reflection, isHoliday } map
-        const entriesMap: Record<string, { focus?: string; reflection?: string; isHoliday?: boolean }> = {};
-        for (const entry of dailyData.entries) {
-          entriesMap[entry.date] = {
-            focus: entry.focus || undefined,
-            reflection: entry.reflection || undefined,
-            isHoliday: entry.is_holiday || false,
-          };
-        }
-
-        if (Object.keys(entriesMap).length > 0) {
-          dispatch({ type: 'SET_DAILY_ENTRIES', payload: entriesMap });
-        }
-
-        // Convert tasks to grouped format
-        const taskGroups: { date: string; category: MitCategory; tasks: TodoItem[] }[] = [];
-        const tasksByDateCategory: Record<string, Record<string, TodoItem[]>> = {};
-
-        for (const task of dailyData.tasks) {
-          const date = task.date;
-          const category = task.category as MitCategory;
-          if (!tasksByDateCategory[date]) {
-            tasksByDateCategory[date] = {};
-          }
-          if (!tasksByDateCategory[date][category]) {
-            tasksByDateCategory[date][category] = [];
-          }
-          tasksByDateCategory[date][category].push({
-            id: task.id,
-            text: task.text,
-            completed: task.completed,
-            firstStep: task.first_step || undefined,
-          });
-        }
-
-        for (const [date, categories] of Object.entries(tasksByDateCategory)) {
-          for (const [category, tasks] of Object.entries(categories)) {
-            taskGroups.push({ date, category: category as MitCategory, tasks });
-          }
-        }
-
-        if (taskGroups.length > 0) {
-          dispatch({ type: 'SET_TASKS', payload: taskGroups });
-        }
-
-        // Load tower items and packs in parallel
-        const [towerItems, packs] = await Promise.all([
-          getTowerItems(),
-          getPacks(),
-        ]);
-        dispatch({ type: 'SET_TOWER_ITEMS', payload: towerItems });
-        dispatch({ type: 'SET_PACKS', payload: packs });
-      } catch (err) {
-        if (import.meta.env.DEV) console.error('Failed to load from Supabase:', err);
-        // Fall back to defaults on error
+      if (storedHabits.length > 0) {
+        // Convert to HabitDefinition format
+        const habits: HabitDefinition[] = storedHabits.map(h => ({
+          id: h.id,
+          label: h.label,
+          description: h.description || undefined,
+          category: h.category as HabitDefinition['category'],
+          emoji: h.emoji || undefined,
+        }));
+        dispatch({ type: 'SET_HABITS', payload: habits });
+      } else {
+        // Nothing stored yet - use defaults
         dispatch({ type: 'SET_HABITS', payload: DEFAULT_HABITS });
+      }
+
+      // Load year themes
+      const yearThemes = await getAllYearThemes();
+      if (yearThemes.length > 0) {
+        dispatch({
+          type: 'SET_YEAR_THEMES',
+          payload: yearThemes.map(t => ({ year: t.year, theme: t.theme })),
+        });
+      }
+
+      // Load data for last 14 days (UI needs ~1-2 weeks, AI fetches its own data on-demand)
+      const todayStr = getToday(); // Local date
+      const startDateObj = new Date();
+      startDateObj.setDate(startDateObj.getDate() - 14);
+      const startDateStr = `${startDateObj.getFullYear()}-${String(startDateObj.getMonth() + 1).padStart(2, '0')}-${String(startDateObj.getDate()).padStart(2, '0')}`;
+
+      // Load completions, daily entries, and tasks in parallel
+      const [completions, dailyData] = await Promise.all([
+        getCompletions(startDateStr, todayStr),
+        getDailyDataRange(startDateStr, todayStr),
+      ]);
+
+      // Convert completions to date -> habitId -> true map
+      const completionMap: Record<string, Record<string, boolean>> = {};
+      for (const c of completions) {
+        if (!completionMap[c.date]) {
+          completionMap[c.date] = {};
+        }
+        completionMap[c.date][c.habit_id] = true;
+      }
+
+      // Unguarded on purpose: clearing every tick in the window on another
+      // device has to clear them here too, and that payload is empty.
+      const loadedWindow = { start: startDateStr, end: todayStr };
+      dispatch({ type: 'SET_COMPLETIONS', payload: { window: loadedWindow, completions: completionMap } });
+
+      // Convert daily entries to date -> { focus, reflection, isHoliday } map
+      const entriesMap: Record<string, { focus?: string; reflection?: string; isHoliday?: boolean }> = {};
+      for (const entry of dailyData.entries) {
+        entriesMap[entry.date] = {
+          focus: entry.focus || undefined,
+          reflection: entry.reflection || undefined,
+          isHoliday: entry.is_holiday || false,
+        };
+      }
+
+      if (Object.keys(entriesMap).length > 0) {
+        dispatch({ type: 'SET_DAILY_ENTRIES', payload: entriesMap });
+      }
+
+      // Convert tasks to grouped format
+      const taskGroups: { date: string; category: MitCategory; tasks: TodoItem[] }[] = [];
+      const tasksByDateCategory: Record<string, Record<string, TodoItem[]>> = {};
+
+      for (const task of dailyData.tasks) {
+        const date = task.date;
+        const category = task.category as MitCategory;
+        if (!tasksByDateCategory[date]) {
+          tasksByDateCategory[date] = {};
+        }
+        if (!tasksByDateCategory[date][category]) {
+          tasksByDateCategory[date][category] = [];
+        }
+        tasksByDateCategory[date][category].push({
+          id: task.id,
+          text: task.text,
+          completed: task.completed,
+          firstStep: task.first_step || undefined,
+        });
+      }
+
+      for (const [date, categories] of Object.entries(tasksByDateCategory)) {
+        for (const [category, tasks] of Object.entries(categories)) {
+          taskGroups.push({ date, category: category as MitCategory, tasks });
+        }
+      }
+
+      dispatch({ type: 'SET_TASKS', payload: { window: loadedWindow, groups: taskGroups } });
+
+      // Load tower items, packs and the profile in parallel
+      const [towerItems, packs, storedProfile] = await Promise.all([
+        getTowerItems(),
+        getPacks(),
+        getProfile(),
+      ]);
+      dispatch({ type: 'SET_TOWER_ITEMS', payload: towerItems });
+      dispatch({ type: 'SET_PACKS', payload: packs });
+      setProfile(storedProfile);
+    } catch (err) {
+      if (import.meta.env.DEV) console.error('Failed to load local data:', err);
+      // Fall back to defaults on error
+      dispatch({ type: 'SET_HABITS', payload: DEFAULT_HABITS });
+    }
+  }, []);
+
+  // First paint comes from the local store. Everything that touches the
+  // network happens strictly after it, so an offline cold open shows data.
+  useEffect(() => {
+    if (initializedRef.current) return;
+    initializedRef.current = true;
+
+    void (async () => {
+      try {
+        await loadLocalData();
       } finally {
         setLoading(false);
       }
-    };
 
-    loadFromSupabase();
-  }, []);
+      // Ask the browser to keep this origin's storage. Phase 8 shows the
+      // answer; recording it is all that happens here.
+      try {
+        await setMeta('persistGranted', await requestPersistence());
+      } catch (err) {
+        if (import.meta.env.DEV) console.error('Failed to record storage persistence:', err);
+      }
+
+      try {
+        const result = await syncDown();
+        // Only a pull that actually changed the cache is worth re-reading for.
+        if (result !== null && result.fetched > 0) await loadLocalData();
+      } catch (err) {
+        if (import.meta.env.DEV) console.error('Background sync failed:', err);
+      }
+    })();
+  }, [loadLocalData]);
+
+  // Push and pull triggers. Installed in their own effect, with symmetric
+  // teardown, so React's development double-mount leaves them wired.
+  useEffect(() => {
+    return installSyncTriggers({
+      onSynced: () => {
+        void loadLocalData();
+      },
+    });
+  }, [loadLocalData]);
+
+  // Any change to rendered state or to the profile may have queued events —
+  // including writes made outside this provider. The debounce inside
+  // collapses a burst of edits into one push.
+  useEffect(() => {
+    scheduleFlush();
+  }, [state, profile]);
 
   // Helper to get daily data (with fallback to empty)
   const getDailyData = useCallback(
@@ -625,7 +720,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [state.dailyData]
   );
 
-  // Toggle habit with Supabase sync
+  // Toggle habit, recorded to the local journal
   const toggleHabit = useCallback(
     async (date: string, habitId: HabitId) => {
       const dayData = state.dailyData[date] || createEmptyDailyData(date);
@@ -635,11 +730,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // Update local state immediately
       dispatch({ type: 'TOGGLE_HABIT', payload: { date, habitId } });
 
-      // Sync to Supabase
+      // Record the change
       try {
         await toggleCompletion(habitId, date, newValue);
       } catch (err) {
-        if (import.meta.env.DEV) console.error('Failed to sync habit to Supabase:', err);
+        if (import.meta.env.DEV) console.error('Failed to record habit toggle:', err);
         // Revert on error
         dispatch({ type: 'TOGGLE_HABIT', payload: { date, habitId } });
       }
@@ -647,7 +742,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [state.dailyData]
   );
 
-  // Add MIT with Supabase sync
+  // Add MIT, recorded to the local journal
   const addMit = useCallback(
     async (date: string, category: MitCategory, text: string, firstStep?: string) => {
       try {
@@ -666,7 +761,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
-  // Update MIT with Supabase sync
+  // Update MIT, recorded to the local journal
   const updateMit = useCallback(
     async (date: string, category: MitCategory, id: string, text: string) => {
       // Update local state immediately
@@ -681,7 +776,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
-  // Delete MIT with Supabase sync
+  // Delete MIT, recorded to the local journal
   const deleteMit = useCallback(
     async (date: string, category: MitCategory, id: string) => {
       // Update local state immediately
@@ -696,7 +791,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
-  // Toggle MIT with Supabase sync
+  // Toggle MIT, recorded to the local journal
   const toggleMit = useCallback(
     async (date: string, category: MitCategory, id: string) => {
       const dayData = state.dailyData[date];
@@ -721,7 +816,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [state.dailyData]
   );
 
-  // Set MIT first step with Supabase sync
+  // Set MIT first step, recorded to the local journal
   const setMitFirstStep = useCallback(
     async (date: string, category: MitCategory, id: string, firstStep: string) => {
       // Update local state immediately
@@ -736,7 +831,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
-  // Set focus with Supabase sync
+  // Set focus, recorded to the local journal
   const setFocus = useCallback(
     async (date: string, focus: string) => {
       // Update local state immediately
@@ -751,7 +846,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
-  // Set reflection with Supabase sync
+  // Set reflection, recorded to the local journal
   const setReflection = useCallback(
     async (date: string, reflection: string) => {
       // Update local state immediately
@@ -766,7 +861,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
-  // Toggle holiday mode with Supabase sync
+  // Toggle holiday mode, recorded to the local journal
   const toggleHoliday = useCallback(
     async (date: string) => {
       const dayData = state.dailyData[date] || createEmptyDailyData(date);
@@ -786,7 +881,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [state.dailyData]
   );
 
-  // Set year theme with Supabase sync
+  // Set year theme, recorded to the local journal
   const setYearTheme = useCallback(
     async (year: number, theme: string) => {
       // Update local state immediately
@@ -800,6 +895,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     },
     []
   );
+
+  // Update the profile. The store returns the merged singleton, which is what
+  // the next read would say, so it is what the UI is given.
+  const updateProfileFn = useCallback(async (updates: ProfileUpdates) => {
+    try {
+      setProfile(await updateProfileInStore(updates));
+    } catch (err) {
+      if (import.meta.env.DEV) console.error('Failed to update profile:', err);
+    }
+  }, []);
 
   // ============================================================================
   // Tower Methods
@@ -927,6 +1032,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const value: AppContextType = {
     state,
     loading,
+    profile,
+    updateProfile: updateProfileFn,
     getDailyData,
     toggleHabit,
     addMit,

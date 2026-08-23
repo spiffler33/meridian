@@ -801,7 +801,9 @@ async function record(drafts: readonly EventDraft[]): Promise<void> {
 async function noteStateFailure(error: unknown): Promise<void> {
   const detail = error instanceof Error ? error.message : String(error);
   try {
-    await setMeta('lastBackupError', `the cached state could not be saved: ${detail}`);
+    // Its own key. A successful push clears `lastBackupError`, and this is not
+    // a push failure — sharing the key let a good backup erase a real local one.
+    await setMeta('lastStateError', `the cached state could not be saved: ${detail}`);
   } catch {
     // The note lives in the same database that just refused the state. There
     // is nowhere left to record it, and the write itself is still safe.

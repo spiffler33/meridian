@@ -5,14 +5,13 @@
  * Analyzes 30-day patterns, correlations, and day-of-week trends.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { generateEnhancedInsight, loadApiKey } from '../services/claude';
-import { useAuth } from '../store/AuthContext';
+import { useApp } from '../store/AppContext';
+import { getMeta, setMeta } from '../lib/db';
 import type { HabitDefinition, HabitId, DailyData } from '../types';
 import { getDaysUntilEndOfYear } from '../utils/dates';
 import { computeHistoricalAnalytics } from '../utils/analytics';
-
-const SKIPPED_CONTEXT_KEY = 'hasSkippedContextPrompt';
 
 interface AiInsightProps {
   selectedDate: string;
@@ -35,16 +34,48 @@ export function AiInsight({
   reflection,
   dailyData,
 }: AiInsightProps) {
-  const { profile, updateProfile } = useAuth();
+  const { profile, updateProfile } = useApp();
   const [insight, setInsight] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showContextPrompt, setShowContextPrompt] = useState(false);
   const [contextInput, setContextInput] = useState('');
+  // Null until the store answers: 'false' would be a guess, and a fast click
+  // on that guess re-opens a prompt the owner already waved away.
+  const [hasSkippedPrompt, setHasSkippedPrompt] = useState<boolean | null>(null);
+  const [hasApiKey, setHasApiKey] = useState(false);
 
-  const hasApiKey = !!loadApiKey();
   const hasPersonalContext = !!profile?.personal_context;
-  const hasSkippedPrompt = localStorage.getItem(SKIPPED_CONTEXT_KEY) === 'true';
+
+  // `loadApiKey` reads the IndexedDB `meta` store, so it answers with a promise.
+  // Testing the promise itself was always true, which is why this panel showed
+  // up on devices with no key at all.
+  useEffect(() => {
+    let live = true;
+    loadApiKey().then(
+      key => {
+        if (live) setHasApiKey(key.length > 0);
+      },
+      () => undefined
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // Whether the owner already waved the context prompt away, from the store.
+  useEffect(() => {
+    let live = true;
+    getMeta<boolean>('skippedContextPrompt', false).then(
+      value => {
+        if (live) setHasSkippedPrompt(value === true);
+      },
+      () => undefined
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const doGenerate = useCallback(async () => {
     setLoading(true);
@@ -83,7 +114,7 @@ export function AiInsight({
 
   const handleGenerate = useCallback(() => {
     // First-time: show context prompt if no context and haven't skipped
-    if (!insight && !hasPersonalContext && !hasSkippedPrompt) {
+    if (!insight && !hasPersonalContext && hasSkippedPrompt === false) {
       setShowContextPrompt(true);
       return;
     }
@@ -91,7 +122,9 @@ export function AiInsight({
   }, [insight, hasPersonalContext, hasSkippedPrompt, doGenerate]);
 
   const handleSkipContext = () => {
-    localStorage.setItem(SKIPPED_CONTEXT_KEY, 'true');
+    setHasSkippedPrompt(true);
+    // Remembering the choice is a convenience; failing to is not worth an error.
+    void setMeta('skippedContextPrompt', true).catch(() => undefined);
     setShowContextPrompt(false);
     doGenerate();
   };

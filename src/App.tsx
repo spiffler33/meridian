@@ -7,7 +7,6 @@
 
 import { AppProvider } from './store/AppContext';
 import { ThemeProvider } from './store/ThemeContext';
-import { AuthProvider, useAuth } from './store/AuthContext';
 import { Layout } from './components/Layout';
 import { useNavigation } from './hooks/useNavigation';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
@@ -16,8 +15,6 @@ import { HabitsView } from './views/HabitsView';
 import { WeekView } from './views/WeekView';
 import { YearView } from './views/YearView';
 import { SettingsView } from './views/SettingsView';
-import { AuthScreen } from './components/AuthScreen';
-import { LoadingScreen } from './components/LoadingScreen';
 
 function AppContent() {
   const nav = useNavigation();
@@ -84,30 +81,12 @@ function AppContent() {
   );
 }
 
-function AuthenticatedApp() {
-  const { user, loading } = useAuth();
-
-  if (loading) {
-    return <LoadingScreen />;
-  }
-
-  if (!user) {
-    return <AuthScreen />;
-  }
-
-  return (
-    <AppProvider>
-      <AppContent />
-    </AppProvider>
-  );
-}
-
 export default function App() {
   return (
     <ThemeProvider>
-      <AuthProvider>
-        <AuthenticatedApp />
-      </AuthProvider>
+      <AppProvider>
+        <AppContent />
+      </AppProvider>
     </ThemeProvider>
   );
 }

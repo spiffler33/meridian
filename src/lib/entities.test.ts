@@ -1161,7 +1161,9 @@ describe('a failure below the write path', () => {
     expect(habit.label).toBe('Read')
     expect((await getHabits()).map((row) => row.id)).toEqual([habit.id])
     expect(await outboxSize()).toBe(1)
-    expect(await getMeta<string>('lastBackupError')).toContain('the quota is exhausted')
+    expect(await getMeta<string>('lastStateError')).toContain('the quota is exhausted')
+    // Not the push signal: a later clean backup must not clear this.
+    expect(await getMeta('lastBackupError')).toBeUndefined()
   })
 
   it('still rejects a write that never reached the outbox', async () => {

@@ -30,9 +30,18 @@ export type MetaKey =
   | 'token'
   | 'lastBackupAt'
   | 'lastBackupError'
+  /** `GitHubErrorKind` for the failure above, when it came from GitHub at all. */
+  | 'lastBackupErrorKind'
+  /** A local state-cache write that failed. Separate: a good push must not clear it. */
+  | 'lastStateError'
   | 'theme'
   | 'skippedContextPrompt'
   | 'persistGranted'
+  /**
+   * The Claude API key. Device-local on purpose: `meta` is the one store that
+   * is never journalled, so the key cannot reach the data repo.
+   */
+  | 'claudeApiKey'
 
 /** A cached journal file as fetched from the data repo. */
 export type JournalCacheRecord = {

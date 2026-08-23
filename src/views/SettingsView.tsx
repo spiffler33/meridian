@@ -6,13 +6,14 @@
 
 import { useState, useEffect } from 'react';
 import { useApp } from '../store/AppContext';
-import { useAuth } from '../store/AuthContext';
 import { useTheme, THEMES } from '../store/ThemeContext';
 import type { HabitDefinition, HabitCategory } from '../types';
 import { DEFAULT_HABITS } from '../types';
 import { saveApiKey, loadApiKey, clearApiKey } from '../services/claude';
 import type { AiTone } from '../services/claude';
 import { createHabit, updateHabit as updateHabitInDb, deleteHabit as deleteHabitInDb } from '../services/data';
+import { clearToken, getDeviceId, getToken, requestPersistence, setMeta, setToken } from '../lib/db';
+import { GITHUB_OWNER, GITHUB_REPO, isJournalDeviceId, listJournal, verifyAccess } from '../lib/github';
 
 interface HabitEditorProps {
   habit: HabitDefinition;
@@ -118,9 +119,28 @@ const AI_TONES: { value: AiTone; label: string; description: string }[] = [
   { value: 'wise', label: 'wise', description: 'thoughtful friend, conversational' },
 ];
 
+/**
+ * What the browser says about keeping this origin's data, asked live.
+ *
+ * 'unknown' is a browser that cannot answer at all, which is a different thing
+ * from a refusal: an installed home-screen app is often granted persistence
+ * without ever being asked, and a grant can be lost again later, so a value
+ * cached at the moment the button was last clicked describes nothing.
+ */
+type PersistenceAnswer = 'granted' | 'denied' | 'unknown';
+
+async function readPersistence(): Promise<PersistenceAnswer> {
+  const storage: StorageManager | undefined = navigator.storage;
+  if (!storage || typeof storage.persisted !== 'function') return 'unknown';
+  try {
+    return (await storage.persisted()) ? 'granted' : 'denied';
+  } catch {
+    return 'unknown';
+  }
+}
+
 export function SettingsView() {
-  const { state, updateSettings, updateHabits } = useApp();
-  const { profile, updateProfile, logout } = useAuth();
+  const { state, updateSettings, updateHabits, profile, updateProfile } = useApp();
   const { theme, setTheme } = useTheme();
   const [addingHabit, setAddingHabit] = useState(false);
   const [newHabitLabel, setNewHabitLabel] = useState('');
@@ -128,9 +148,52 @@ export function SettingsView() {
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
   const [apiKeySaving, setApiKeySaving] = useState(false);
   const [personalContext, setPersonalContext] = useState(profile?.personal_context || '');
+  const [deviceId, setDeviceId] = useState('');
+  const [savedDeviceId, setSavedDeviceId] = useState('');
+  const [deviceSaved, setDeviceSaved] = useState(false);
+  const [deviceProblem, setDeviceProblem] = useState('');
+  const [tokenDraft, setTokenDraft] = useState('');
+  const [tokenStored, setTokenStored] = useState(false);
+  const [accessMessage, setAccessMessage] = useState('');
+  // A verify that failed must not read like one that passed.
+  const [accessFailed, setAccessFailed] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [persistence, setPersistence] = useState<PersistenceAnswer | null>(null);
+  // Null means "not edited yet", so the field follows the profile until it is.
+  const [usernameDraft, setUsernameDraft] = useState<string | null>(null);
+  const [displayNameDraft, setDisplayNameDraft] = useState<string | null>(null);
+
+  const username = usernameDraft ?? profile?.username ?? '';
+  const displayName = displayNameDraft ?? profile?.display_name ?? '';
 
   useEffect(() => {
     loadApiKey().then(key => setApiKey(key));
+  }, []);
+
+  // The device id and whether a token is stored come from IndexedDB; the
+  // persistence answer comes from the browser itself, live. Nothing here waits
+  // on the network.
+  useEffect(() => {
+    let live = true;
+    Promise.all([
+      getDeviceId(),
+      // Only ever the fact that one is stored. The token itself never reaches
+      // component state, so it can never be rendered back.
+      getToken().then(Boolean),
+      readPersistence(),
+    ]).then(
+      ([id, stored, answer]) => {
+        if (!live) return;
+        setDeviceId(id);
+        setSavedDeviceId(id);
+        setTokenStored(stored);
+        setPersistence(answer);
+      },
+      () => undefined
+    );
+    return () => {
+      live = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -166,6 +229,141 @@ export function SettingsView() {
     } finally {
       setApiKeySaving(false);
     }
+  };
+
+  /**
+   * A second device writing under this id would append to the same journal
+   * file, which is the one thing the per-device split exists to prevent. Best
+   * effort only: offline, there is nothing to compare against, and the id is
+   * saved either way.
+   */
+  const warnIfDeviceIdIsTaken = async (id: string) => {
+    try {
+      const token = await getToken();
+      if (token === undefined || token.length === 0) return;
+      const files = await listJournal(token);
+      if (files.some(file => file.device === id)) {
+        setDeviceProblem(
+          'another device already writes that id. two devices sharing one journal file is what the per-device split exists to prevent.'
+        );
+      }
+    } catch {
+      // Nothing to compare against. Silence here is honest.
+    }
+  };
+
+  const handleDeviceIdSave = async () => {
+    const next = deviceId.trim();
+    setDeviceSaved(false);
+    // The id becomes the middle field of `YYYY-MM.<id>.jsonl`. A dot or a slash
+    // in it writes a file the restore never reads, so the edited value is held
+    // to the same closed alphabet the generated ones come from.
+    if (!isJournalDeviceId(next)) {
+      setDeviceProblem(
+        'a device id is 8 characters from 0-9 and a-f. anything else names a journal file a restore never reads.'
+      );
+      return;
+    }
+    setDeviceProblem('');
+    try {
+      await setMeta('deviceId', next);
+      setDeviceSaved(true);
+      setSavedDeviceId(next);
+    } catch (err) {
+      console.error('Failed to save the device id:', err);
+      setDeviceProblem('the device id could not be saved on this device');
+      return;
+    }
+    if (next !== savedDeviceId) await warnIfDeviceIdIsTaken(next);
+  };
+
+  const handleTokenSave = async () => {
+    const next = tokenDraft.trim();
+    if (next.length === 0) return;
+    try {
+      await setToken(next);
+      // Emptied on purpose: the field never shows what was entered, and the
+      // placeholder is the only acknowledgement that something is stored.
+      setTokenDraft('');
+      setTokenStored(true);
+      setAccessMessage('');
+      setAccessFailed(false);
+    } catch {
+      // The reason is dropped rather than reported: it was raised while
+      // handling the token, and nothing derived from it may be rendered.
+      setAccessMessage('the token could not be saved on this device');
+      setAccessFailed(true);
+    }
+  };
+
+  const handleTokenClear = async () => {
+    try {
+      await clearToken();
+      setTokenDraft('');
+      setTokenStored(false);
+      setAccessMessage('the token is no longer stored on this device');
+      setAccessFailed(false);
+    } catch {
+      setAccessMessage('the token could not be removed from this device');
+      setAccessFailed(true);
+    }
+  };
+
+  const handleVerifyAccess = async () => {
+    // Each click is a real request to GitHub. Without this the slower of two
+    // answers wins, whichever question it was answering.
+    if (verifying) return;
+    setVerifying(true);
+    setAccessMessage('');
+    setAccessFailed(false);
+    try {
+      // Read straight from the store into a local, so it goes out of scope
+      // with the call. A verify is a read-only probe: it writes nothing.
+      const token = await getToken();
+      if (token === undefined || token.length === 0) {
+        setAccessMessage('no token is stored on this device yet');
+        return;
+      }
+      const result = await verifyAccess(token);
+      // Only what was actually established: GitHub reported write access. See
+      // the note in github.ts on why that is not the same as proving it works.
+      setAccessMessage(
+        result.ok ? 'github reports write access for this token' : result.reason ?? 'access could not be confirmed'
+      );
+      setAccessFailed(!result.ok);
+    } catch {
+      setAccessMessage('access could not be checked');
+      setAccessFailed(true);
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const handleRequestPersistence = async () => {
+    try {
+      await requestPersistence();
+      // The browser's own answer, not what it said last time it was asked: a
+      // grant can arrive without being asked for, and can be lost again.
+      setPersistence(await readPersistence());
+    } catch (err) {
+      console.error('Failed to request persistent storage:', err);
+    }
+  };
+
+  const handleUsernameSave = () => {
+    if (usernameDraft === null) return;
+    const next = usernameDraft.trim();
+    setUsernameDraft(null);
+    if (next === (profile?.username ?? '')) return;
+    updateProfile({ username: next.length === 0 ? null : next });
+  };
+
+  const handleDisplayNameSave = () => {
+    if (displayNameDraft === null) return;
+    const next = displayNameDraft.trim();
+    setDisplayNameDraft(null);
+    if (next === (profile?.display_name ?? '')) return;
+    updateProfile({ display_name: next.length === 0 ? null : next });
   };
 
   const handleAddHabit = async () => {
@@ -316,6 +514,125 @@ export function SettingsView() {
           >
             sunday
           </button>
+        </div>
+      </section>
+
+      {/* Device */}
+      <section className="bg-bg-card rounded border border-border p-4">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-xs text-text-muted uppercase tracking-wide">device</span>
+          {deviceSaved && <span className="text-xs text-text-muted">saved</span>}
+        </div>
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={deviceId}
+              onChange={e => { setDeviceId(e.target.value); setDeviceSaved(false); setDeviceProblem(''); }}
+              placeholder="device id"
+              className="flex-1 px-2 py-1.5 text-sm rounded border border-border bg-transparent text-text focus:border-accent outline-none font-mono"
+            />
+            <button
+              onClick={handleDeviceIdSave}
+              className="px-3 py-1.5 text-sm rounded border border-border text-text-muted hover:text-accent transition-colors"
+            >
+              save
+            </button>
+          </div>
+          {deviceProblem && (
+            <div className="text-xs text-error">{deviceProblem}</div>
+          )}
+          <div className="text-xs text-text-muted">
+            this id names your journal file in the data repo. changing it starts a
+            new file from the next edit on - the old one stays where it is, with
+            its history intact.
+          </div>
+        </div>
+      </section>
+
+      {/* GitHub backup */}
+      <section className="bg-bg-card rounded border border-border p-4">
+        <div className="text-xs text-text-muted uppercase tracking-wide mb-3">github backup</div>
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={tokenDraft}
+              onChange={e => setTokenDraft(e.target.value)}
+              placeholder={tokenStored ? '•••••••• stored on this device' : 'github_pat_...'}
+              // 'off' is ignored on a password field by both WebKit and
+              // Chromium; 'new-password' is what actually stops the browser
+              // offering to save the pat and refilling it later.
+              autoComplete="new-password"
+              spellCheck={false}
+              className="flex-1 px-2 py-1.5 text-sm rounded border border-border bg-transparent text-text focus:border-accent outline-none font-mono"
+            />
+            <button
+              onClick={handleTokenSave}
+              className="px-3 py-1.5 text-sm rounded border border-border text-text-muted hover:text-accent transition-colors"
+            >
+              save
+            </button>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={handleVerifyAccess}
+              disabled={verifying}
+              className="px-3 py-1.5 text-sm rounded border border-border text-text-muted hover:text-accent transition-colors disabled:opacity-50"
+            >
+              {verifying ? 'checking...' : 'verify access'}
+            </button>
+            {tokenStored && (
+              <button
+                onClick={handleTokenClear}
+                className="px-3 py-1.5 text-sm rounded border border-border text-text-muted hover:text-error transition-colors"
+              >
+                clear
+              </button>
+            )}
+          </div>
+          {accessMessage && (
+            <div className={accessFailed ? 'text-xs text-error' : 'text-xs text-text-muted'}>{accessMessage}</div>
+          )}
+          <div className="text-xs text-text-muted">
+            a fine-grained token for {GITHUB_OWNER}/{GITHUB_REPO} with contents
+            read and write. it stays on this device, goes nowhere but github,
+            and is never shown again once saved.
+          </div>
+        </div>
+      </section>
+
+      {/* Storage */}
+      <section className="bg-bg-card rounded border border-border p-4">
+        <div className="text-xs text-text-muted uppercase tracking-wide mb-3">storage</div>
+        <div className="space-y-3 text-xs text-text-muted">
+          <div className="flex items-center justify-between gap-3">
+            <span>
+              {persistence === 'granted'
+                ? 'persistent storage granted - this browser will keep the local copy'
+                : persistence === 'denied'
+                  ? 'persistent storage not granted - this browser may clear the local copy'
+                  : persistence === 'unknown'
+                    ? 'this browser cannot say whether it will keep the local copy'
+                    : ''}
+            </span>
+            <button
+              onClick={handleRequestPersistence}
+              className="text-xs text-text-muted hover:text-accent transition-colors whitespace-nowrap"
+            >
+              ask again
+            </button>
+          </div>
+          <p>
+            the copy in this browser is the convenient one. the durable one is the
+            journal in github - if this browser ever clears its data, that is what
+            brings everything back.
+          </p>
+          <div className="space-y-1">
+            <div className="text-text">install on iphone</div>
+            <div>open meridian in safari, tap share, then "add to home screen".</div>
+            <div>an installed app keeps its data far longer than a tab does.</div>
+          </div>
         </div>
       </section>
 
@@ -491,14 +808,27 @@ export function SettingsView() {
       {/* Account */}
       <section className="bg-bg-card rounded border border-border p-4">
         <div className="text-xs text-text-muted uppercase tracking-wide mb-3">account</div>
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-text">{profile?.username || 'unknown'}</span>
-          <button
-            onClick={logout}
-            className="px-3 py-1.5 text-sm rounded border border-border text-text-muted hover:text-error hover:border-error transition-colors"
-          >
-            logout
-          </button>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs text-text-muted mb-1">username</label>
+            <input
+              type="text"
+              value={username}
+              onChange={e => setUsernameDraft(e.target.value)}
+              onBlur={handleUsernameSave}
+              className="w-full px-2 py-1.5 text-sm rounded border border-border bg-transparent text-text focus:border-accent outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-text-muted mb-1">display name</label>
+            <input
+              type="text"
+              value={displayName}
+              onChange={e => setDisplayNameDraft(e.target.value)}
+              onBlur={handleDisplayNameSave}
+              className="w-full px-2 py-1.5 text-sm rounded border border-border bg-transparent text-text focus:border-accent outline-none"
+            />
+          </div>
         </div>
       </section>
     </div>

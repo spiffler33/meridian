@@ -8,10 +8,13 @@ import {
   REQUEST_TIMEOUT_MS,
   appendLines,
   getFile,
+  isJournalDeviceId,
   listJournal,
+  onPushFailure,
   putFile,
   verifyAccess,
 } from './github';
+import type { PushFailure } from './github';
 
 const TOKEN = 'test-token-not-a-real-pat';
 const PATH = 'journal/2026-08.laptop.jsonl';
@@ -87,7 +90,14 @@ function forcedResponse(forced: Forced): Response {
   );
 }
 
-function fakeGitHub(options: { files?: Record<string, string>; listing?: unknown[] | null } = {}) {
+function fakeGitHub(
+  options: {
+    files?: Record<string, string>;
+    listing?: unknown[] | null;
+    /** What GitHub reports the token may do. `null` omits the block entirely. */
+    permissions?: Record<string, boolean> | null;
+  } = {},
+) {
   const files = new Map<string, { text: string; sha: string }>();
   let shaCount = 0;
   const nextSha = () => {
@@ -129,7 +139,13 @@ function fakeGitHub(options: { files?: Record<string, string>; listing?: unknown
       return forcedResponse(forced);
     }
 
-    if (path === '') return response(200, { full_name: `${GITHUB_OWNER}/${GITHUB_REPO}` });
+    if (path === '') {
+      const permissions =
+        options.permissions === undefined ? { pull: true, push: true } : options.permissions;
+      const body: Record<string, unknown> = { full_name: `${GITHUB_OWNER}/${GITHUB_REPO}` };
+      if (permissions !== null) body.permissions = permissions;
+      return response(200, body);
+    }
 
     if (path === 'journal' && method === 'GET') {
       const listing = options.listing ?? null;
@@ -202,7 +218,23 @@ async function releaseNext(github: FakeGitHub): Promise<void> {
   await tick();
 }
 
+/** Watchers registered by a test, dropped again however the test ends. */
+const watching: (() => void)[] = [];
+
+function watchPushFailures(listener: (failure: PushFailure) => void): PushFailure[] {
+  const seen: PushFailure[] = [];
+  watching.push(
+    onPushFailure((failure) => {
+      seen.push(failure);
+      listener(failure);
+    }),
+  );
+  return seen;
+}
+
 afterEach(() => {
+  for (const unwatch of watching) unwatch();
+  watching.length = 0;
   vi.useRealTimers();
   vi.unstubAllGlobals();
   Reflect.deleteProperty(navigator, 'locks');
@@ -213,7 +245,7 @@ afterEach(() => {
 // ============================================================================
 
 describe('verifyAccess', () => {
-  it('reports ok and sends the documented auth headers', async () => {
+  it('claims only what GitHub reported, and sends the documented auth headers', async () => {
     const github = fakeGitHub();
     expect(await verifyAccess(TOKEN)).toEqual({ ok: true });
     expect(github.calls[0].headers).toEqual({
@@ -223,9 +255,40 @@ describe('verifyAccess', () => {
     });
   });
 
+  it('rejects a read-only token, which a visible repo alone would have passed', async () => {
+    const github = fakeGitHub({ permissions: { pull: true, push: false } });
+
+    const result = await verifyAccess(TOKEN);
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('read-only');
+    expect(result.reason).not.toContain(TOKEN);
+    // Confirming write access must not write anything.
+    expect(github.methods()).toEqual(['GET']);
+  });
+
+  it('will not confirm access GitHub did not report', async () => {
+    fakeGitHub({ permissions: null });
+
+    const result = await verifyAccess(TOKEN);
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('did not report write access');
+  });
+
+  it('does not confirm access from a body it could not read', async () => {
+    const github = fakeGitHub();
+    github.failGets.push({ status: 200, unreadable: true });
+
+    const result = await verifyAccess(TOKEN);
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).not.toContain(TOKEN);
+  });
+
   it('reports a rejected token on 401 and on a 403 that is not a rate limit', async () => {
     const github = fakeGitHub();
-    const rejected = `Token rejected — it needs Contents read/write on ${GITHUB_OWNER}/${GITHUB_REPO}.`;
+    const rejected = `github rejected the token — it needs contents read and write on ${GITHUB_OWNER}/${GITHUB_REPO}`;
 
     github.failGets.push(401);
     expect(await verifyAccess(TOKEN)).toEqual({ ok: false, reason: rejected });
@@ -240,13 +303,13 @@ describe('verifyAccess', () => {
     github.failGets.push({ status: 403, headers: { 'x-ratelimit-remaining': '0' } });
     const spent = await verifyAccess(TOKEN);
     expect(spent.ok).toBe(false);
-    expect(spent.reason).not.toContain('Token rejected');
+    expect(spent.reason).not.toContain('rejected the token');
     expect(spent.reason).toContain('rate limit');
 
     github.failGets.push(429);
     const throttled = await verifyAccess(TOKEN);
     expect(throttled.ok).toBe(false);
-    expect(throttled.reason).not.toContain('Token rejected');
+    expect(throttled.reason).not.toContain('rejected the token');
     expect(throttled.reason).toContain('rate limit');
   });
 
@@ -255,14 +318,101 @@ describe('verifyAccess', () => {
     github.failGets.push(404);
     expect(await verifyAccess(TOKEN)).toEqual({
       ok: false,
-      reason: `${GITHUB_OWNER}/${GITHUB_REPO} is not visible to this token.`,
+      reason: `${GITHUB_OWNER}/${GITHUB_REPO} is not visible to this token`,
     });
 
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
     const offline = await verifyAccess(TOKEN);
     expect(offline.ok).toBe(false);
-    expect(offline.reason).toContain('Could not reach GitHub');
+    expect(offline.reason).toContain('could not reach github');
     expect(offline.reason).not.toContain(TOKEN);
+  });
+});
+
+describe('isJournalDeviceId', () => {
+  it('accepts what db.ts mints and refuses everything else', () => {
+    expect(isJournalDeviceId('a1b2c3d4')).toBe(true);
+    expect(isJournalDeviceId('00000000')).toBe(true);
+    expect(isJournalDeviceId('ffffffff')).toBe(true);
+
+    // A dot makes a four-part file name; a slash makes a subdirectory. Both
+    // are written happily and read by nothing.
+    expect(isJournalDeviceId('my.phone')).toBe(false);
+    expect(isJournalDeviceId('a/b12345')).toBe(false);
+    // Right shape, wrong alphabet or wrong length.
+    expect(isJournalDeviceId('A1B2C3D4')).toBe(false);
+    expect(isJournalDeviceId('phone-01')).toBe(false);
+    expect(isJournalDeviceId('a1b2c3dg')).toBe(false);
+    expect(isJournalDeviceId('a1b2c3d')).toBe(false);
+    expect(isJournalDeviceId('a1b2c3d45')).toBe(false);
+    expect(isJournalDeviceId('a1b2c3d ')).toBe(false);
+    expect(isJournalDeviceId('')).toBe(false);
+  });
+
+  it('refuses exactly the ids whose journal file the listing cannot see', async () => {
+    fakeGitHub({
+      listing: [
+        { type: 'file', name: '2026-08.my.phone.jsonl', path: 'journal/2026-08.my.phone.jsonl', sha: 'sha-a' },
+        { type: 'file', name: '2026-08.a1b2c3d4.jsonl', path: 'journal/2026-08.a1b2c3d4.jsonl', sha: 'sha-b' },
+      ],
+    });
+
+    const listed = await listJournal(TOKEN);
+
+    // The dotted file exists on the remote and is simply never read: written,
+    // looks backed up, invisible to a cold restore. That is what the guard is
+    // for, and it agrees with the listing exactly.
+    expect(listed.map((file) => file.device)).toEqual(['a1b2c3d4']);
+    expect(isJournalDeviceId('my.phone')).toBe(false);
+    expect(isJournalDeviceId('a1b2c3d4')).toBe(true);
+  });
+});
+
+describe('push failure watchers', () => {
+  it('reports the kind of a failed push at the moment it fails', async () => {
+    const github = fakeGitHub({ files: { [PATH]: 'first\n' } });
+    const seen = watchPushFailures(() => undefined);
+
+    github.failPuts.push(401);
+    await expect(appendLines(TOKEN, PATH, ['second'])).rejects.toBeInstanceOf(GitHubError);
+
+    expect(seen).toEqual([{ kind: 'auth', retryAfterMs: null }]);
+  });
+
+  it('passes on the wait GitHub asked for', async () => {
+    const github = fakeGitHub({ files: { [PATH]: 'first\n' } });
+    const seen = watchPushFailures(() => undefined);
+
+    github.failPuts.push({ status: 429, headers: { 'retry-after': '120' } });
+    await expect(appendLines(TOKEN, PATH, ['second'])).rejects.toBeInstanceOf(GitHubError);
+
+    expect(seen).toEqual([{ kind: 'ratelimit', retryAfterMs: 120_000 }]);
+  });
+
+  it('says nothing when the push lands, and stops when unwatched', async () => {
+    const github = fakeGitHub({ files: { [PATH]: 'first\n' } });
+    const seen = watchPushFailures(() => undefined);
+
+    await appendLines(TOKEN, PATH, ['second']);
+    expect(seen).toEqual([]);
+
+    for (const unwatch of watching) unwatch();
+    watching.length = 0;
+    github.failPuts.push(500);
+    await expect(appendLines(TOKEN, PATH, ['third'])).rejects.toBeInstanceOf(GitHubError);
+    expect(seen).toEqual([]);
+  });
+
+  it('lets the caller see the rejection even when a watcher throws', async () => {
+    const github = fakeGitHub({ files: { [PATH]: 'first\n' } });
+    const seen = watchPushFailures(() => {
+      throw new Error('a watcher fell over');
+    });
+
+    github.failPuts.push(500);
+    await expect(appendLines(TOKEN, PATH, ['second'])).rejects.toBeInstanceOf(GitHubError);
+
+    expect(seen).toEqual([{ kind: 'http', retryAfterMs: null }]);
   });
 });
 

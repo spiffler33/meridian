@@ -271,6 +271,46 @@ interface LockManagerLike {
 
 let pushChain: Promise<void> = Promise.resolve();
 
+/**
+ * Why a write to the data repo failed, for anything that shows backup health.
+ *
+ * Without this the status line learns of a failed flush only when it next
+ * re-reads IndexedDB, which is many times longer than a flush cycle: the owner
+ * is told their data is safe while it is not. A plain callback list keeps this
+ * side of the module honest — no store, no React, nothing to clean up — and a
+ * listener that throws cannot disturb the push it is watching.
+ */
+export interface PushFailure {
+  /** What GitHub said, or null when the failure was not GitHub's to report. */
+  kind: GitHubErrorKind | null;
+  /** How long GitHub asked us to wait, when it said so. */
+  retryAfterMs: number | null;
+}
+
+const pushFailureListeners = new Set<(failure: PushFailure) => void>();
+
+/** Watch every failed write to the data repo. Returns the unsubscribe. */
+export function onPushFailure(listener: (failure: PushFailure) => void): () => void {
+  pushFailureListeners.add(listener);
+  return () => {
+    pushFailureListeners.delete(listener);
+  };
+}
+
+function reportPushFailure(error: unknown): void {
+  const failure: PushFailure =
+    error instanceof GitHubError
+      ? { kind: error.kind, retryAfterMs: error.retryAfterMs ?? null }
+      : { kind: null, retryAfterMs: null };
+  for (const listener of pushFailureListeners) {
+    try {
+      listener(failure);
+    } catch {
+      // A watcher's problem is not the push's problem.
+    }
+  }
+}
+
 function lockManager(): LockManagerLike | null {
   if (typeof navigator === 'undefined') return null;
   const candidate = (navigator as unknown as { locks?: LockManagerLike }).locks;
@@ -280,12 +320,19 @@ function lockManager(): LockManagerLike | null {
 
 function withPushLock<T>(run: () => Promise<T>): Promise<T> {
   const manager = lockManager();
-  if (manager) return manager.request(PUSH_LOCK_NAME, run);
-  const result = pushChain.then(run);
-  pushChain = result.then(
-    () => undefined,
-    () => undefined,
-  );
+  let result: Promise<T>;
+  if (manager) {
+    result = manager.request(PUSH_LOCK_NAME, run);
+  } else {
+    result = pushChain.then(run);
+    pushChain = result.then(
+      () => undefined,
+      () => undefined,
+    );
+  }
+  // Observed, never intercepted: the caller still sees the rejection it would
+  // have seen, and a failure with no watcher is still nobody's unhandled one.
+  result.then(undefined, reportPushFailure);
   return result;
 }
 
@@ -293,26 +340,90 @@ function withPushLock<T>(run: () => Promise<T>): Promise<T> {
 // API
 // ============================================================================
 
+/**
+ * What GitHub reports the *authenticated token* may do with this repository.
+ * `push` is write access: for a fine-grained PAT it follows Contents
+ * read/write, which is exactly the permission a backup needs.
+ *
+ * UNVERIFIED, and the reason the copy above the button claims only what GitHub
+ * reported rather than that the token will work: `permissions.push` has
+ * historically described the authenticated *user's* role on the repository
+ * rather than the *token's* grant. On a repo the owner administers it may well
+ * come back `push: true` for a Contents:read-only PAT — precisely the token
+ * this check exists to reject. Settling it needs one manual run with a real
+ * read-only PAT, which only the owner can mint; until then treat a pass as
+ * "GitHub raised no objection", not as proof.
+ */
+interface RepoResponse {
+  permissions?: { push?: unknown };
+}
+
 export async function verifyAccess(token: string): Promise<AccessResult> {
   let response: Response;
   try {
     response = await call(token, `/repos/${GITHUB_OWNER}/${GITHUB_REPO}`);
   } catch {
-    return { ok: false, reason: 'Could not reach GitHub — check the connection.' };
+    return { ok: false, reason: 'could not reach github — check the connection' };
   }
-  if (response.ok) return { ok: true };
+
+  if (response.ok) {
+    // A 200 only proves the token can READ. A Contents:read token passes that
+    // and then fails on the first push — the silent failure this button exists
+    // to catch — so the answer comes from the permissions GitHub reports, not
+    // from the status code.
+    let body: RepoResponse;
+    try {
+      body = (await readJson(response, 'checking repository access')) as RepoResponse;
+    } catch {
+      return { ok: false, reason: 'github sent a repository body that could not be read' };
+    }
+    const writable = body.permissions?.push;
+    if (writable === true) return { ok: true };
+    if (writable === false) {
+      return {
+        ok: false,
+        reason: `the token is read-only — it needs contents read and write on ${GITHUB_OWNER}/${GITHUB_REPO}`,
+      };
+    }
+    return {
+      ok: false,
+      reason: 'github did not report write access for this token, so a backup cannot be confirmed',
+    };
+  }
 
   const kind = classify(response, 'GET');
   if (kind === 'ratelimit') {
-    return { ok: false, reason: 'GitHub rate limit reached — the token is fine, try again shortly.' };
+    return { ok: false, reason: "github's rate limit — the token is fine, try again shortly" };
   }
   if (kind === 'auth') {
-    return { ok: false, reason: `Token rejected — it needs Contents read/write on ${GITHUB_OWNER}/${GITHUB_REPO}.` };
+    return { ok: false, reason: `github rejected the token — it needs contents read and write on ${GITHUB_OWNER}/${GITHUB_REPO}` };
   }
   if (response.status === 404) {
-    return { ok: false, reason: `${GITHUB_OWNER}/${GITHUB_REPO} is not visible to this token.` };
+    return { ok: false, reason: `${GITHUB_OWNER}/${GITHUB_REPO} is not visible to this token` };
   }
-  return { ok: false, reason: `GitHub returned HTTP ${response.status}.` };
+  return { ok: false, reason: `github returned http ${response.status}` };
+}
+
+/**
+ * The closed set a device id may be drawn from: the eight lowercase hex
+ * characters `db.ts` mints them from.
+ *
+ * A device id is not decoration — it becomes the middle field of
+ * `YYYY-MM.<device>.jsonl`. A dot inside it produces a four-part name that
+ * `parseJournalName` below skips, so the file is written, the device looks
+ * backed up, and a cold restore never reads a line of it; a slash nests it in
+ * a subdirectory the listing does not descend into. Both lose data in silence,
+ * so an id outside this set is refused before it can ever name a file.
+ */
+const DEVICE_ID_ALPHABET = '0123456789abcdef';
+const DEVICE_ID_LENGTH = 8;
+
+export function isJournalDeviceId(value: string): boolean {
+  if (value.length !== DEVICE_ID_LENGTH) return false;
+  for (const character of value) {
+    if (!DEVICE_ID_ALPHABET.includes(character)) return false;
+  }
+  return true;
 }
 
 /** `YYYY-MM.<device>.jsonl` → month + device. Anything else is not a journal. */

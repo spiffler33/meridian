@@ -209,7 +209,7 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 - *Pairing*: `AppContext`'s existing optimistic-update-then-revert behaviour on `toggleHabit`, `toggleMit`, `toggleHoliday` survives; each edit emits exactly one journal event, `initializedRef`'s once-only load stays once-only.
 **Done-criteria**: `npx tsc -b` exit 0; `npm run build` exit 0; `npm test -- --run` exit 0; `grep -rn "localStorage" src/ | wc -l` → `0`; `grep -rn "AuthContext\|AuthScreen\|services/auth" src/ | wc -l` → `0`.
 `depends_on: [6]` · `weight: heavy` · `live_model: no` · `coder: opus` · `verify_class: sample` · `kind: seam-design`
-- [ ] done
+- [x] done — auth removed, first paint from IndexedDB, sync loop; 17/17 wiring mutations killed
 
 ### Phase 8 — Settings and backup visibility
 **Goal**: the user can set the device id, paste and verify the PAT, see persistence status, and can never be silently un-backed-up.
@@ -218,7 +218,7 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 **Standing invariants**: the PAT never enters a log, a URL, an error message, or the DOM as plain text after entry; `SettingsView`'s existing habit CRUD (`createHabit`/`updateHabit`/`deleteHabit`) keeps working.
 **Done-criteria**: `npx tsc -b` and `npm run build` exit 0; `npm test -- --run src/components/BackupStatus.test.tsx` exit 0 covering — renders a relative time when a backup succeeded; renders the persistent red state with a retry control after a failure and does not clear it on re-render; never renders a spinner in any state (acceptance E's UI half). `grep -rn "token" src/ | grep -i "console\." | wc -l` → `0`.
 `depends_on: [7]` · `weight: heavy` · `live_model: no` · `coder: opus` · `verify_class: sample` · `kind: seam-design`
-- [ ] done
+- [x] done — backup status always visible, PAT entry + verify, device-id validation; 15/15 mutations killed
 
 ### Phase 9 — Offline shell: manifest and service worker
 **Goal**: make acceptance A physically possible.
@@ -248,7 +248,7 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 **Steps**: document event shape, the fold rule and its precedence order, repo layout of `meridian-data`, flush triggers, token handling, and the "GitHub is durable, IndexedDB is the working copy" rule.
 **Done-criteria**: `CLAUDE.md` exists and contains headings for each of: Event shape · Fold rule · Repo layout · Flush triggers · Token handling. `grep -c "supabase" CLAUDE.md` → `0` except within an explicit "removed 2026-08" historical note.
 `depends_on: [10]` · `weight: light` · `live_model: no` · `coder: opus` · `verify_class: prose` · `kind: transcription`
-- [ ] done
+- [x] done — 1799 words, all five headings, limitations carried verbatim, Supabase only as history
 
 ### Phase 12 — Acceptance drill A–F — HUMAN-GATED, `/run-plan` STOPS HERE
 Not automatable: needs a real iPhone, airplane mode, two devices, a fresh browser profile, and a deliberately revoked token. C and F are already covered by Phase 2's unit tests; the rest are hands-on.
