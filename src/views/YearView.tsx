@@ -62,7 +62,7 @@ export function YearView({ selectedYear, onYearChange, onDateSelect }: YearViewP
   const habits = state.settings.habits;
   const weekStartsOn = state.settings.weekStartsOn;
 
-  // Update themeInput when year changes or themes load from Supabase
+  // Update themeInput when year changes or themes load from the journal
   useEffect(() => {
     setThemeInput(getYearTheme(selectedYear));
   }, [selectedYear, getYearTheme]);

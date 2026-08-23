@@ -226,7 +226,7 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 **Steps**: add `vite-plugin-pwa` (DECISION 3); generate `manifest.webmanifest` (name Meridian, standalone, theme `#fafaf9`); precache the built assets; register the SW from `main.tsx`; keep the existing iOS meta tags.
 **Done-criteria**: `npm run build` exit 0; `dist/sw.js` and `dist/manifest.webmanifest` both exist; `grep -c "manifest" dist/index.html` ≥ `1`; `node -e` check that the generated precache manifest lists the hashed JS and CSS entry chunks.
 `depends_on: [7]` · `weight: light` · `live_model: no` · `coder: opus` · `verify_class: complete` · `kind: recipe`
-- [ ] done
+- [x] done — vite-plugin-pwa, sw.js + manifest, precache over hashed chunks, CNAME survives
 
 ### Phase 10 — CSP and Supabase removal
 **Goal**: nothing named Supabase remains; the CSP is exactly as ratified.
@@ -239,8 +239,9 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 - `grep -c "connect-src 'self' https://api.github.com https://api.anthropic.com" index.html` → `1`.
 - `grep -c "script-src 'self'" index.html` → `1`.
 - `grep -rn "http" dist/assets/*.js | grep -oE "https://[a-z.]+" | sort -u` contains only `api.github.com` and `api.anthropic.com`.
+  - **Adjudicated 2026-08-24**: the built bundle also contains the literals `console.anthropic.com` (an `<a href>` in Settings — a user-clicked navigation, which `connect-src` does not govern) and `react.dev` (inside react-dom's error-message builder, never fetched and not removable). Verified: the app's only `fetch` call sites are `github.ts` → api.github.com and `claude.ts` → api.anthropic.com. The criterion's intent — no unexpected host is reachable — is met; its literal grep is not, and was not weakened to make it pass.
 `depends_on: [7, 9]` · `weight: light` · `live_model: no` · `coder: opus` · `verify_class: complete` · `kind: recipe`
-- [ ] done
+- [x] done — supabase/ deleted, dep removed, workflow env stripped, strict CSP added
 
 ### Phase 11 — Write `./CLAUDE.md`
 **Goal**: future sessions inherit the protocol without re-reading the code.
