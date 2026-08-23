@@ -12,7 +12,8 @@ Meridian is a single-user personal cockpit used on an iPhone (as a home-screen P
 DATA MODEL — EVENT JOURNAL
 - All state changes are events with fields: `id` (UUID), `device` (short id chosen at first run, editable in Settings), `seq` (per-device monotonic counter, persisted locally), `ts` (epoch ms), `type` ("upsert" | "delete"), `entity`, `entityId`, `fields` (partial object; absent for delete).
 - Journals live in the data repo at `journal/YYYY-MM.<device>.jsonl` — one JSON object per line. Each device appends ONLY to its own current-month file. A new month means a new file; there is NO compaction step, ever.
-- Rebuilding state = fetch journals, sort events by (ts, device, seq), apply field-level last-writer-wins per (entity, entityId); a delete is a tombstone beating older upserts; dedupe by event id; skip unparseable lines and surface a visible warning instead of crashing.
+- Rebuilding state = fetch journals, sort events by **(ts, device, seq, id)**, apply field-level last-writer-wins per (entity, entityId); a delete is a tombstone beating older upserts; dedupe by event id; skip unparseable lines and surface a visible warning instead of crashing.
+  - **AMENDMENT 2026-08-23 (orchestrator, owner asleep, in-scope):** the original spec's `(ts, device, seq)` is NOT a total order. Adversarial review reproduced two devices converging on *different* state depending on journal fetch order, and a tied upsert-vs-delete letting an entity survive its own delete. Ties are reachable via a seq counter reset (Safari evicts site data after 7 idle days), a restored backup, or a reused device id. Appending `id` as a final tiebreak makes the order total and fetch-order-independent. This is a strict refinement — it changes nothing where the original triple already discriminated.
 - `snapshot.json` in the repo is an optional derived cache for fast restore. It is never authoritative; on any doubt, replay journals.
 
 LOCAL LAYER
