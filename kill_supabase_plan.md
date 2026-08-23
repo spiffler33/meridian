@@ -113,6 +113,8 @@ Phase 0 exports **all** rows regardless of owner. Phase 5 seeds only the profile
 **DECISION 6 — Seed `vats` only.** Ratified 2026-08-23: `ba1d1269-aa10-436b-bb42-c784c1fcbf17`. `testuser`, `mingz` and `mansi` are exported in Phase 0 for the record and are NOT seeded.
 Phase 5 target counts, pre-registered: habits 12 · daily_entries 9 · habit_completions 176 · tasks 0 · year_themes 1 · tower_items 84 · packs 2 · pack_sessions (those whose parent pack is vats-owned) · profile 1.
 
+**DECISION 8 — Every phase runs on Opus. No Sonnet anywhere in this run.** Owner override, ratified 2026-08-23, superseding the standing Sonnet-default tiering rule in `~/.claude/CLAUDE.md` for this run only. The verification ladder is unchanged: a bigger coder does not waive the independent re-run, and seam-design phases still get the adversarial diff review.
+
 **DECISION 7 — All work lands on branch `local-first`, never `main`.** `.github/workflows/deploy.yml` fires on push to `main` and would deploy a half-migrated app over the live meridian.spiffler.xyz that is in daily use. Phase commits stay on the branch; the branch is pushed (safe — no workflow trigger); `main` is merged only after the Phase 12 acceptance drill passes.
 
 ---
@@ -135,7 +137,7 @@ Phase 5 target counts, pre-registered: habits 12 · daily_entries 9 · habit_com
 - Counts match this pre-registered baseline exactly: profiles 4 · habits 43 · daily_entries 13 · habit_completions 219 · tasks 0 · year_themes 2 · tower_items 156 · packs 3 · pack_sessions 18 · friendships 0 · activities 0. Any drift → STOP and report, do not proceed.
 - `grep -rn "sb_secret_" exports/ scripts/ 2>/dev/null | wc -l` → `0` (no credential leaked into the export or a script).
 - `profiles.json` must retain `claude_api_key` values — they are user secrets. Confirm the export repo is private before pushing: `gh repo view spiffler33/meridian-data --json isPrivate --jq .isPrivate` → `true`.
-`depends_on: []` · `weight: heavy` · `live_model: no` · `coder: sonnet` · `verify_class: complete` · `kind: recipe`
+`depends_on: []` · `weight: heavy` · `live_model: no` · `coder: opus` · `verify_class: complete` · `kind: recipe`
 - [ ] done
 
 ### Phase 1 — Test harness
@@ -143,7 +145,7 @@ Phase 5 target counts, pre-registered: habits 12 · daily_entries 9 · habit_com
 **Scope**: `package.json`, `vitest.config.ts`, `src/lib/__tests__/smoke.test.ts`
 **Steps**: add `vitest` + `fake-indexeddb` devDeps; `"test": "vitest"` script; `vitest.config.ts` with `environment: 'jsdom'` and a setup file importing `fake-indexeddb/auto`; one smoke test.
 **Done-criteria**: `npm test -- --run` → exit 0, ≥1 test passed. `npm run build` → exit 0.
-`depends_on: []` · `weight: light` · `live_model: no` · `coder: sonnet` · `verify_class: complete` · `kind: recipe`
+`depends_on: []` · `weight: light` · `live_model: no` · `coder: opus` · `verify_class: complete` · `kind: recipe`
 - [ ] done
 
 ### Phase 2 — Journal core: event model and fold
@@ -168,7 +170,7 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 **Scope**: `src/lib/db.ts`, `src/lib/db.test.ts`
 **Steps**: one database, stores `state`, `journalCache`, `outbox`, `meta` (deviceId, seq, token, lastBackupAt, lastBackupError, skippedContextPrompt, theme). Typed accessors; `nextSeq()` persists before returning. `requestPersistence()` wrapping `navigator.storage.persist()`.
 **Done-criteria**: `npm test -- --run src/lib/db.test.ts` exit 0, covering: round-trip through each store; `nextSeq()` strictly increasing across a simulated close/reopen; outbox entries survive close/reopen; `requestPersistence()` returns the boolean and never throws when the API is absent.
-`depends_on: [1]` · `weight: heavy` · `live_model: no` · `coder: sonnet` · `verify_class: sample` · `kind: recipe`
+`depends_on: [1]` · `weight: heavy` · `live_model: no` · `coder: opus` · `verify_class: sample` · `kind: recipe`
 - [ ] done
 
 ### Phase 4 — GitHub contents-API sync client
@@ -176,7 +178,7 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 **Scope**: `src/lib/github.ts`, `src/lib/github.test.ts` (no IndexedDB imports — the token is passed in)
 **Steps**: `listJournal()`, `getFile(path)`, `putFile(path, content, sha)`, `appendLines(path, lines)`, `verifyAccess(token)`. 409/SHA mismatch → refetch and retry (bounded). Serialize every write under one Web Locks name; fall back to an in-module promise chain where `navigator.locks` is absent.
 **Done-criteria**: `npm test -- --run src/lib/github.test.ts` exit 0 with mocked `fetch`, covering: a 409 triggers exactly one refetch and the retry succeeds; a 401 surfaces a typed auth error rather than throwing raw; two concurrent `appendLines` calls to the same path issue their PUTs strictly in sequence; `listJournal` groups `YYYY-MM.<device>.jsonl` by device; the retry is bounded and gives up with a typed error.
-`depends_on: [1]` · `weight: heavy` · `live_model: no` · `coder: sonnet` · `verify_class: sample` · `kind: recipe`
+`depends_on: [1]` · `weight: heavy` · `live_model: no` · `coder: opus` · `verify_class: sample` · `kind: recipe`
 - [ ] done
 
 ### Phase 5 — Seed journal from the Phase 0 export
@@ -184,7 +186,7 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 **Scope**: scratchpad transform script; writes into the `meridian-data` clone. No app code.
 **Steps**: filter every table to the `user_id`(s) named in DECISION 6 (`pack_sessions` via its parent `packs.user_id`); map the 9 ported tables to entities; `ts` from `created_at`/`updated_at` where the source has it, else a fixed floor timestamp; `device: "seed"`; `seq` monotonic in emission order; one `upsert` event per row. Skip `friendships` and `activities`. Drop the `user_id` column itself — the local model has no owner concept.
 **Done-criteria**: replay the produced file through Phase 2's `fold()` → per-entity counts exactly equal the DECISION 6 owner's row counts from the table above; `warnings[]` is empty; every line parses as JSON with all seven required event fields present; `grep -c user_id journal/*.seed.jsonl` → `0`.
-`depends_on: [0, 2]` · `weight: light` · `live_model: no` · `coder: sonnet` · `verify_class: complete` · `kind: transcription`
+`depends_on: [0, 2]` · `weight: light` · `live_model: no` · `coder: opus` · `verify_class: complete` · `kind: transcription`
 - [ ] done
 
 ### Phase 6 — Domain adapter: entities and the local data API
@@ -192,7 +194,7 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 **Scope**: `src/lib/entities.ts`, `src/services/data.ts`, `src/lib/entities.test.ts`
 **Steps**: entity definitions for the 9 ported tables; reimplement all ~35 exports against fold-state + journal appends. Preserve exactly: `getPacks()` session counts (manual aggregation), tower ordering `expects_by ASC NULLS LAST, last_touched ASC`, `sort_order` assignment for `createHabit`/`createTask`, `updateTask`'s `completed_at` set/clear side-effect, `updateTowerItem`'s `last_touched` bump, soft-delete semantics on `habits`/`packs`.
 **Done-criteria**: `npx tsc -b` exit 0; `npm test -- --run` exit 0 with tests asserting the four preserved behaviours above; `grep -c "supabase" src/services/data.ts` → `0`; every function name exported before the phase is still exported after (`node -e` diff of the export list against a pre-phase snapshot → empty).
-`depends_on: [2, 3]` · `weight: heavy` · `live_model: no` · `coder: sonnet` · `verify_class: sample` · `kind: seam-design`
+`depends_on: [2, 3]` · `weight: heavy` · `live_model: no` · `coder: opus` · `verify_class: sample` · `kind: seam-design`
 - [ ] done
 
 ### Phase 7 — Rewire the app shell
@@ -204,7 +206,7 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 - *Ordering*: first paint reads IndexedDB and never awaits the network; no code path renders a spinner in place of local data.
 - *Pairing*: `AppContext`'s existing optimistic-update-then-revert behaviour on `toggleHabit`, `toggleMit`, `toggleHoliday` survives; each edit emits exactly one journal event, `initializedRef`'s once-only load stays once-only.
 **Done-criteria**: `npx tsc -b` exit 0; `npm run build` exit 0; `npm test -- --run` exit 0; `grep -rn "localStorage" src/ | wc -l` → `0`; `grep -rn "AuthContext\|AuthScreen\|services/auth" src/ | wc -l` → `0`.
-`depends_on: [6]` · `weight: heavy` · `live_model: no` · `coder: sonnet` · `verify_class: sample` · `kind: seam-design`
+`depends_on: [6]` · `weight: heavy` · `live_model: no` · `coder: opus` · `verify_class: sample` · `kind: seam-design`
 - [ ] done
 
 ### Phase 8 — Settings and backup visibility
@@ -213,7 +215,7 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 **Steps**: device-id field; PAT field writing only to IndexedDB, with a "Verify access" button calling `verifyAccess()`; `navigator.storage.persist()` result displayed; iOS home-screen install instructions plus the "browser storage is the convenience copy, GitHub the durable one" explanation; always-visible "Last backed up <relative time> from this device"; failure → persistent red state with a retry action.
 **Standing invariants**: the PAT never enters a log, a URL, an error message, or the DOM as plain text after entry; `SettingsView`'s existing habit CRUD (`createHabit`/`updateHabit`/`deleteHabit`) keeps working.
 **Done-criteria**: `npx tsc -b` and `npm run build` exit 0; `npm test -- --run src/components/BackupStatus.test.tsx` exit 0 covering — renders a relative time when a backup succeeded; renders the persistent red state with a retry control after a failure and does not clear it on re-render; never renders a spinner in any state (acceptance E's UI half). `grep -rn "token" src/ | grep -i "console\." | wc -l` → `0`.
-`depends_on: [7]` · `weight: heavy` · `live_model: no` · `coder: sonnet` · `verify_class: sample` · `kind: seam-design`
+`depends_on: [7]` · `weight: heavy` · `live_model: no` · `coder: opus` · `verify_class: sample` · `kind: seam-design`
 - [ ] done
 
 ### Phase 9 — Offline shell: manifest and service worker
@@ -221,7 +223,7 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 **Scope**: `vite.config.ts`, `package.json`, `index.html`, `public/` icons
 **Steps**: add `vite-plugin-pwa` (DECISION 3); generate `manifest.webmanifest` (name Meridian, standalone, theme `#fafaf9`); precache the built assets; register the SW from `main.tsx`; keep the existing iOS meta tags.
 **Done-criteria**: `npm run build` exit 0; `dist/sw.js` and `dist/manifest.webmanifest` both exist; `grep -c "manifest" dist/index.html` ≥ `1`; `node -e` check that the generated precache manifest lists the hashed JS and CSS entry chunks.
-`depends_on: [7]` · `weight: light` · `live_model: no` · `coder: sonnet` · `verify_class: complete` · `kind: recipe`
+`depends_on: [7]` · `weight: light` · `live_model: no` · `coder: opus` · `verify_class: complete` · `kind: recipe`
 - [ ] done
 
 ### Phase 10 — CSP and Supabase removal
@@ -235,7 +237,7 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 - `grep -c "connect-src 'self' https://api.github.com https://api.anthropic.com" index.html` → `1`.
 - `grep -c "script-src 'self'" index.html` → `1`.
 - `grep -rn "http" dist/assets/*.js | grep -oE "https://[a-z.]+" | sort -u` contains only `api.github.com` and `api.anthropic.com`.
-`depends_on: [7, 9]` · `weight: light` · `live_model: no` · `coder: sonnet` · `verify_class: complete` · `kind: recipe`
+`depends_on: [7, 9]` · `weight: light` · `live_model: no` · `coder: opus` · `verify_class: complete` · `kind: recipe`
 - [ ] done
 
 ### Phase 11 — Write `./CLAUDE.md`
@@ -243,7 +245,7 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 **Scope**: `CLAUDE.md` (new, this repo)
 **Steps**: document event shape, the fold rule and its precedence order, repo layout of `meridian-data`, flush triggers, token handling, and the "GitHub is durable, IndexedDB is the working copy" rule.
 **Done-criteria**: `CLAUDE.md` exists and contains headings for each of: Event shape · Fold rule · Repo layout · Flush triggers · Token handling. `grep -c "supabase" CLAUDE.md` → `0` except within an explicit "removed 2026-08" historical note.
-`depends_on: [10]` · `weight: light` · `live_model: no` · `coder: sonnet` · `verify_class: prose` · `kind: transcription`
+`depends_on: [10]` · `weight: light` · `live_model: no` · `coder: opus` · `verify_class: prose` · `kind: transcription`
 - [ ] done
 
 ### Phase 12 — Acceptance drill A–F — HUMAN-GATED, `/run-plan` STOPS HERE
