@@ -111,7 +111,7 @@ Phase 0 exports **all** rows regardless of owner. Phase 5 seeds only the profile
 > **SECURITY DEBT — act on this.** The key was pasted into a chat transcript. Rotate it in the Supabase dashboard as soon as Phase 0 has produced a verified export, and before the project is left idle. Tracked as the first item in "After the run".
 
 **DECISION 6 — Seed `vats` only.** Ratified 2026-08-23: `ba1d1269-aa10-436b-bb42-c784c1fcbf17`. `testuser`, `mingz` and `mansi` are exported in Phase 0 for the record and are NOT seeded.
-Phase 5 target counts, pre-registered: habits 12 · daily_entries 9 · habit_completions 176 · tasks 0 · year_themes 1 · tower_items 84 · packs 2 · pack_sessions (those whose parent pack is vats-owned) · profile 1.
+Phase 5 target counts, pre-registered: habits 12 · daily_entries 9 · habit_completions 176 · tasks 0 · year_themes 1 · tower_items 84 · packs 2 · pack_sessions 18 (all 18 belong to vats-owned packs — verified) · profile 1.
 
 **DECISION 8 — Every phase runs on Opus. No Sonnet anywhere in this run.** Owner override, ratified 2026-08-23, superseding the standing Sonnet-default tiering rule in `~/.claude/CLAUDE.md` for this run only. The verification ladder is unchanged: a bigger coder does not waive the independent re-run, and seam-design phases still get the adversarial diff review.
 
@@ -138,7 +138,7 @@ Phase 5 target counts, pre-registered: habits 12 · daily_entries 9 · habit_com
 - `grep -rn "sb_secret_" exports/ scripts/ 2>/dev/null | wc -l` → `0` (no credential leaked into the export or a script).
 - `profiles.json` must retain `claude_api_key` values — they are user secrets. Confirm the export repo is private before pushing: `gh repo view spiffler33/meridian-data --json isPrivate --jq .isPrivate` → `true`.
 `depends_on: []` · `weight: heavy` · `live_model: no` · `coder: opus` · `verify_class: complete` · `kind: recipe`
-- [ ] done
+- [x] done — 2cd6554 in meridian-data; counts verified against live 2026-08-23
 
 ### Phase 1 — Test harness
 **Goal**: `npm test` exists and passes, so later phases have machine-checkable criteria.
@@ -146,7 +146,7 @@ Phase 5 target counts, pre-registered: habits 12 · daily_entries 9 · habit_com
 **Steps**: add `vitest` + `fake-indexeddb` devDeps; `"test": "vitest"` script; `vitest.config.ts` with `environment: 'jsdom'` and a setup file importing `fake-indexeddb/auto`; one smoke test.
 **Done-criteria**: `npm test -- --run` → exit 0, ≥1 test passed. `npm run build` → exit 0.
 `depends_on: []` · `weight: light` · `live_model: no` · `coder: opus` · `verify_class: complete` · `kind: recipe`
-- [ ] done
+- [x] done — vitest 3.2.7 (vite-5 compatible), 2/2 pass, build+tsc clean, lint unchanged at 8 pre-existing
 
 ### Phase 2 — Journal core: event model and fold
 **Goal**: the pure, dependency-free heart of the system — everything else rests on it.
