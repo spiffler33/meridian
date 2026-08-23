@@ -189,7 +189,7 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 **Steps**: filter every table to the `user_id`(s) named in DECISION 6 (`pack_sessions` via its parent `packs.user_id`); map the 9 ported tables to entities; `ts` from `created_at`/`updated_at` where the source has it, else a fixed floor timestamp; `device: "seed"`; `seq` monotonic in emission order; one `upsert` event per row. Skip `friendships` and `activities`. Drop the `user_id` column itself — the local model has no owner concept.
 **Done-criteria**: replay the produced file through Phase 2's `fold()` → per-entity counts exactly equal the DECISION 6 owner's row counts from the table above; `warnings[]` is empty; every line parses as JSON with all seven required event fields present; `grep -c user_id journal/*.seed.jsonl` → `0`.
 `depends_on: [0, 2]` · `weight: light` · `live_model: no` · `coder: opus` · `verify_class: complete` · `kind: transcription`
-- [ ] done
+- [x] done — ca9b1f2 in meridian-data; 303 events, all 8 entity counts exact, 1512/1512 field values verified
 
 ### Phase 6 — Domain adapter: entities and the local data API
 **Goal**: `src/services/data.ts` keeps every exported signature and stops knowing Supabase exists.
