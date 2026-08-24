@@ -174,6 +174,8 @@
   /* Citation-chip rim: the ice accent at a third strength. A token rather than
      an opacity utility, because --sp-ice is a var, not colour channels. */
   --sp-rim: rgba(111, 168, 214, 0.35);
+  /* Where a citation lands. Same accent, weak enough to sit under prose. */
+  --sp-land: rgba(111, 168, 214, 0.16);
 
   /* The reading face. Georgia first, deliberately: ui-serif is New York on
      iOS, a different animal from the one the spec asks for. */
@@ -193,6 +195,7 @@
   --sp-green: #197a4f;
   --sp-ice: #2f6fa3;
   --sp-rim: rgba(47, 111, 163, 0.35);
+  --sp-land: rgba(47, 111, 163, 0.16);
 }
 
 /*
@@ -356,4 +359,26 @@ button, input, textarea, [role="button"] {
 .sp-still .sp-wave,
 .sp-still .sp-stateword {
   transition: none;
+}
+
+/* Where a citation lands. The block lifts for a moment and settles back — long
+   enough to find the sentence on a phone, short enough that it is gone before
+   it becomes decoration. */
+@keyframes cite-land {
+  0% { background-color: var(--sp-land); }
+  100% { background-color: transparent; }
+}
+
+.cite-mark {
+  animation: cite-land 1.8s ease-out;
+  border-radius: 3px;
+  box-decoration-break: clone;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Still marked, just not moving: the landing has to stay findable. */
+  .cite-mark {
+    animation: none;
+    background-color: var(--sp-land);
+  }
 }

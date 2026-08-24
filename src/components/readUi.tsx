@@ -49,14 +49,59 @@ export function Note({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * A citation, drawn but not yet live: chips become tappable in phase 4, and a
- * button that goes nowhere would be a lie about what this pane can do today.
+ * A citation.
+ *
+ * Live wherever the mark could be placed: tapping it opens the source prose at
+ * the span it names. Inert — a plain span — where the corpus gave a mark this
+ * app cannot resolve, because a mark that is visibly just a mark is a better
+ * answer than a button that goes nowhere.
+ *
+ * The label elides rather than wraps or overflows. Some of what the corpus
+ * cites is a whole clause; the chip says as much of it as the column has room
+ * for and carries the rest in its title, and the footer says all of it.
  */
-export function Cite({ children }: { children: React.ReactNode }) {
+const CITE_SHAPE =
+  'mx-px inline-block truncate rounded-[9px] border border-sp-rim px-[7px] pb-[2px] pt-px align-[-0.2em] font-mono text-[10.5px] text-sp-ice';
+
+/** Inline it yields to the sentence; on its own line it takes the column. */
+const CITE_WIDTH = { inline: 'max-w-[24ch] sm:max-w-[52ch]', wide: 'max-w-full' };
+
+export function Cite({
+  children,
+  onClick,
+  title,
+  wide,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  title?: string;
+  wide?: boolean;
+}) {
+  const shape = `${CITE_SHAPE} ${wide ? CITE_WIDTH.wide : CITE_WIDTH.inline}`;
+  if (!onClick) {
+    return (
+      <span className={shape} title={title}>
+        {children}
+      </span>
+    );
+  }
   return (
-    <span className="mx-px whitespace-nowrap rounded-[9px] border border-sp-rim px-[7px] pb-[2px] pt-px align-[0.12em] font-mono text-[10.5px] text-sp-ice">
+    <button type="button" onClick={onClick} title={title} className={`${shape} hover:border-sp-ice`}>
       {children}
-    </span>
+    </button>
+  );
+}
+
+/**
+ * One hairline of explanation above the thing it is about. Not an error — the
+ * document is right there — but not silence either: a reader who asked to land
+ * on a sentence and landed at the top is owed the reason.
+ */
+export function Notice({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mb-3 border-l border-sp-rim pl-2 font-mono text-[10.5px] leading-[1.6] text-sp-faint">
+      {children}
+    </div>
   );
 }
 

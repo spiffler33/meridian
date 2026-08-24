@@ -7,11 +7,14 @@
  * is invented: a field the file does not carry renders as absent rather than
  * as the word "undefined".
  *
- * Citations are drawn but inert this phase. Phase 4 makes every one of them a
- * tap into the source prose, which is the point of the whole pane.
+ * Every source mark here is live. Each surface knows which grammar its own
+ * marks are written in and says so; citations.ts turns all three into the one
+ * address the reader opens. A citation is never a dead tap: an unplaceable
+ * mark stays a mark, and a span the document does not contain opens the
+ * document at the top and says why.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Markdown } from '../components/Markdown';
 import {
@@ -23,13 +26,23 @@ import {
   Kicker,
   ListRow,
   Note,
+  Notice,
   Pending,
   Rail,
   RailItem,
   SrcLine,
 } from '../components/readUi';
 import { useAsync } from '../hooks/useAsync';
-import { bodyBlocks, parseMarkdown } from '../lib/markdown';
+import {
+  citationRoute,
+  findCitedBlock,
+  resolveCitation,
+  routeTarget,
+  type Citation,
+  type CitationTarget,
+  type SourceFile,
+} from '../lib/citations';
+import { bodyBlocks, inlineText, parseMarkdown } from '../lib/markdown';
 import {
   TAPE_PATH,
   cachedJson,
@@ -45,11 +58,50 @@ import {
   fetchEntry,
   syllabusPath,
 } from '../lib/newslettersRead';
+import { loadLibrary } from '../lib/newslettersSync';
 import type { ReadSurface } from '../types';
 
 export interface SurfaceProps {
   item: string[];
   onNavigate: (surface: ReadSurface, item: string[]) => void;
+}
+
+/** Every citation on every surface opens the same way. */
+function opener(onNavigate: SurfaceProps['onNavigate']) {
+  return (target: CitationTarget) => onNavigate('raw', citationRoute(target));
+}
+
+/**
+ * A source mark, resolved at the point of drawing.
+ *
+ * The chip says the document, because that is what the reader is deciding
+ * about; the span it lands on is in the title and, for the surfaces that keep
+ * one, in the footer underneath.
+ */
+function CiteChip({
+  citation,
+  label,
+  wide,
+  onOpen,
+}: {
+  citation: Citation;
+  label?: string;
+  wide?: boolean;
+  onOpen: (target: CitationTarget) => void;
+}) {
+  const target = resolveCitation(citation);
+  if (target === null) {
+    return <Cite wide={wide}>{label ?? '§'}</Cite>;
+  }
+  return (
+    <Cite
+      wide={wide}
+      title={target.phrase === null ? target.slug : `${target.slug} §${target.phrase}`}
+      onClick={() => onOpen(target)}
+    >
+      {label ?? target.slug}
+    </Cite>
+  );
 }
 
 /** Nothing has been synced yet, so there is nothing to be wrong about. */
@@ -111,9 +163,10 @@ function signed(value: number | undefined): string | null {
   return value > 0 ? `+${value}` : `${value}`;
 }
 
-export function TapePane() {
+export function TapePane({ onNavigate }: SurfaceProps) {
   const load = useCallback(() => cachedJson<TapeFile>(TAPE_PATH), []);
   const { value, error, pending } = useAsync(load);
+  const open = opener(onNavigate);
 
   if (pending) return <Pending what="the tape" />;
   if (error) return <Trouble error={error} />;
@@ -187,7 +240,15 @@ export function TapePane() {
                       {item.text}{' '}
                     </span>
                   )}
-                  {item.citation && <Cite>{item.citation}</Cite>}
+                  {item.citation ? (
+                    <CiteChip
+                      wide
+                      citation={{ grammar: 'path', source: item.citation }}
+                      onOpen={open}
+                    />
+                  ) : item.slug ? (
+                    <CiteChip wide citation={{ grammar: 'slug', slug: item.slug }} onOpen={open} />
+                  ) : null}
                 </div>
               ))}
             </SrcLine>
@@ -227,6 +288,7 @@ export function ChartPane({ item, onNavigate }: SurfaceProps) {
     [chosen]
   );
   const chart = useAsync(load);
+  const open = opener(onNavigate);
 
   if (ids.pending) return <Pending what="the charts" />;
   if (ids.error) return <Trouble error={ids.error} />;
@@ -296,7 +358,11 @@ export function ChartPane({ item, onNavigate }: SurfaceProps) {
             {chart.value?.entries?.length ? (
               <div className="mt-2">
                 {chart.value.entries.map(entry => (
-                  <Cite key={entry}>{entry}</Cite>
+                  <CiteChip
+                    key={entry}
+                    citation={{ grammar: 'slug', slug: entry }}
+                    onOpen={open}
+                  />
                 ))}
               </div>
             ) : null}
@@ -313,11 +379,14 @@ export function ChartPane({ item, onNavigate }: SurfaceProps) {
 
 interface Syllabus {
   doc_id?: string;
+  /** `raw/<slug>` — the source document every day of this course cites. */
+  entry?: string;
   days?: { day?: number; title?: string; covers?: string; idea?: string }[];
 }
 
 interface CanonDay {
   doc_id?: string;
+  entry?: string;
   day?: number;
   of?: number;
   subject?: string;
@@ -343,6 +412,7 @@ export function CanonPane({ item, onNavigate }: SurfaceProps) {
     [doc, day]
   );
   const lesson = useAsync(loadDay);
+  const open = opener(onNavigate);
 
   if (docs.pending) return <Pending what="the canon" />;
   if (docs.error) return <Trouble error={docs.error} />;
@@ -390,6 +460,10 @@ export function CanonPane({ item, onNavigate }: SurfaceProps) {
   const current = Number(day);
   const of = lesson.value?.of ?? syllabus?.days?.length ?? 0;
   const title = syllabus?.days?.find(entry => entry.day === current)?.title ?? null;
+  // The lesson names its source; the syllabus names it too, and either will
+  // do. A course whose files say neither leaves its marks inert rather than
+  // pointing them all at a guess.
+  const entry = lesson.value?.entry ?? syllabus?.entry ?? null;
 
   return (
     <>
@@ -415,7 +489,10 @@ export function CanonPane({ item, onNavigate }: SurfaceProps) {
           {/* From `text`, never the stored email html: the html is built for a
               mail client, and this is not one. */}
           {lesson.value.text ? (
-            <Markdown blocks={parseMarkdown(lesson.value.text).blocks} />
+            <Markdown
+              blocks={parseMarkdown(lesson.value.text).blocks}
+              links={{ entry, onOpen: open }}
+            />
           ) : (
             <Note>this lesson carries no text.</Note>
           )}
@@ -423,7 +500,14 @@ export function CanonPane({ item, onNavigate }: SurfaceProps) {
           {lesson.value.citations?.length ? (
             <SrcLine>
               {lesson.value.citations.map(citation => (
-                <Cite key={citation}>§{citation}</Cite>
+                <div key={citation} className="mb-[6px] last:mb-0">
+                  <CiteChip
+                    wide
+                    citation={{ grammar: 'phrase', entry: entry ?? '', phrase: citation }}
+                    label={`§${citation}`}
+                    onOpen={open}
+                  />
+                </div>
               ))}
             </SrcLine>
           ) : null}
@@ -456,14 +540,24 @@ export function CanonPane({ item, onNavigate }: SurfaceProps) {
 
 export function EssayPane({ item, onNavigate }: SurfaceProps) {
   const [slug] = item;
+  const open = opener(onNavigate);
 
   const loadList = useCallback(async () => {
     const slugs = essaySlugs((await cachedTree()).map(file => file.path));
-    const texts = await Promise.all(slugs.map(one => cachedText(essayPath(one))));
-    return slugs.map((one, index) => ({
-      slug: one,
-      title: texts[index] === null ? null : parseMarkdown(texts[index]).title,
-    }));
+    const [texts, library] = await Promise.all([
+      Promise.all(slugs.map(one => cachedText(essayPath(one)))),
+      // The same gists the Library shows. A footnote marker is a few pixels
+      // wide and the thing it points at is a document, so the popover says
+      // which one in the corpus's own words before the reader commits.
+      loadLibrary(),
+    ]);
+    return {
+      entries: slugs.map((one, index) => ({
+        slug: one,
+        title: texts[index] === null ? null : parseMarkdown(texts[index]).title,
+      })),
+      gists: new Map(library.map(row => [row.slug, row.gist])),
+    };
   }, []);
   const list = useAsync(loadList);
 
@@ -479,12 +573,14 @@ export function EssayPane({ item, onNavigate }: SurfaceProps) {
 
   if (list.pending) return <Pending what="the essays" />;
   if (list.error) return <Trouble error={list.error} />;
-  if (!list.value || list.value.length === 0) return <Unsynced what="essays" />;
+  if (!list.value || list.value.entries.length === 0) return <Unsynced what="essays" />;
+
+  const gists = list.value.gists;
 
   if (slug === undefined) {
     return (
       <>
-        {list.value.map(entry => (
+        {list.value.entries.map(entry => (
           <ListRow
             key={entry.slug}
             onClick={() => onNavigate('essay', [entry.slug])}
@@ -495,6 +591,13 @@ export function EssayPane({ item, onNavigate }: SurfaceProps) {
       </>
     );
   }
+
+  // The definitions at the foot of the essay are the only place its markers
+  // resolve — there is no sidecar in the repo — so they are what the markers
+  // and the strip below both read.
+  const definitions = new Map(
+    (essay.value?.footnotes ?? []).map(note => [note.label, inlineText(note.children)])
+  );
 
   return (
     <>
@@ -510,7 +613,14 @@ export function EssayPane({ item, onNavigate }: SurfaceProps) {
         <Card>
           <Kicker>essay</Kicker>
           {essay.value.title && <Headline>{essay.value.title}</Headline>}
-          <Markdown blocks={bodyBlocks(essay.value)} />
+          <Markdown
+            blocks={bodyBlocks(essay.value)}
+            links={{
+              footnotes: definitions,
+              gist: one => gists.get(one) ?? null,
+              onOpen: open,
+            }}
+          />
 
           {essay.value.footnotes.length > 0 && (
             <SrcLine>
@@ -518,14 +628,27 @@ export function EssayPane({ item, onNavigate }: SurfaceProps) {
                   the plan expected does not exist in the repo; the definitions
                   live at the foot of the markdown, which is one source rather
                   than two that can disagree. */}
-              {essay.value.footnotes.map(note => (
-                <div key={note.label} className="mb-1 last:mb-0">
-                  <span className="text-sp-ice">[{note.label}]</span>{' '}
-                  <span className="break-all">
-                    <Markdown blocks={[{ kind: 'paragraph', children: note.children }]} />
-                  </span>
-                </div>
-              ))}
+              {essay.value.footnotes.map(note => {
+                const source = definitions.get(note.label) ?? '';
+                const target = resolveCitation({ grammar: 'path', source });
+                return (
+                  <div key={note.label} className="mb-[6px] last:mb-0">
+                    <span className="text-sp-ice">[{note.label}]</span>{' '}
+                    {target === null ? (
+                      <span className="break-all">{source}</span>
+                    ) : (
+                      <>
+                        <Cite wide title={source} onClick={() => open(target)}>
+                          {target.slug}
+                        </Cite>
+                        {target.phrase && (
+                          <span className="ml-1 break-words">§{target.phrase}</span>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
             </SrcLine>
           )}
         </Card>
@@ -538,9 +661,25 @@ export function EssayPane({ item, onNavigate }: SurfaceProps) {
 // The source reader
 // ---------------------------------------------------------------------------
 
+/**
+ * Where every citation lands.
+ *
+ * The address carries the entry, which file inside it, and the span to open
+ * at — so a citation survives a reload, a back button, and being sent to
+ * yourself. The span is found in the blocks this pane is actually drawing,
+ * not in the file's characters: the parser has already joined a wrapped
+ * paragraph's lines and dropped the emphasis marks, and a citation quotes
+ * what the document says rather than how it was typed.
+ *
+ * A span the document does not contain is not an error. The document opens at
+ * the top and one hairline says why, because the reader asked for this entry
+ * and the entry is what they got.
+ */
 export function RawPane({ item }: SurfaceProps) {
-  const [slug] = item;
-  const [showFigures, setShowFigures] = useState(false);
+  const target = routeTarget(item);
+  const slug = target?.slug;
+  const wanted: SourceFile = target?.file ?? 'prose';
+  const phrase = target?.phrase ?? null;
 
   const load = useCallback(
     () => (slug === undefined ? Promise.resolve(null) : fetchEntry(slug)),
@@ -548,33 +687,71 @@ export function RawPane({ item }: SurfaceProps) {
   );
   const entry = useAsync(load);
 
+  // The route chooses the file. The toggle overrides it, but only for the
+  // route it was made on: opening the next citation starts from what that
+  // citation asked for rather than from wherever the last one was left.
+  const route = item.join('\u0000');
+  const [override, setOverride] = useState<{ route: string; file: SourceFile } | null>(null);
+  const chosen = override?.route === route ? override.file : wanted;
+
+  const parsed = useMemo(() => {
+    if (!entry.value) return null;
+    return {
+      prose: parseMarkdown(entry.value.prose),
+      figures: entry.value.figures === null ? null : parseMarkdown(entry.value.figures),
+    };
+  }, [entry.value]);
+
+  const showing: SourceFile = chosen === 'figures' && parsed?.figures ? 'figures' : 'prose';
+
+  const blocks = useMemo(() => {
+    if (parsed === null) return [];
+    if (showing === 'figures' && parsed.figures !== null) return parsed.figures.blocks;
+    return bodyBlocks(parsed.prose);
+  }, [parsed, showing]);
+
+  const mark = useMemo(
+    () => (phrase === null ? -1 : findCitedBlock(blocks, phrase)),
+    [blocks, phrase]
+  );
+
+  const landing = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (mark < 0) return;
+    const found = landing.current?.querySelector('[data-cite-mark]');
+    if (!found || typeof found.scrollIntoView !== 'function') return;
+    const still =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    found.scrollIntoView({ block: 'center', behavior: still ? 'auto' : 'smooth' });
+  }, [mark, slug, showing]);
+
   if (slug === undefined) {
     return <Failed what="no entry named in this address" />;
   }
   if (entry.pending) return <Pending what={slug} />;
   if (entry.error) return <Trouble error={entry.error} />;
-  if (!entry.value) return <Unsynced what="source entries" />;
+  if (!entry.value || parsed === null) return <Unsynced what="source entries" />;
 
-  const prose = parseMarkdown(entry.value.prose);
-  const figures = entry.value.figures === null ? null : parseMarkdown(entry.value.figures);
-  const showing = showFigures && figures !== null;
+  const missedFigures = wanted === 'figures' && parsed.figures === null;
+  const missedSpan = phrase !== null && mark < 0;
 
   return (
     <Card>
       <div className="flex items-baseline justify-between gap-3">
         <Kicker>raw · {entry.value.slug.slice(0, 10)}</Kicker>
-        {figures !== null && (
+        {parsed.figures !== null && (
           <div className="flex flex-shrink-0 gap-2 font-mono text-[10px]">
             <button
-              onClick={() => setShowFigures(false)}
-              className={showing ? 'text-sp-faint' : 'text-sp-amber'}
+              onClick={() => setOverride({ route, file: 'prose' })}
+              className={showing === 'figures' ? 'text-sp-faint' : 'text-sp-amber'}
             >
               prose
             </button>
             <span className="text-sp-faint">|</span>
             <button
-              onClick={() => setShowFigures(true)}
-              className={showing ? 'text-sp-amber' : 'text-sp-faint'}
+              onClick={() => setOverride({ route, file: 'figures' })}
+              className={showing === 'figures' ? 'text-sp-amber' : 'text-sp-faint'}
             >
               figures
             </button>
@@ -582,8 +759,14 @@ export function RawPane({ item }: SurfaceProps) {
         )}
       </div>
 
-      <Headline>{prose.title ?? entry.value.slug}</Headline>
-      <Markdown blocks={showing && figures ? figures.blocks : bodyBlocks(prose)} />
+      <Headline>{parsed.prose.title ?? entry.value.slug}</Headline>
+
+      {missedFigures && <Notice>no figures in this entry — opened the prose</Notice>}
+      {missedSpan && !missedFigures && <Notice>§ not found — opened at top</Notice>}
+
+      <div ref={landing}>
+        <Markdown blocks={blocks} mark={mark < 0 ? null : mark} />
+      </div>
     </Card>
   );
 }

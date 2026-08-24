@@ -91,19 +91,21 @@ Tests: one fixture per surface incl. a deliberately malformed chart.json; `[^n]`
 
 ---
 
-## Phase 4 — Citations go live (the point of the pane)
+## Phase 4 — Citations go live (the point of the pane) — **DONE 2026-08-24**
 
 **Goal:** every claim in every surface is a tap away from its source prose.
 
-Build:
-- `src/lib/citations.ts` — one resolver, three grammars in, one target out: `{slug, heading?} → #/read/raw/<slug>[@<heading-id>]` (Appendix C).
-- Chip → navigate → raw reader scrolls to the heading, heading briefly hair-highlighted. **Heading not found → open at top + one hairline notice** ("§ not found — opened at top"). A citation is never a dead tap and never a hard error.
+Build (as shipped — the original wording said "heading" throughout; see the Appendix C amendment):
+- `src/lib/citations.ts` — one resolver, three grammars in, one target out: `{slug, file, phrase} → #/read/raw/<slug>[/<file>[/<span>]]` (Appendix C).
+- Chip → navigate → raw reader scrolls to the **block carrying the span**, block briefly hair-lit. **Span not found → open at top + one hairline notice** ("§ not found — opened at top"). A citation is never a dead tap and never a hard error.
 - Essays: footnote sup → popover (target slug § heading + one-line gist if present) → tap-through. Canon: inline `[§"…"]` chips + citations footer. Chart: `entries[]` as chips under srcline.
 - Cross-surface: srclines that name a slug become live everywhere.
 
 Tests: grammar fixtures for all three formats; normalization table (Appendix C) round-trips against real heading strings; not-found fallback; popover tap-through.
 
-**GATE 4:** owner taps citations from all four surfaces into real raw prose on the phone. This is the feature — judge it harshly. STOP.
+**GATE 4 — UNRUN as of 2026-08-24:** owner taps citations from all four surfaces into real raw prose on the phone. This is the feature — judge it harshly. STOP.
+
+> Deferred by the owner: the review origin (`localhost` / a LAN IP) has its own IndexedDB, so it wants both PATs entered again. Review on the laptop's `localhost:5173` — the origin phases 2–3 were reviewed on, which likely still holds the newsletters token — or on the phone once at home. Phase 5 may proceed first; Gate 4 still has to be walked before the pane is called finished.
 
 ---
 
@@ -165,14 +167,30 @@ base64 → `Uint8Array` → `TextDecoder('utf-8')`. Expected volume: one branch 
 > with the same not-found fallback (open at top + one hairline notice). Everything else in the table
 > holds: three grammars in, one resolver, one target out.
 
-| source | grammar | resolves via |
-|---|---|---|
-| canon `day-NN.json` | inline `[§"Heading"]` | `citations[]` lookup by heading → `{slug, heading}` |
-| essays | `[^n]` in md | `.citations.json` sidecar: `n → {slug, heading}` |
-| chart.json | `entries[]` | each entry → `{slug, heading?}` |
-| srclines | `raw/<date>--<slug> §"Heading"` | direct parse (machine-defined format) |
+**SETTLED 2026-08-24 (phase 4).** Three grammars, named at the call site rather than sniffed from
+the string — the caller always knows which one it holds, and a chart entry that reads like a phrase
+must never be resolved as one. `src/lib/citations.ts`:
 
-Heading-id normalization (applied identically to raw `#`-headings at render and to citation targets): trim → collapse whitespace → strip trailing punctuation → casefold → spaces to `-`. Match on normalized equality; anything fuzzier is banned (fence 6). Miss ⇒ top-of-file + notice.
+| grammar | who writes it | shape | resolves to |
+|---|---|---|---|
+| `path` | tape `evidence[].citation`, essay `[^n]` definitions | `raw/<slug>/<file>.md §"span"` | `{slug, file, phrase}` |
+| `phrase` | canon inline `[§“span”]` and `citations[]` | a span, with the lesson's `entry` | `{slug, file, phrase}` |
+| `slug` | chart `entries[]`, tape `evidence[].slug` | a bare slug, no span | `{slug, file, phrase: null}` |
+
+`file` is `prose | figures` — the essays cite the figures twin directly. The closing quote is the
+**last** one in the run, not the first: the corpus quotes prose and prose contains quotes.
+
+**Matching is a text span, not a heading id.** `normalizeForMatch` = NFKC → fold curly quotes →
+collapse whitespace → lowercase, applied identically to the citation and to the text of each rendered
+block; first block that contains it wins. That is a character-level equivalence table, nothing
+fuzzier (fence 6). Measured over the whole corpus: **924/924 citations resolve and land on a block**
+in exactly what `RawPane` draws — 12 tape, 592 essay, 134 canon footer, 149 canon inline, 37 chart.
+Zero unresolved, zero missing files, zero missing spans. Whitespace collapse alone left 56 misses;
+the quote fold cleared 55 of them and the case fold the last one. No dash folding was needed.
+
+Route: `#/read/raw/<slug>[/<file>[/<span>]]` — positional, the span carried in the address so a
+citation survives a reload, a back button and being sent to yourself. Miss ⇒ top of file + one
+hairline notice.
 
 ## Appendix D — `readItem` entity
 
@@ -244,3 +262,46 @@ skill now writes the panel-adjusted §7 outline to `state/briefs/<DATE>.md` and 
 `state/ideas.json` (newsletters commit `dbe0d39`, **local and unpushed**). The Meridian side is not
 built: it needs `state/briefs/` in the sync tier and a sixth surface, and there is nothing to render
 until a `/morning-brief` run lands one. This is its own small phase, not part of 4 or 5.
+
+### 2026-08-24 — phase 4 shipped, on `local-first`
+
+**Every citation on every surface is a tap.** One resolver in `src/lib/citations.ts`, three grammars
+in, one target out; `RawPane` is where they all land. Appendix C is rewritten above with what the
+corpus actually contains and with the measurement.
+
+What each surface got:
+- **Tape** — each evidence chip names the document and opens it at the quoted sentence.
+- **Chart** — `entries[]` become chips. The card's `srcline` is left as text on purpose: it names
+  publications ("FT (Lex) '26 · The Economist '26"), not slugs, so there is nothing in it to resolve.
+- **Canon** — the inline `[§“…”]` marks and the footer both resolve through the lesson's own `entry`
+  (`day-NN.json`, or the syllabus). A course whose files name neither leaves its marks drawn but
+  inert rather than pointing them all at a guess.
+- **Essays** — the `[^n]` marker opens a popover first (slug · the library's one-line gist · the
+  span) and the source second, and the strip at the foot taps into the same place.
+
+**Decisions worth knowing about:**
+1. **The landing is the block, not the character span.** Highlighting the exact run would mean
+   splitting text nodes at offsets mapped back through the normaliser — a span-splitting renderer in
+   `Markdown.tsx` for a corpus whose paragraphs run a few sentences. The block is scrolled to centre
+   and lit for 1.8s (`--sp-land`, a token rather than an opacity utility, following `--sp-rim`'s own
+   stated reason); reduced motion keeps the tint and drops the travel.
+2. **Chips elide, they do not wrap or overflow.** Inline in prose they take 24ch (52ch on `sm`); on
+   their own line in a source strip they take the column. The full string is in the `title`, and the
+   canon footer prints every citation in full, one per line.
+3. **The file toggle is keyed to the route it was made on.** Opening the next citation starts from
+   what that citation asked for, not from wherever the last one was left. No reset effect.
+4. **A citation into a `figures.md` the entry does not have** opens the prose and says so — a second
+   notice, distinct from the not-found one.
+
+**Measured:** the worst case is the 1,071 KB AI Index entry — 4,644 blocks, 20 ms to parse, 31 ms to
+scan every block for a span that is not there. No optimisation warranted.
+
+Tests: 364 pass in 18 files (was 329 in 17). `citations.test.ts` runs the resolver against strings
+copied verbatim out of the repo — a span with quotes inside it, a figures table row carrying pipes, a
+curly-quoted canon mark, a bare chart slug. `useNavigation.test.ts` proves a span survives the hash
+with its slashes, pipes, quotes and percent signs intact. `readSurfaces.test.tsx` taps through from
+all four surfaces, checks the inert path when a lesson names no source, and covers both notices.
+`npm run lint` is back to its 6 pre-existing errors; `grep -rn "localStorage" src/` is still 0.
+
+**Still open at Gate 4:** the wave still reads ~322 unread and pins at Drifting until phase 5's
+baseline lands — expected, not a bug.

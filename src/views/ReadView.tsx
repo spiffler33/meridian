@@ -201,7 +201,7 @@ export function ReadView({ surface, item, onSurfaceChange, onNavigate }: ReadVie
       </div>
 
       <div role="tabpanel">
-        {surface === 'tape' && <TapePane />}
+        {surface === 'tape' && <TapePane item={item} onNavigate={onNavigate} />}
         {surface === 'chart' && <ChartPane item={item} onNavigate={onNavigate} />}
         {surface === 'canon' && <CanonPane item={item} onNavigate={onNavigate} />}
         {surface === 'essay' && <EssayPane item={item} onNavigate={onNavigate} />}

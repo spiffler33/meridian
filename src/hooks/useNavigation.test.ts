@@ -93,6 +93,21 @@ describe('writing a read route', () => {
     expect(window.location.hash).toBe('#/read/library');
     expect(result.current.read.item).toEqual([]);
   });
+
+  it('carries a cited span through the address intact', () => {
+    // A citation is an address, and the corpus quotes prose: the span it
+    // names contains slashes, pipes, quotes and percent signs. If the hash
+    // mangles any of them the tap lands at the top of the entry instead.
+    const span = 'by 1890, 40% of railroad capitalization represented "water" | 1/4th of all track';
+    const item = ['2025-12-18--railroad-buildout', 'prose', span];
+    const { result } = renderHook(() => useNavigation());
+
+    act(() => result.current.setReadRoute('raw', item));
+
+    // Read back the way a reload or a back button would, not from memory.
+    const reread = renderHook(() => useNavigation());
+    expect(reread.result.current.read).toEqual({ surface: 'raw', item });
+  });
 });
 
 describe('what a read route does not carry', () => {

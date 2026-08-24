@@ -34,7 +34,12 @@ const TREE = [
   { path: 'raw/2026-08-21--lex-asia/2026-08-21--lex-asia.md', sha: 'r1', size: 1 },
   { path: 'raw/2026-08-21--lex-asia/figures.md', sha: 'f1', size: 1 },
   { path: 'raw/2026-08-18--macro/2026-08-18--macro.md', sha: 'r2', size: 1 },
+  { path: 'raw/2025-09-16--oracle/2025-09-16--oracle.md', sha: 'r3', size: 1 },
+  { path: 'state/gists.md', sha: 'g1', size: 1 },
 ];
+
+/** `<slug> | <what the piece says>`, joined against the tree. */
+const GISTS = '2025-09-16--oracle | The backlog is the size of a small country.';
 
 const TAPE = {
   window: { key: '2026-W34', start: '2026-08-17', end: '2026-08-23' },
@@ -83,6 +88,7 @@ const CHART = {
 
 const SYLLABUS = {
   doc_id: 'marks-sea-change',
+  entry: 'raw/2022-12-01--marks-sea-change',
   days: [
     { day: 1, title: 'A cycle comes back', covers: 'Sea Change', idea: 'Almost everything is a cycle.' },
     { day: 2, title: 'Position size', covers: 'Sea Change', idea: 'Sizing is the opinion.' },
@@ -91,6 +97,7 @@ const SYLLABUS = {
 
 const DAY_TWO = {
   doc_id: 'marks-sea-change',
+  entry: 'raw/2022-12-01--marks-sea-change',
   day: 2,
   of: 2,
   subject: 'canon: day 2/2',
@@ -147,6 +154,8 @@ beforeEach(async () => {
   await cache('state/canon/lessons/marks-sea-change/syllabus.json', JSON.stringify(SYLLABUS), 's1');
   await cache('state/canon/lessons/marks-sea-change/day-02.json', JSON.stringify(DAY_TWO), 'd2');
   await cache('wiki/essays/2026-07-07--profit-is-the-wire.md', ESSAY, 'e1');
+  await cache('state/gists.md', GISTS, 'g1');
+  nav.mockClear();
 });
 
 afterEach(async () => {
@@ -158,20 +167,21 @@ const nav = vi.fn();
 
 describe('tape', () => {
   it('renders the window, the themes and the cards', async () => {
-    render(<TapePane />);
+    render(<TapePane item={[]} onNavigate={nav} />);
 
     expect(await screen.findByText(/2026-W34/)).toBeInTheDocument();
     expect(screen.getByText('30 entries · 12 sources')).toBeInTheDocument();
     expect(screen.getByText('Bonds and central banks in the inflation re-run')).toBeInTheDocument();
     expect(screen.getByText("Bessent's interventions are working.")).toBeInTheDocument();
     expect(screen.getByText('This is yield-curve control by another name.')).toBeInTheDocument();
-    expect(
-      screen.getByText('raw/2026-08-13--yen-carry/2026-08-13--yen-carry.md §"may have spent"')
-    ).toBeInTheDocument();
+    // The evidence chip names the document and taps into it; the span it
+    // lands on rides in the title rather than in the line.
+    const chip = screen.getByRole('button', { name: '2026-08-13--yen-carry' });
+    expect(chip).toHaveAttribute('title', '2026-08-13--yen-carry §may have spent');
   });
 
   it('renders a card with almost nothing in it as absent, never as "undefined"', async () => {
-    const { container } = render(<TapePane />);
+    const { container } = render(<TapePane item={[]} onNavigate={nav} />);
     await screen.findByText(/2026-W34/);
     expect(container.textContent).not.toContain('undefined');
   });
@@ -253,6 +263,149 @@ describe('essays', () => {
     expect(screen.getByText(/Denmark’s GDP/)).toBeInTheDocument();
     // The title is printed once, not twice.
     expect(screen.getAllByText('The Profit Is the Wire')).toHaveLength(1);
+  });
+});
+
+describe('citations, from every surface', () => {
+  it('taps the tape’s evidence into the entry it quotes, at the span', async () => {
+    render(<TapePane item={[]} onNavigate={nav} />);
+    await screen.findByText(/2026-W34/);
+
+    fireEvent.click(screen.getByRole('button', { name: '2026-08-13--yen-carry' }));
+
+    expect(nav).toHaveBeenCalledWith('raw', [
+      '2026-08-13--yen-carry',
+      'prose',
+      'may have spent',
+    ]);
+  });
+
+  it('taps a chart’s entries into whole documents — they name no span', async () => {
+    render(<ChartPane item={[]} onNavigate={nav} />);
+    await screen.findByText(/Three unlisted firms/);
+
+    fireEvent.click(screen.getByRole('button', { name: '2026-06-10--lex-making-ai-pay' }));
+
+    expect(nav).toHaveBeenCalledWith('raw', ['2026-06-10--lex-making-ai-pay']);
+  });
+
+  it('taps a canon mark, inline and in the footer, into the lesson’s own source', async () => {
+    render(<CanonPane item={['marks-sea-change', '2']} onNavigate={nav} />);
+    await screen.findByText(/Conviction is expressed in sizing/);
+
+    const landing = ['raw', ['2022-12-01--marks-sea-change', 'prose', 'sizing as speech']];
+
+    fireEvent.click(screen.getByRole('button', { name: '§“sizing as speech”' }));
+    expect(nav).toHaveBeenCalledWith(...landing);
+
+    nav.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: '§sizing as speech' }));
+    expect(nav).toHaveBeenCalledWith(...landing);
+  });
+
+  it('leaves a canon mark inert when the lesson names no source', async () => {
+    await cache(
+      'state/canon/lessons/marks-sea-change/day-02.json',
+      JSON.stringify({ ...DAY_TWO, entry: undefined }),
+      'd2'
+    );
+    await cache(
+      'state/canon/lessons/marks-sea-change/syllabus.json',
+      JSON.stringify({ ...SYLLABUS, entry: undefined }),
+      's1'
+    );
+
+    render(<CanonPane item={['marks-sea-change', '2']} onNavigate={nav} />);
+    await screen.findByText(/Conviction is expressed in sizing/);
+
+    // The mark is still drawn — it is just not a button that goes nowhere.
+    expect(screen.getByText('§“sizing as speech”')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '§“sizing as speech”' })).toBeNull();
+  });
+
+  it('opens an essay’s footnote as a popover first, then the source', async () => {
+    render(<EssayPane item={['2026-07-07--profit-is-the-wire']} onNavigate={nav} />);
+    await screen.findByText(/The backlog was the size of a country/);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Source for note 1' }));
+
+    // Which document, in the corpus's own words, before committing to leave.
+    expect(screen.getByText('The backlog is the size of a small country.')).toBeInTheDocument();
+    // The popover names the span; so does the strip at the foot.
+    expect(screen.getAllByText('§Denmark’s GDP')).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole('button', { name: 'open source →' }));
+    expect(nav).toHaveBeenCalledWith('raw', ['2025-09-16--oracle', 'prose', 'Denmark’s GDP']);
+  });
+
+  it('taps the essay’s strip into the same place as its marker', async () => {
+    render(<EssayPane item={['2026-07-07--profit-is-the-wire']} onNavigate={nav} />);
+    await screen.findByText(/The backlog was the size of a country/);
+
+    fireEvent.click(screen.getByRole('button', { name: '2025-09-16--oracle' }));
+
+    expect(nav).toHaveBeenCalledWith('raw', ['2025-09-16--oracle', 'prose', 'Denmark’s GDP']);
+  });
+});
+
+describe('where a citation lands', () => {
+  beforeEach(async () => {
+    await cache('raw/2026-08-21--lex-asia/2026-08-21--lex-asia.md', ENTRY, 'r1');
+    await cache('raw/2026-08-21--lex-asia/figures.md', FIGURES, 'f1');
+    await cache('raw/2026-08-18--macro/2026-08-18--macro.md', ENTRY, 'r2');
+  });
+
+  it('marks the block that carries the span', async () => {
+    const { container } = render(
+      <RawPane
+        item={['2026-08-21--lex-asia', 'prose', 'Insurers Prudential and AIA']}
+        onNavigate={nav}
+      />
+    );
+    await screen.findByText(/Insurers Prudential and AIA/);
+
+    const landed = container.querySelector('[data-cite-mark]');
+    expect(landed?.textContent).toContain('Insurers Prudential and AIA');
+    expect(screen.queryByText('§ not found — opened at top')).toBeNull();
+  });
+
+  it('opens the figures twin when the citation points there', async () => {
+    const { container } = render(
+      <RawPane item={['2026-08-21--lex-asia', 'figures', 'Type: branding']} onNavigate={nav} />
+    );
+
+    expect(await screen.findByText(/branding/)).toBeInTheDocument();
+    expect(container.querySelector('[data-cite-mark]')?.textContent).toContain('branding');
+  });
+
+  it('opens at the top and says why, rather than being a dead tap', async () => {
+    const { container } = render(
+      <RawPane
+        item={['2026-08-21--lex-asia', 'prose', 'a sentence from another entry entirely']}
+        onNavigate={nav}
+      />
+    );
+
+    expect(await screen.findByText('§ not found — opened at top')).toBeInTheDocument();
+    // The entry the reader asked for is still the entry they got.
+    expect(screen.getByText(/Insurers Prudential and AIA/)).toBeInTheDocument();
+    expect(container.querySelector('[data-cite-mark]')).toBeNull();
+  });
+
+  it('says so when the citation names figures the entry does not have', async () => {
+    render(<RawPane item={['2026-08-18--macro', 'figures', 'anything']} onNavigate={nav} />);
+
+    expect(await screen.findByText('no figures in this entry — opened the prose')).toBeInTheDocument();
+  });
+
+  it('lets the toggle override the file the route chose', async () => {
+    render(
+      <RawPane item={['2026-08-21--lex-asia', 'figures', 'Type: branding']} onNavigate={nav} />
+    );
+    await screen.findByText(/branding/);
+
+    fireEvent.click(screen.getByRole('button', { name: 'prose' }));
+    expect(await screen.findByText(/Insurers Prudential and AIA/)).toBeInTheDocument();
   });
 });
 
