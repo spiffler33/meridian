@@ -8,6 +8,7 @@
 import { AppProvider } from './store/AppContext';
 import { ThemeProvider } from './store/ThemeContext';
 import { Layout } from './components/Layout';
+import { ViewBoundary } from './components/ViewBoundary';
 import { useNavigation } from './hooks/useNavigation';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import TowerView from './views/TowerView';
@@ -86,7 +87,11 @@ function AppContent() {
       onViewChange={nav.setView}
       onTodayClick={nav.goToToday}
     >
-      {renderView()}
+      {/* Keyed on the view, so changing tab clears a caught error. Without the
+          key the fallback latches and the app is stuck on it for the session. */}
+      <ViewBoundary key={nav.view} view={nav.view}>
+        {renderView()}
+      </ViewBoundary>
     </Layout>
   );
 }

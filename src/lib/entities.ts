@@ -33,7 +33,21 @@ import type {
 // Entity names
 // ============================================================================
 
-/** The nine entities the ported tables became. Journal `entity` values. */
+/**
+ * Nine entities the ported tables became, plus one the app grew on its own.
+ *
+ * `readItem` never existed in Postgres. It is the reading pane's record of
+ * what has been read, and it is the first entity with no export behind it.
+ * Journal `entity` values.
+ *
+ * Adding one is safe to deploy to a single device at a time. An older build
+ * folding a `readItem` event does NOT skip it: `fold` validates an event's
+ * shape and never its entity name, so the record lands in a bucket that build
+ * has no reader for and is simply never looked at — no warning, no loss, and
+ * the event is still there when that device updates. Pinned in
+ * journal.test.ts, criterion 18, because it is a property of fold rather than
+ * a promise made here.
+ */
 export const ENTITY = {
   profile: 'profile',
   habit: 'habit',
@@ -44,6 +58,7 @@ export const ENTITY = {
   towerItem: 'towerItem',
   pack: 'pack',
   packSession: 'packSession',
+  readItem: 'readItem',
 } as const;
 
 // ============================================================================
@@ -67,6 +82,16 @@ export type Profile = {
   personal_context: string | null;
   ai_tone: 'stoic' | 'friendly' | 'wise';
   claude_api_key: string | null;
+  /**
+   * When the reading pane first synced on any device — the mark that says
+   * everything published before it was already read elsewhere. Null until a
+   * device that has seen the journal opens the pane.
+   *
+   * Snake_case like every other column here, rather than the plan's
+   * `readingBaselineAt`: this row is a ported Postgres row and one camelCase
+   * field would be the only one.
+   */
+  reading_baseline_at: string | null;
 };
 
 export type Habit = {
@@ -145,6 +170,22 @@ export type PackSessionRow = {
   date: string;
   note: string | null;
   created_at: string;
+};
+
+/**
+ * One item of the reading corpus, marked read.
+ *
+ * The id IS the natural key — `<surface>:<itemKey>` — so two devices marking
+ * the same essay write one entity and converge. Unmarking deletes it; a later
+ * mark resurrects it, which is the fold's contract already.
+ *
+ * `read_at` is the only field written. Appendix D also names `starred` and
+ * `note`; nothing offers either yet, and the journal takes a new field the day
+ * something does, with no migration.
+ */
+export type ReadItemRow = {
+  id: string;
+  read_at: string;
 };
 
 // ============================================================================
@@ -233,6 +274,7 @@ export function toProfile(id: string, record: Record_): Profile {
     personal_context: nullableStr(record, 'personal_context'),
     ai_tone: oneOf(record, 'ai_tone', AI_TONES, 'stoic'),
     claude_api_key: nullableStr(record, 'claude_api_key'),
+    reading_baseline_at: nullableTimestamp(record, 'reading_baseline_at', null),
   };
 }
 
@@ -329,6 +371,10 @@ function toPackSessionRow(id: string, record: Record_): PackSessionRow {
   };
 }
 
+function toReadItemRow(id: string, record: Record_): ReadItemRow {
+  return { id, read_at: str(record, 'read_at', EPOCH_FLOOR) };
+}
+
 // ============================================================================
 // Row -> domain model (what the views consume)
 // ============================================================================
@@ -401,6 +447,16 @@ export function habitCompletionKey(habitId: string, date: string): string {
 
 export function yearThemeKey(year: number): string {
   return String(year);
+}
+
+/**
+ * The reading corpus has no surrogate ids at all: `readItem` never existed in
+ * Postgres, so nothing was ever seeded carrying one and the key IS the entity
+ * id from the very first write. That is why `resolveEntityId` is not applied
+ * to it — over rows whose ids are already their keys it is the identity.
+ */
+export function readItemKey(surface: string, itemKey: string): string {
+  return `${surface}:${itemKey}`;
 }
 
 /**
@@ -694,6 +750,10 @@ export function readPackRows(): PackRow[] {
 
 export function readPackSessionRows(): PackSessionRow[] {
   return rowsOf(ENTITY.packSession, toPackSessionRow);
+}
+
+export function readReadItemRows(): ReadItemRow[] {
+  return rowsOf(ENTITY.readItem, toReadItemRow);
 }
 
 /**

@@ -25,12 +25,14 @@ import {
   Headline,
   Kicker,
   ListRow,
+  MarkRead,
   Note,
   Notice,
   Pending,
   Rail,
   RailItem,
   SrcLine,
+  type SurfaceRead,
 } from '../components/readUi';
 import { useAsync } from '../hooks/useAsync';
 import {
@@ -59,11 +61,14 @@ import {
   syllabusPath,
 } from '../lib/newslettersRead';
 import { loadLibrary } from '../lib/newslettersSync';
+import { readItemKey } from '../services/data';
 import type { ReadSurface } from '../types';
 
 export interface SurfaceProps {
   item: string[];
   onNavigate: (surface: ReadSurface, item: string[]) => void;
+  /** Marking is the surfaces' one write. The keys are minted in readState. */
+  read: SurfaceRead;
 }
 
 /** Every citation on every surface opens the same way. */
@@ -163,7 +168,7 @@ function signed(value: number | undefined): string | null {
   return value > 0 ? `+${value}` : `${value}`;
 }
 
-export function TapePane({ onNavigate }: SurfaceProps) {
+export function TapePane({ onNavigate, read }: SurfaceProps) {
   const load = useCallback(() => cachedJson<TapeFile>(TAPE_PATH), []);
   const { value, error, pending } = useAsync(load);
   const open = opener(onNavigate);
@@ -174,6 +179,9 @@ export function TapePane({ onNavigate }: SurfaceProps) {
 
   const rows = value.tape ?? [];
   const cards = value.cards ?? [];
+  // The window is the readable item, not the card: the tape is published once
+  // a week and read once a week.
+  const key = readItemKey('tape', value.window?.key ?? 'tape');
 
   return (
     <>
@@ -255,6 +263,8 @@ export function TapePane({ onNavigate }: SurfaceProps) {
           ) : null}
         </Card>
       ))}
+
+      <MarkRead read={read.isRead(key)} onToggle={() => read.toggle(key)} />
     </>
   );
 }
@@ -278,7 +288,7 @@ interface ChartFile {
 
 const GROUP_TONE = ['bg-sp-amber', 'bg-sp-green', 'bg-sp-ice'];
 
-export function ChartPane({ item, onNavigate }: SurfaceProps) {
+export function ChartPane({ item, onNavigate, read }: SurfaceProps) {
   const loadIds = useCallback(async () => chartIds((await cachedTree()).map(file => file.path)), []);
   const ids = useAsync(loadIds);
 
@@ -367,6 +377,11 @@ export function ChartPane({ item, onNavigate }: SurfaceProps) {
               </div>
             ) : null}
           </SrcLine>
+
+          <MarkRead
+            read={read.isRead(readItemKey('chart', chosen ?? ''))}
+            onToggle={() => read.toggle(readItemKey('chart', chosen ?? ''))}
+          />
         </Card>
       )}
     </>
@@ -394,7 +409,7 @@ interface CanonDay {
   citations?: string[];
 }
 
-export function CanonPane({ item, onNavigate }: SurfaceProps) {
+export function CanonPane({ item, onNavigate, read }: SurfaceProps) {
   const [doc, day] = item;
 
   const loadDocs = useCallback(async () => {
@@ -528,6 +543,13 @@ export function CanonPane({ item, onNavigate }: SurfaceProps) {
               next →
             </button>
           </div>
+
+          {/* A course keeps progress, not a backlog: the mark says which days
+              are done. It carries no date, so it never reaches the wave. */}
+          <MarkRead
+            read={read.isRead(readItemKey('canon', `${doc}/${current}`))}
+            onToggle={() => read.toggle(readItemKey('canon', `${doc}/${current}`))}
+          />
         </Card>
       )}
     </>
@@ -538,7 +560,7 @@ export function CanonPane({ item, onNavigate }: SurfaceProps) {
 // Essays
 // ---------------------------------------------------------------------------
 
-export function EssayPane({ item, onNavigate }: SurfaceProps) {
+export function EssayPane({ item, onNavigate, read }: SurfaceProps) {
   const [slug] = item;
   const open = opener(onNavigate);
 
@@ -651,6 +673,11 @@ export function EssayPane({ item, onNavigate }: SurfaceProps) {
               })}
             </SrcLine>
           )}
+
+          <MarkRead
+            read={read.isRead(readItemKey('essay', slug))}
+            onToggle={() => read.toggle(readItemKey('essay', slug))}
+          />
         </Card>
       )}
     </>
@@ -675,7 +702,7 @@ export function EssayPane({ item, onNavigate }: SurfaceProps) {
  * the top and one hairline says why, because the reader asked for this entry
  * and the entry is what they got.
  */
-export function RawPane({ item }: SurfaceProps) {
+export function RawPane({ item, read }: SurfaceProps) {
   const target = routeTarget(item);
   const slug = target?.slug;
   const wanted: SourceFile = target?.file ?? 'prose';
@@ -735,6 +762,7 @@ export function RawPane({ item }: SurfaceProps) {
 
   const missedFigures = wanted === 'figures' && parsed.figures === null;
   const missedSpan = phrase !== null && mark < 0;
+  const entryKey = readItemKey('raw', entry.value.slug);
 
   return (
     <Card>
@@ -767,6 +795,10 @@ export function RawPane({ item }: SurfaceProps) {
       <div ref={landing}>
         <Markdown blocks={blocks} mark={mark < 0 ? null : mark} />
       </div>
+
+      {/* The same key the Library row carries: marking here turns the dot
+          there, because it is the same entry. */}
+      <MarkRead read={read.isRead(entryKey)} onToggle={() => read.toggle(entryKey)} />
     </Card>
   );
 }

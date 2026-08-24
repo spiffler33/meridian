@@ -6,6 +6,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../store/AppContext';
+import { useReadState } from '../hooks/useReadState';
 import { getYearCalendarGrid, formatShortDate, getMonthAbbr, isToday, isFuture, parseDate } from '../utils/dates';
 
 interface YearViewProps {
@@ -30,11 +31,16 @@ interface DayCellProps {
   date: string;
   habitCount: number;
   totalHabits: number;
+  /** Something in the reading corpus was marked read on this day. */
+  didRead: boolean;
   onClick: () => void;
 }
 
-function DayCell({ date, habitCount, totalHabits, onClick }: DayCellProps) {
-  const heatLevel = getHeatLevel(habitCount, totalHabits);
+function DayCell({ date, habitCount, totalHabits, didRead, onClick }: DayCellProps) {
+  // Reading is a day's activity like a habit tick is. It lifts an otherwise
+  // blank day off the floor and stops there: the heatmap measures habits and
+  // is not being redesigned around a second scale.
+  const heatLevel = Math.max(getHeatLevel(habitCount, totalHabits), didRead ? 1 : 0);
   const today = isToday(date);
   const future = isFuture(date);
 
@@ -47,7 +53,7 @@ function DayCell({ date, habitCount, totalHabits, onClick }: DayCellProps) {
         ${today ? 'ring-1 ring-accent' : ''}
         ${future ? 'opacity-30' : ''}
       `}
-      title={`${formatShortDate(date)}: ${habitCount}/${totalHabits}`}
+      title={`${formatShortDate(date)}: ${habitCount}/${totalHabits}${didRead ? ' · read' : ''}`}
     />
   );
 }
@@ -61,6 +67,9 @@ export function YearView({ selectedYear, onYearChange, onDateSelect }: YearViewP
 
   const habits = state.settings.habits;
   const weekStartsOn = state.settings.weekStartsOn;
+  // Read-only: the baseline is the reading pane's to establish, never this
+  // view's, so nothing here writes.
+  const read = useReadState();
 
   // Update themeInput when year changes or themes load from the journal
   useEffect(() => {
@@ -304,6 +313,7 @@ export function YearView({ selectedYear, onYearChange, onDateSelect }: YearViewP
                         date={date}
                         habitCount={getHabitCount(date)}
                         totalHabits={habits.length}
+                        didRead={read.days.has(date)}
                         onClick={() => onDateSelect(date)}
                       />
                     ) : (

@@ -14,8 +14,10 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
+import { closeDb, putCachedFile } from '../lib/db';
+import { resetSession } from '../lib/entities';
 import type { NewslettersView } from '../hooks/useNewsletters';
 import type { LibraryEntry } from '../lib/newslettersSync';
 import { ReadView } from './ReadView';
@@ -58,12 +60,72 @@ function library(overrides: Partial<NewslettersView> = {}) {
   return mocks.view;
 }
 
-beforeEach(() => {
+/**
+ * The reading baseline as a seeded journal line.
+ *
+ * Read-state is folded journal data now, so the instrument cannot be tested
+ * from a prop: the backlog is whatever a profile event and a set of readItem
+ * events say it is.
+ */
+async function seedBaseline(at: string): Promise<void> {
+  const fields: Record<string, unknown> = { username: 'owner', reading_baseline_at: at };
+  await putCachedFile({
+    path: 'journal/2026-01.seed.jsonl',
+    text: `${JSON.stringify({
+      id: 'seed-profile',
+      device: 'seed',
+      seq: 1,
+      ts: 1_700_000_000_000,
+      type: 'upsert',
+      entity: 'profile',
+      entityId: 'profile',
+      fields,
+    })}\n`,
+    sha: null,
+    fetchedAt: 1_700_000_000_000,
+  });
+  resetSession();
+}
+
+/**
+ * Let the writes an unmounted view still had in flight finish.
+ *
+ * A mark is an IndexedDB transaction that outlives the tap, and three of them
+ * queue behind each other. Deleting the database under an open connection is
+ * BLOCKED rather than refused, so a half-drained store leaks one test's marks
+ * into the next — which is exactly the bug this waits out.
+ */
+async function settle(): Promise<void> {
+  for (let turn = 0; turn < 8; turn += 1) {
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+}
+
+async function resetDb(): Promise<void> {
+  await closeDb();
+  await new Promise<void>((resolve, reject) => {
+    const req = indexedDB.deleteDatabase('meridian');
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error ?? new Error('deleteDatabase failed'));
+    // Loud on purpose: a blocked delete that resolved anyway is how leaked
+    // read-state got into the next test in the first place.
+    req.onblocked = () => reject(new Error('deleteDatabase was blocked: a test leaked a connection'));
+  });
+}
+
+beforeEach(async () => {
+  await resetDb();
+  resetSession();
   library();
   navigate.mockReset();
 });
 
-afterEach(cleanup);
+afterEach(async () => {
+  cleanup();
+  await settle();
+  resetSession();
+  await resetDb();
+});
 
 const navigate = vi.fn();
 
@@ -182,37 +244,100 @@ describe('the reading surface', () => {
 });
 
 describe('the instrument', () => {
-  it('reads the backlog the library is actually carrying', () => {
+  it('reads the backlog the library is actually carrying', async () => {
+    await seedBaseline('2026-08-16T00:00:00.000Z');
     show('library');
-    expect(screen.getByText(`${ENTRIES.length} unread`)).toBeInTheDocument();
+
+    expect(await screen.findByText(`${ENTRIES.length} unread`)).toBeInTheDocument();
     expect(screen.getByText('Drifting')).toBeInTheDocument();
   });
 
-  it('admits it has nothing to report before the library is read', () => {
-    library({ rows: [], loaded: false });
+  it('leaves everything the baseline covers out of the backlog', async () => {
+    await seedBaseline('2026-08-19T12:00:00.000Z');
     show('library');
+
+    // Only 2026-08-21 is after the mark; the two older entries were read in
+    // email, which is the whole reason the baseline exists.
+    expect(await screen.findByText('1 unread')).toBeInTheDocument();
+    expect(screen.getByText('Holding steady')).toBeInTheDocument();
+  });
+
+  it('counts the baseline day itself, rather than hiding it forever', async () => {
+    await seedBaseline('2026-08-21T09:00:00.000Z');
+    show('library');
+
+    // An entry's date has no time in it, so it cannot be placed either side of
+    // the instant. Rounding it to unread costs one tap; the other rounding
+    // costs the entry.
+    expect(await screen.findByText('1 unread')).toBeInTheDocument();
+  });
+
+  it('admits it has nothing to report until a baseline can be established', async () => {
+    // Nothing seeded: a device that has never seen the journal cannot know
+    // whether a baseline already exists, so it does not invent one — and an
+    // instrument with no baseline reports that rather than "all read".
+    show('library');
+    await settle();
+
     expect(screen.getByText('Standing by')).toBeInTheDocument();
     expect(screen.getByText('not synced')).toBeInTheDocument();
   });
 
-  it('settles as the backlog is cleared', () => {
+  it('settles as the backlog is cleared', async () => {
+    await seedBaseline('2026-08-16T00:00:00.000Z');
     show('library');
+    await screen.findByText(`${ENTRIES.length} unread`);
 
     for (const button of screen.getAllByRole('button', { name: /^Mark .* read$/ })) {
       fireEvent.click(button);
     }
 
-    expect(screen.getByText('all read')).toBeInTheDocument();
+    expect(await screen.findByText('all read')).toBeInTheDocument();
     expect(screen.getByText('At setpoint')).toBeInTheDocument();
   });
 
-  it('drifts again when an entry is marked unread', () => {
+  it('drifts again when an entry is marked unread', async () => {
+    await seedBaseline('2026-08-16T00:00:00.000Z');
     show('library');
+    await screen.findByText(`${ENTRIES.length} unread`);
 
     fireEvent.click(screen.getAllByRole('button', { name: /^Mark .* read$/ })[0]);
-    expect(screen.getByText(`${ENTRIES.length - 1} unread`)).toBeInTheDocument();
+    expect(await screen.findByText(`${ENTRIES.length - 1} unread`)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /^Mark .* unread$/ }));
-    expect(screen.getByText(`${ENTRIES.length} unread`)).toBeInTheDocument();
+    expect(await screen.findByText(`${ENTRIES.length} unread`)).toBeInTheDocument();
+  });
+
+  it('survives a mark and a reload: the mark is journal data, not screen state', async () => {
+    await seedBaseline('2026-08-16T00:00:00.000Z');
+    const first = show('library');
+    await screen.findByText(`${ENTRIES.length} unread`);
+
+    fireEvent.click(screen.getAllByRole('button', { name: /^Mark .* read$/ })[0]);
+    await screen.findByText(`${ENTRIES.length - 1} unread`);
+    // The tick is optimistic; durability is what this test is about, so wait
+    // for the event to actually reach the outbox before the reload.
+    await settle();
+
+    first.unmount();
+    show('library');
+
+    expect(await screen.findByText(`${ENTRIES.length - 1} unread`)).toBeInTheDocument();
+  });
+});
+
+describe('the tab rail ticks', () => {
+  it("carries each tab's own backlog, and nothing where there is none", async () => {
+    await seedBaseline('2026-08-16T00:00:00.000Z');
+    show('library');
+
+    const library_ = await screen.findByRole('tab', { name: /Library/ });
+    await waitFor(() => expect(library_.textContent).toBe(`Library${ENTRIES.length}`));
+
+    // Nothing is synced in this file, so the tape and the charts have no
+    // dated material at all — and a tab with no backlog carries no tick.
+    expect(screen.getByRole('tab', { name: /Canon/ }).textContent).toBe('Canon');
+    expect(screen.getByRole('tab', { name: /Essays/ }).textContent).toBe('Essays');
+    expect(screen.getByRole('tab', { name: /Tape/ }).textContent).toBe('Tape');
   });
 });

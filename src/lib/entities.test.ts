@@ -93,10 +93,14 @@ import {
   getTasksRange,
   getTowerItems,
   getTowerItemsByStatus,
+  getReadItems,
+  getReadingBaseline,
   getYearTheme,
+  ensureReadingBaseline,
   loadAllData,
   reorderHabits,
   restoreHabit,
+  setItemRead,
   setYearTheme,
   toggleCompletion,
   updateHabit,
@@ -610,6 +614,100 @@ describe('habit completion reads', () => {
 })
 
 // --- the write path ---------------------------------------------------------
+
+// --- reading ----------------------------------------------------------------
+
+describe('read-state is journal data', () => {
+  const KEY = 'raw:2026-08-21--lex-asia'
+
+  it('marks an item read, and the entity id IS its natural key', async () => {
+    await setItemRead(KEY, true)
+
+    expect(entityIds('readItem')).toEqual([KEY])
+    const marked = await getReadItems()
+    expect(marked).toHaveLength(1)
+    expect(marked[0].id).toBe(KEY)
+    expect(marked[0].read_at).not.toBe('')
+  })
+
+  it('converges when two devices mark the same item, because both write one entity', async () => {
+    await seed(
+      line('readItem', KEY, { read_at: '2026-08-24T08:00:00.000Z' }),
+      line('readItem', KEY, { read_at: '2026-08-24T09:00:00.000Z' })
+    )
+    resetSession()
+
+    const marked = await getReadItems()
+    expect(marked).toHaveLength(1)
+    expect(marked[0].read_at).toBe('2026-08-24T09:00:00.000Z')
+  })
+
+  it('unmarks with a tombstone, so the item leaves the state entirely', async () => {
+    await setItemRead(KEY, true)
+    await setItemRead(KEY, false)
+
+    expect(entityIds('readItem')).toEqual([])
+    expect(await getReadItems()).toEqual([])
+  })
+
+  it('resurrects on a later mark — the fold already knows how', async () => {
+    await setItemRead(KEY, true)
+    await setItemRead(KEY, false)
+    await setItemRead(KEY, true)
+
+    expect(entityIds('readItem')).toEqual([KEY])
+    expect(await getReadItems()).toHaveLength(1)
+  })
+
+  it('survives a reload: the mark is in the outbox, not on a screen', async () => {
+    await setItemRead(KEY, true)
+    resetSession()
+
+    expect((await getReadItems()).map((row) => row.id)).toEqual([KEY])
+  })
+})
+
+describe('the reading baseline', () => {
+  it('is not invented by a device that has never seen the journal', async () => {
+    // Nothing cached: this device cannot know whether a baseline already
+    // exists, and stamping one would silently mark a month of entries read on
+    // every other device.
+    expect(await ensureReadingBaseline()).toBeNull()
+    expect(await getReadingBaseline()).toBeNull()
+    expect(await outboxSize()).toBe(0)
+  })
+
+  it('is written once on a device that has the journal', async () => {
+    await seed(line('profile', 'profile', { username: 'owner' }))
+    resetSession()
+
+    const established = await ensureReadingBaseline()
+    expect(established).not.toBeNull()
+    expect(await getReadingBaseline()).toBe(established)
+    expect(await outboxSize()).toBe(1)
+  })
+
+  it('is never reset by a second device that already has one', async () => {
+    await seed(
+      line('profile', 'profile', { username: 'owner', reading_baseline_at: '2026-08-16T00:00:00.000Z' })
+    )
+    resetSession()
+
+    expect(await ensureReadingBaseline()).toBe('2026-08-16T00:00:00.000Z')
+    // The whole point: nothing was written, so no later timestamp can win.
+    expect(await outboxSize()).toBe(0)
+  })
+
+  it('is idempotent when the pane asks again and again', async () => {
+    await seed(line('profile', 'profile', { username: 'owner' }))
+    resetSession()
+
+    const first = await ensureReadingBaseline()
+    expect(await ensureReadingBaseline()).toBe(first)
+    expect(await ensureReadingBaseline()).toBe(first)
+    expect(await outboxSize()).toBe(1)
+  })
+})
 
 describe('writes reach the outbox and survive a reload', () => {
   it('replays from the outbox after the session is dropped', async () => {

@@ -9,10 +9,16 @@
  * below the rail is a surface, and each surface reads its own file.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import type { ReadSurface } from '../types';
 import { SetpointWave } from '../components/SetpointWave';
+import type { SurfaceRead } from '../components/readUi';
+import { useAsync } from '../hooks/useAsync';
 import { useNewsletters, type NewslettersView } from '../hooks/useNewsletters';
+import { useReadState } from '../hooks/useReadState';
+import { TAPE_PATH, cachedJson, cachedTree, chartIds } from '../lib/newslettersRead';
+import type { ReadableItem } from '../lib/readState';
+import { readItemKey } from '../services/data';
 import {
   CanonPane,
   ChartPane,
@@ -36,6 +42,44 @@ const TABS: { surface: ReadSurface; label: string }[] = [
   { surface: 'essay', label: 'Essays' },
   { surface: 'library', label: 'Library' },
 ];
+
+/** Just enough of the tape to say which window it is and when it closed. */
+interface TapeWindow {
+  window?: { key?: string; end?: string };
+}
+
+/**
+ * The dated material, keyed the way the journal keys it.
+ *
+ * Only these three surfaces can be behind: an entry, a weekly tape, a chart.
+ * The canon is a course and the wiki is a reference — neither carries a date
+ * and neither is a queue, so neither appears here and neither ever alarms.
+ *
+ * Read from the same cache the panes read, so it costs no network and answers
+ * in airplane mode.
+ */
+async function loadDated(): Promise<{ tape: ReadableItem[]; chart: ReadableItem[] }> {
+  const [tape, tree] = await Promise.all([cachedJson<TapeWindow>(TAPE_PATH), cachedTree()]);
+
+  const key = tape?.window?.key ?? null;
+  return {
+    tape:
+      key === null
+        ? []
+        : [{ key: readItemKey('tape', key), date: tape?.window?.end ?? null }],
+    // A chart id leads with its date, which is the date of the chart.
+    chart: chartIds(tree.map(file => file.path)).map(id => ({
+      key: readItemKey('chart', id),
+      date: id.slice(0, 10),
+    })),
+  };
+}
+
+/** The backlog on one tab, drawn only when there is one. */
+function Tick({ count }: { count: number | null }) {
+  if (count === null || count <= 0) return null;
+  return <span className="ml-[6px] tabular-nums text-sp-amber">{count}</span>;
+}
 
 /**
  * What the library is doing, in one line, above the rows rather than instead
@@ -76,20 +120,19 @@ function LibraryState({ view }: { view: NewslettersView }) {
 
 function LibraryPane({
   view,
-  readSlugs,
-  onToggle,
+  read,
   onOpen,
 }: {
   view: NewslettersView;
-  readSlugs: Set<string>;
-  onToggle: (slug: string) => void;
+  read: SurfaceRead;
   onOpen: (slug: string) => void;
 }) {
   return (
     <>
       <LibraryState view={view} />
       {view.rows.map(row => {
-        const isRead = readSlugs.has(row.slug);
+        const key = readItemKey('raw', row.slug);
+        const isRead = read.isRead(key);
         return (
           <div
             key={row.slug}
@@ -120,7 +163,7 @@ function LibraryPane({
               )}
             </button>
             <button
-              onClick={() => onToggle(row.slug)}
+              onClick={() => read.toggle(key)}
               aria-label={isRead ? `Mark ${row.slug} unread` : `Mark ${row.slug} read`}
               className={`h-5 w-5 flex-shrink-0 rounded-md border-[1.5px] ${
                 isRead ? 'border-sp-green bg-sp-green' : 'border-sp-faint hover:border-sp-muted'
@@ -133,12 +176,6 @@ function LibraryPane({
           </div>
         );
       })}
-      {view.rows.length > 0 && (
-        <p className="mt-[14px] font-read text-sm italic leading-[1.6] text-sp-muted">
-          Marking read here is local to this screen for now — reading becomes cockpit data in a
-          later phase, and entries older than the baseline never show as unread.
-        </p>
-      )}
     </>
   );
 }
@@ -154,25 +191,29 @@ export function ReadView({ surface, item, onSurfaceChange, onNavigate }: ReadVie
 
   const view = useNewsletters();
 
-  // Read-state, local to this screen. It exists so the instrument can be
-  // judged moving; phase 5 replaces it with folded `readItem` events, and
-  // with the baseline that stops day one reading as 300-odd alarms.
-  const [readSlugs, setReadSlugs] = useState<Set<string>>(() => new Set());
+  // Read-state is folded `readItem` events, and the baseline is established
+  // here — the pane having synced on this device is the whole trigger.
+  const read = useReadState(view.lastSyncedAt !== null);
 
-  const toggleRead = (slug: string) => {
-    setReadSlugs(prev => {
-      const next = new Set(prev);
-      if (!next.delete(slug)) next.add(slug);
-      return next;
-    });
+  // Module-scope and argument-free, so the reference is stable across renders
+  // and the read runs once per mount — which is when the cache can have moved.
+  const dated = useAsync(loadDated);
+
+  const entries: ReadableItem[] = view.rows.map(row => ({
+    key: readItemKey('raw', row.slug),
+    date: row.date.length > 0 ? row.date : null,
+  }));
+
+  // The wave reports the entries, which are the corpus. The tape and the
+  // charts are digests of those same entries, so adding them would count one
+  // week's reading three times; their own backlog is on their own tab.
+  const unread = read.unread(entries);
+
+  const ticks: Partial<Record<ReadSurface, number | null>> = {
+    tape: read.unread(dated.value?.tape ?? []),
+    chart: read.unread(dated.value?.chart ?? []),
+    library: unread,
   };
-
-  // Not zero until the library has actually been read: an instrument that
-  // reports "all read" because it has not looked yet is lying.
-  const unread =
-    view.loaded && view.rows.length > 0
-      ? view.rows.filter(row => !readSlugs.has(row.slug)).length
-      : null;
 
   return (
     <div>
@@ -196,24 +237,20 @@ export function ReadView({ surface, item, onSurfaceChange, onNavigate }: ReadVie
             }`}
           >
             {tab.label}
+            <Tick count={ticks[tab.surface] ?? null} />
           </button>
         ))}
       </div>
 
       <div role="tabpanel">
-        {surface === 'tape' && <TapePane item={item} onNavigate={onNavigate} />}
-        {surface === 'chart' && <ChartPane item={item} onNavigate={onNavigate} />}
-        {surface === 'canon' && <CanonPane item={item} onNavigate={onNavigate} />}
-        {surface === 'essay' && <EssayPane item={item} onNavigate={onNavigate} />}
+        {surface === 'tape' && <TapePane item={item} onNavigate={onNavigate} read={read} />}
+        {surface === 'chart' && <ChartPane item={item} onNavigate={onNavigate} read={read} />}
+        {surface === 'canon' && <CanonPane item={item} onNavigate={onNavigate} read={read} />}
+        {surface === 'essay' && <EssayPane item={item} onNavigate={onNavigate} read={read} />}
         {surface === 'library' && (
-          <LibraryPane
-            view={view}
-            readSlugs={readSlugs}
-            onToggle={toggleRead}
-            onOpen={slug => onNavigate('raw', [slug])}
-          />
+          <LibraryPane view={view} read={read} onOpen={slug => onNavigate('raw', [slug])} />
         )}
-        {surface === 'raw' && <RawPane item={item} onNavigate={onNavigate} />}
+        {surface === 'raw' && <RawPane item={item} onNavigate={onNavigate} read={read} />}
       </div>
     </div>
   );

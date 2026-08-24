@@ -123,6 +123,34 @@ export function Failed({ what, detail }: { what: string; detail?: string | null 
   );
 }
 
+/**
+ * What every surface carries at its foot, and the Library carries per row.
+ *
+ * Marking is a deliberate act — opening a document is not reading it, and
+ * scrolling past it is not either — so nothing here happens on its own.
+ */
+export interface SurfaceRead {
+  isRead: (key: string) => boolean;
+  toggle: (key: string) => void;
+}
+
+/** The foot of a surface item: what it is, and one tap to change it. */
+export function MarkRead({ read, onToggle }: { read: boolean; onToggle: () => void }) {
+  return (
+    <div className="mt-5 flex justify-end border-t border-sp-hair pt-3">
+      <button
+        onClick={onToggle}
+        aria-pressed={read}
+        className={`font-mono text-[10.5px] uppercase tracking-[0.18em] ${
+          read ? 'text-sp-green' : 'text-sp-faint hover:text-sp-muted'
+        }`}
+      >
+        {read ? '✓ read' : 'mark read'}
+      </button>
+    </div>
+  );
+}
+
 /** A horizontal strip of items — the charts by date, a document's days. */
 export function Rail({ children }: { children: React.ReactNode }) {
   return <div className="mb-4 flex gap-2 overflow-x-auto pb-1">{children}</div>;

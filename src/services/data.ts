@@ -25,8 +25,10 @@ import {
   readMergedYearThemes,
   readPackRows,
   readPackSessionRows,
+  readItemKey,
   readProfile,
   readProfiles,
+  readReadItemRows,
   readTasks,
   readTowerItemRows,
   readYearThemes,
@@ -42,10 +44,12 @@ import type {
   Habit,
   HabitCompletion,
   Profile,
+  ReadItemRow,
   Task,
   TowerItemRow,
   YearTheme,
 } from '../lib/entities';
+import { allCachedFiles } from '../lib/db';
 import type { HabitCategory, MitCategory, TowerStatus, TowerEffort, TowerItem, Pack, PackSession, PackWithCount } from '../types';
 
 // ============================================================================
@@ -535,6 +539,69 @@ export async function updateProfile(
   // The merged singleton, not the raw row this write landed on, so what comes
   // back is what the next `getProfile` will say.
   return required(readProfile() ?? undefined, 'update profile');
+}
+
+// ============================================================================
+// Reading
+// ============================================================================
+
+export { readItemKey };
+
+/** Every item marked read, on every surface. */
+export async function getReadItems(): Promise<ReadItemRow[]> {
+  await hydrate();
+  return readReadItemRows();
+}
+
+/**
+ * Mark one item read, or unmark it.
+ *
+ * Unmarking is a tombstone rather than a flag, so a device that never saw the
+ * mark and a device that saw it and cleared it end at the same answer. Marking
+ * again resurrects the entity, carrying only what is written after the delete —
+ * which is the whole record here.
+ */
+export async function setItemRead(key: string, read: boolean): Promise<void> {
+  await hydrate();
+  await commit([
+    read
+      ? { entity: ENTITY.readItem, entityId: key, type: 'upsert', fields: { read_at: nowIso() } }
+      : { entity: ENTITY.readItem, entityId: key, type: 'delete' },
+  ]);
+}
+
+/** The reading baseline, or null on a device that has never established one. */
+export async function getReadingBaseline(): Promise<string | null> {
+  await hydrate();
+  return readProfile()?.reading_baseline_at ?? null;
+}
+
+/**
+ * Establish the reading baseline, once, ever.
+ *
+ * One event, not three hundred and twenty-six: everything the corpus published
+ * before this mark was already read in email, and the pane opens showing the
+ * handful since rather than the whole library in alarm.
+ *
+ * Two guards, and the second is the one that matters. Writing only when unset
+ * is not enough on its own — a second device that has not yet pulled the
+ * journal would see no baseline, stamp a NEWER one, and last-writer-wins would
+ * silently mark every entry between the two as read. So a device that has
+ * never seen the journal does not get to decide: it has no way to know whether
+ * a baseline already exists, and it will have one within a sync.
+ *
+ * Returns the baseline in force, or null when none could be established yet.
+ */
+export async function ensureReadingBaseline(): Promise<string | null> {
+  const existing = await getReadingBaseline();
+  if (existing !== null) return existing;
+
+  const seen = await allCachedFiles();
+  if (seen.length === 0) return null;
+
+  const now = nowIso();
+  await updateProfile({ reading_baseline_at: now });
+  return now;
 }
 
 // ============================================================================

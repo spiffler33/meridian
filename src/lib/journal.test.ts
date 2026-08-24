@@ -505,4 +505,28 @@ describe('journal fold engine', () => {
       },
     ]);
   });
+
+  it('criterion 18 — an entity the build has never heard of folds quietly and touches nothing else', () => {
+    // The compatibility question phase 5 raised: what an OLDER deployed build
+    // does with a `readItem` event. The answer is not "skips with warnings" —
+    // fold validates the SHAPE of an event and never its entity name, so an
+    // unknown entity folds into its own bucket and is simply never read. That
+    // is what makes a new entity safe to ship to one device at a time.
+    const known = upsert({ id: 'e-1', ts: 100, entity: 'habit', entityId: 'h1', fields: { title: 'Run' } });
+    const unknown = upsert({
+      id: 'e-2',
+      ts: 200,
+      entity: 'readItem',
+      entityId: 'raw:2026-08-21--lex-asia',
+      fields: { read_at: '2026-08-24T09:00:00.000Z' },
+    });
+
+    const { state, warnings } = fold([known, unknown]);
+
+    expect(warnings).toEqual([]);
+    expect(state.habit).toEqual({ h1: { title: 'Run' } });
+    expect(state.readItem).toEqual({
+      'raw:2026-08-21--lex-asia': { read_at: '2026-08-24T09:00:00.000Z' },
+    });
+  });
 });

@@ -109,7 +109,7 @@ Tests: grammar fixtures for all three formats; normalization table (Appendix C) 
 
 ---
 
-## Phase 5 — Read-state & homeostasis (the only journal change)
+## Phase 5 — Read-state & homeostasis (the only journal change) — **BUILT 2026-08-24, GATE 5 UNRUN**
 
 **Goal:** reading becomes cockpit data. The riskiest change lands last, on a stable pane.
 
@@ -318,3 +318,76 @@ Asked why phases 1–4 were not going to `main`, two answers held and one of the
 The app has **no error boundary at all** (`grep -rn "ErrorBoundary\|componentDidCatch\|getDerivedStateFromError" src/` → nothing), so a render-time throw in any view unmounts the whole tree — and `main` deploys the daily cockpit. That is the one blocker worth removing rather than working around, so it is now part of phase 5's build list above, and the precondition for the merge.
 
 The other reason stands and is not fixable by writing code: **the v1→v2 database migration is one-way.** Phase 2 added `contentCache` and bumped `DB_VERSION`. Deploying upgrades both devices; a rollback then has a v1 build opening a v2 database, which throws `VersionError`, which `AppContext`'s boot catch turns into `DEFAULT_HABITS` — the data is intact underneath but the app reads as wiped and every write fails until `main` is deployed forward again. So "just roll it back" is not available, and the merge should happen once, with phases 1–5 together, after gates 4 and 5.
+
+### 2026-08-24 — phase 5 shipped, on `local-first`
+
+**Reading is cockpit data.** `readItem` is entity #10, the baseline is one event, every surface can
+be marked read, the wave reads the fold, and the app has an error boundary for the first time.
+
+What landed:
+- **`readItem`** — `src/lib/entities.ts`. The entity id IS the natural key (`<surface>:<itemKey>`),
+  `read_at` is the only field, unmarking is a tombstone and re-marking resurrects.
+- **The baseline** — `profile.reading_baseline_at`, written once by `ensureReadingBaseline()` in
+  `src/services/data.ts`, on the pane's first sync.
+- **Marking** — the Library row's checkmark, and a `MarkRead` at the foot of each surface item
+  (tape · chart · canon day · essay · raw). No auto-read on open or scroll.
+- **The instrument** — `unread` is folded state now; the tab rail carries per-tab ticks.
+- **The Year heatmap** — a day with ≥1 `readItem` comes off the floor (`heat-1`) and says `· read`
+  in its label. `getHeatLevel` is untouched.
+- **`src/components/ViewBoundary.tsx`** — one class, keyed on `nav.view` inside `<Layout>`.
+
+**Decisions worth knowing about:**
+1. **The backlog is dated material only.** Entries, the tape window and the charts carry a date; the
+   canon and the wiki do not. They are references rather than a queue — you do not fall behind on a
+   wiki — so they can be marked (a course keeps progress) but they never alarm and carry no tick.
+   Undated material is never unread, which is also what makes the rule total.
+2. **The baseline day itself counts as unread.** An item's date has no time in it, so an entry
+   published on the baseline's own day cannot be placed either side of the instant. Rounding it to
+   "already read" would hide it forever; rounding it the other way costs one tap.
+3. **The wave reports the entries, not the sum of all surfaces.** The tape and the charts are
+   digests of the same entries — adding them would count one week's reading three times. Each tab's
+   own backlog is on that tab.
+4. **A second guard on the baseline, and it is the one that matters.** Writing only when unset is
+   not enough: a second device that has not yet pulled the journal would see none, stamp a *newer*
+   one, and last-writer-wins would silently mark every entry between the two as read. So a device
+   with an empty journal cache does not get to decide — it will have one within a sync.
+5. **`reading_baseline_at`, not `readingBaselineAt`.** The profile is a ported Postgres row and
+   every other column is snake_case; one camelCase field would be the only one. Same for
+   `readItem.read_at`.
+6. **`resolveEntityId` is not applied to `readItem`.** The entity never existed in Postgres, so no
+   row can carry a surrogate id — the key IS the id from the first write, and resolution over rows
+   whose ids are already their keys is the identity. Applying it would be ceremony, not safety.
+7. **Appendix D's `starred` and `note` are not written.** Nothing offers either yet; the journal
+   takes a new field the day something does, with no migration.
+8. **Marks schedule a flush.** `useReadState` calls `scheduleFlush()` after a write — a mark is an
+   edit, and the 5 s debounce is the primary path to the journal. Without it a mark waited for a
+   visibility or focus event.
+
+**The compatibility claim was wrong, and the truth is better.** The plan said an older deployed build
+folding a `readItem` event "skips-with-warnings by design". It does not: `fold` validates an event's
+*shape* and never its entity name, so the record lands in a bucket that build has no reader for and
+is simply never looked at — no warning, no loss, and the event is still there when that device
+updates. That is what makes a new entity safe to deploy one device at a time. Pinned as
+`journal.test.ts` criterion 18 and noted on `ENTITY`.
+
+**One real bug found and fixed while testing**, in `useReadState`: each toggle re-reads the store to
+pick up the day the mark landed on, and those reads can finish out of order — mark then unmark, and
+the mark's read-back arrives last, putting the tick straight back. Only the newest toggle's read is
+allowed to land now. It surfaced as a flaky test, which is exactly what it would have felt like on a
+phone.
+
+**A test-harness leak, also fixed.** `ReadView.test.tsx`'s teardown deleted the database while a
+view's writes were still in flight; `deleteDatabase` is *blocked* by an open connection rather than
+refused, and the old `onblocked` handler resolved anyway — so one test's marks leaked into the next.
+It now waits the writes out and rejects loudly if the delete is ever blocked again.
+
+Tests: 403 pass in 21 files (was 364 in 18). New: `readState.test.ts` (the backlog rule),
+`ViewBoundary.test.tsx` (shell survives · error text never rendered · the key clears it),
+`YearView.test.tsx` (reading lifts a day and labels it). Added to `entities.test.ts` (mark, converge,
+tombstone, resurrect, reload; baseline written once, never reset, idempotent, never invented),
+`journal.test.ts` (criterion 18), `readSurfaces.test.tsx` (the key each surface mints).
+`npm run build` clean, `npx tsc -b` clean, `npm run lint` at its 6 pre-existing errors,
+`grep -rn "localStorage" src/` still 0.
+
+**GATE 5 is unrun.** Two devices, a mark on the phone, the laptop settling after sync, and one
+baseline event in the journal — the owner's to run.
