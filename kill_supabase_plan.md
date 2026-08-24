@@ -269,6 +269,44 @@ Neither is a phase — both are calendar items for the owner.
 
 ---
 
+## RUN LOG — 2026-08-24
+
+Phases 0–11 executed autonomously overnight (2026-08-23 22:11 → 2026-08-24 02:16, 4h05m of build time)
+and merged to `main` at `48d9266`. Deployed and live on meridian.spiffler.xyz.
+
+**Closed:** 0 export · 1 harness · 2 fold · 3 IndexedDB · 4 transport · 5 seed · 6 adapter · 7 rewire ·
+8 settings/backup · 9 offline shell · 10 CSP + Supabase removal · 11 CLAUDE.md. **219 tests.**
+
+**Still open: Phase 12.** Acceptance B (two-device sync) confirmed live — phone and laptop each write
+their own journal file and converge. A (airplane cold open), D (restore), E (revoked token) unrun.
+
+**Defects caught by adversarial review before shipping** — each reproduced with a test, then fixed:
+1. The fold's order key `(ts, device, seq)` was not a total order. Tied events resolved by array
+   position, so two devices could diverge permanently and a record could survive its own delete.
+   Fixed by appending `id`. This is the single most important change in the run.
+2. Folded state shared object references with the journal — editing a record rewrote history in place.
+3. Journal paths derived from the event's own `ts`, so a delayed push filed a backlog into a month
+   the warm read window never re-reads. Now derived from append time.
+4. A pull racing a push erased the just-made edit locally. Now strictly serialized, push first.
+5. A duplicate natural key silently discarded the loser's content. Now merges.
+6. A device id containing `.` or `/` produced a journal file `listJournal` skips — written, looks
+   backed up, invisible to restore. Now validated against the generator's own alphabet.
+7. `verifyAccess` read `permissions.push`, which reports the user's repo role rather than the token's
+   grant, so it could never reject the read-only token it existed to catch. Confirmed empirically
+   against the live repo, then replaced with a deliberately-conflicting PUT probe (409 = writable).
+8. Nine mutations to the app↔sync wiring survived the whole suite, including "nothing ever pushes
+   after an edit". All now covered.
+
+**Two spec gaps found and amended** (both recorded inline above): the fold order key, and the
+current+previous-month read rule silently losing everything older than two months on a fresh device.
+
+**Known limitations, accepted:** device clock skew can beat last-writer-wins; a device-month journal
+over 1 MB pauses that path; the duplicate-key merge is row-granular; `SettingsView` and `Layout` have
+no test files.
+
+**Owner actions outstanding:** rotate the Supabase secret key (pasted in a transcript); run drill
+A/D/E; pause or delete the Supabase project after a week of verified use.
+
 ## WAVE PLAN (derived from `depends_on` + disjoint `touches`)
 ```
 W1  0                 human gate: credentials + repo creation

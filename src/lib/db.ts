@@ -36,7 +36,6 @@ export type MetaKey =
   | 'lastStateError'
   | 'theme'
   | 'skippedContextPrompt'
-  | 'persistGranted'
   /**
    * The Claude API key. Device-local on purpose: `meta` is the one store that
    * is never journalled, so the key cannot reach the data repo.

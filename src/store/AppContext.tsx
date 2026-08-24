@@ -66,7 +66,7 @@ import {
   updateProfile as updateProfileInStore,
 } from '../services/data';
 import type { TowerItemInput, PackInput, PackSessionInput, Profile } from '../services/data';
-import { requestPersistence, setMeta } from '../lib/db';
+import { requestPersistence } from '../lib/db';
 import { installSyncTriggers, scheduleFlush, syncDown } from '../lib/sync';
 
 /**
@@ -625,12 +625,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setLoading(false);
       }
 
-      // Ask the browser to keep this origin's storage. Phase 8 shows the
-      // answer; recording it is all that happens here.
+      // Ask the browser to keep this origin's storage. Settings queries the
+      // live answer itself, so nothing is recorded here.
       try {
-        await setMeta('persistGranted', await requestPersistence());
+        await requestPersistence();
       } catch (err) {
-        if (import.meta.env.DEV) console.error('Failed to record storage persistence:', err);
+        if (import.meta.env.DEV) console.error('Failed to request storage persistence:', err);
       }
 
       try {
