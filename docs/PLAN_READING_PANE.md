@@ -32,7 +32,7 @@ Meridian gains a fifth view: the reading surface for the newsletters library. Em
 
 ---
 
-## Phase 1 — Shell & theme (no network)
+## Phase 1 — Shell & theme (no network) — **DONE 2026-08-24** (`0ec0d39`)
 
 **Goal:** the `Read` view exists, themed, keyboard-reachable, rendering fixture data that mirrors `reading-pane-mockup.html`. Zero risk: no tokens, no fetches, no DB change.
 
@@ -49,7 +49,7 @@ Tests: route mounting, keyboard `R`, wave amplitude mapping (pure function), red
 
 ---
 
-## Phase 2 — Transport & cache (data goes live in Library)
+## Phase 2 — Transport & cache (data goes live in Library) — **DONE 2026-08-24** (`4c792f7`)
 
 **Goal:** real repo data, offline-capable, with the cheapest possible freshness check.
 
@@ -73,7 +73,7 @@ Tests: sha-diff selector (pure), blob UTF-8 decode (multibyte fixture), migratio
 
 ---
 
-## Phase 3 — Surfaces render
+## Phase 3 — Surfaces render — **DONE 2026-08-24** (`5f72fff`)
 
 **Goal:** everything already committed becomes readable. Citations render as chips but are **inert** this phase.
 
@@ -155,6 +155,16 @@ base64 → `Uint8Array` → `TextDecoder('utf-8')`. Expected volume: one branch 
 
 ## Appendix C — Citation grammars → one resolver
 
+> **AMENDED 2026-08-24, after reading the corpus.** The table below assumed `§"…"` names a heading.
+> It does not. In `state/tape.json`, the essays' footnote definitions and the canon's inline marks,
+> the § target is a **quoted phrase lifted from the source text** — `§"may have spent more than
+> $95bn"`, `§"And finally I shorted Tesla (TSLA) at 416.22"`, and for a `figures.md` target even a
+> table row: `§"1998 Long Term Cap Mgmnt Collapse | Feb 1998 | 330 | +2% | ..."`. Quote style also
+> varies: straight quotes in tape/essays, curly `“ ”` in canon. So heading-id normalisation is not
+> the mechanism — phase 4 has to locate a **text span** in the rendered document and scroll to it,
+> with the same not-found fallback (open at top + one hairline notice). Everything else in the table
+> holds: three grammars in, one resolver, one target out.
+
 | source | grammar | resolves via |
 |---|---|---|
 | canon `day-NN.json` | inline `[§"Heading"]` | `citations[]` lookup by heading → `{slug, heading}` |
@@ -173,3 +183,64 @@ Heading-id normalization (applied identically to raw `#`-headings at render and 
 | fields | `readAt` (ISO) · `starred?` (bool) · `note?` (string) |
 
 Natural-key pattern follows habitCompletion; `resolveEntityId` applies unchanged. Delete = unread again; a later upsert resurrects with only post-delete fields — already the fold's contract.
+
+---
+
+## RUN LOG
+
+### 2026-08-24 — phases 1–3 shipped, on `local-first`
+
+**Phase 1 — shell & theme** (`0ec0d39`). Fifth view at `R`, five tabs, the setpoint palette in the
+theme layer (dark canonical on `:root`, the two light themes remap it, `[data-surface="read"]` makes
+the whole screen adopt it while the pane is mounted), the prose/mono type split, and the wave. Routes
+are the path-shaped hash `#/read/<surface>[/<item>…]`; `useNavigation` reads both grammars and stays
+the only writer of either.
+
+**Phase 2 — transport & cache** (`4c792f7`). `newsletters.ts` (trees + blobs, read-only, sharing
+github.ts's request plumbing and error taxonomy), IndexedDB v1→v2 with `contentCache`, sync-on-open
+and on focus, the Settings block, and the Library from real data. Measured on the corpus: 322 entries,
+316 gists, 49 state-tier files, 714 KB.
+
+**Phase 3 — surfaces render** (`5f72fff`). Tape, Chart, Canon, Essays and the source reader, plus
+`markdown.ts` — a character-scanning parser producing a tree, never HTML. Parses the 1,066 KB AI Index
+entry in 17 ms.
+
+**Amendments the corpus forced** (the plan was written before these files were opened):
+1. `state/tape.json` is a *themes tape* — a window, eight themes with state/delta, and six cards
+   carrying two opposing stances, a pressure line and evidence items — not headline/kicker/note cards.
+2. `chart.json`'s `bars[].w` is the **quantity**, not a percentage (307.65, 115, 24). The widest bar
+   sets the scale per chart. Value stays outside the bar.
+3. There are **no `.citations.json` sidecars** in `wiki/essays/`. Footnote definitions live at the
+   foot of each essay's own markdown (`[^n]: raw/… §"…"`), which is where the strip is built from.
+4. Raw entries have no title in any index; they carry one in their own frontmatter, so the reader
+   shows it on open and the Library shows the slug.
+5. Three `raw/` subdirectories (`chats`, `newsletters`, `notes`) are empty placeholders. An entry is a
+   directory holding a markdown file named after it — that is the rule the library list uses.
+6. `state/gists.md`'s prose header contains the ` | ` separator its entries use. The tree join (a line
+   counts only if what precedes the separator is a slug the tree has) rejects it without any rule
+   about what prose looks like.
+7. Appendix C is wrong about `§` targets — see the amendment there.
+
+**Deliberate departures from the plan, all owner-visible:**
+- Light-theme `--sp-amber` and `--sp-green` darkened to ~5.1:1; the appendix's values measured 3.1:1
+  and 4.1:1 against the 4.5:1 the appendix itself asks for. `--sp-faint` stays sub-threshold in both
+  themes by design.
+- `meta.nlTree` added (the plan lists three new meta keys, this is a fourth): without a cached tree
+  the airplane-mode cold open has no entry list, because gists.md cannot say which entries exist.
+- The Library's freshness dot stays the **local read toggle** rather than becoming tree-derived. Git
+  trees have no mtime, and the honest version of that dot is phase 5's read-state; a second throwaway
+  mechanism in between would be deleted a phase later.
+- `SetpointWave` takes `unread: number | null`. A pane with no token has no backlog to report.
+- `github.ts` now exports its request plumbing (`call`, `failure`, `readJson`, `fromBase64`) and its
+  two failure reasons, shared with the newsletters transport so the rule that a rate limit never
+  blames the token cannot drift between them.
+
+**Still open at Gate 3:** the wave reads ~322 unread and pins at Drifting until phase 5's baseline
+lands. Three book-sized entries (500 KB – 1 MB) may pause on open; not yet measured on the phone.
+
+**The morning brief** (raised by the owner during phase 3, out of the original scope): it was written
+only to `.queue/`, which is gitignored, so it never reached the repo this pane reads. The newsletters
+skill now writes the panel-adjusted §7 outline to `state/briefs/<DATE>.md` and commits it with
+`state/ideas.json` (newsletters commit `dbe0d39`, **local and unpushed**). The Meridian side is not
+built: it needs `state/briefs/` in the sync tier and a sixth surface, and there is nothing to render
+until a `/morning-brief` run lands one. This is its own small phase, not part of 4 or 5.

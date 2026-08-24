@@ -109,11 +109,11 @@ export function essayPath(slug: string): string {
   return `${ESSAYS_PREFIX}${slug}${MARKDOWN_EXTENSION}`;
 }
 
-export function entryPath(slug: string): string {
+function entryPath(slug: string): string {
   return `${RAW_PREFIX}${slug}/${slug}${MARKDOWN_EXTENSION}`;
 }
 
-export function figuresPath(slug: string): string {
+function figuresPath(slug: string): string {
   return `${RAW_PREFIX}${slug}/${FIGURES_FILE}`;
 }
 
