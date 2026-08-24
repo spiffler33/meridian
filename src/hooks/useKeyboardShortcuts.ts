@@ -55,6 +55,10 @@ export function useKeyboardShortcuts({
           event.preventDefault();
           onViewChange('year');
           break;
+        case 'r':
+          event.preventDefault();
+          onViewChange('read');
+          break;
         case 's':
           event.preventDefault();
           onViewChange('settings');

@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>meridian · Read — mockup</title>
+<style>
+  :root{
+    --bg:#07090d; --panel:#0d1117; --panel2:#11161f;
+    --ink:#e9eef5; --muted:#7b8696; --faint:#46505f; --hair:#1a212b;
+    --amber:#f0b04a; --green:#6ad29a; --ice:#6fa8d6;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-font-smoothing:antialiased}
+  body{background:radial-gradient(900px 500px at 50% -12%, rgba(240,176,74,0.04), transparent 60%), var(--bg);
+    color:var(--ink); font-family:Georgia,'Times New Roman',serif;
+    min-height:100vh; display:flex; justify-content:center; padding:26px 14px 64px;}
+  .mono{font-family:ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace;font-variant-numeric:tabular-nums}
+  .wrap{width:100%;max-width:680px}
+
+  /* ---- header: brand + setpoint wave instrument ---- */
+  .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+  .brand{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:10px;letter-spacing:0.34em;color:var(--muted);font-weight:600}
+  .viewkey{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:var(--faint);letter-spacing:0.12em}
+  .wavebox{position:relative;height:64px;margin:2px 0 4px}
+  svg.wave{width:100%;height:100%;display:block;overflow:visible}
+  .waveline{stroke:var(--ink);stroke-width:2;fill:none;opacity:.85;transform-origin:50% 32px;transition:transform .8s cubic-bezier(.4,0,.2,1)}
+  .baseline{stroke:rgba(255,255,255,0.10);stroke-width:1}
+  .statebar{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:18px}
+  .stateword{font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:var(--amber);transition:color .8s}
+  .stateword.settled{color:var(--green)}
+  .statecount{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--faint)}
+
+  /* ---- tab rail ---- */
+  .tabs{display:flex;gap:22px;border-bottom:1px solid var(--hair);margin-bottom:22px;overflow-x:auto}
+  .tab{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;letter-spacing:0.22em;text-transform:uppercase;
+    color:var(--faint);background:none;border:none;cursor:pointer;padding:8px 2px 10px;border-bottom:2px solid transparent;white-space:nowrap}
+  .tab:hover{color:var(--muted)}
+  .tab.on{color:var(--ink);border-bottom-color:var(--amber)}
+  :focus-visible{outline:2px solid var(--amber);outline-offset:3px}
+
+  /* ---- shared card ---- */
+  .card{background:var(--panel);border:1px solid var(--hair);border-radius:10px;padding:18px 18px 16px;margin-bottom:16px}
+  .kicker{font-family:ui-monospace,Menlo,monospace;font-size:9.5px;letter-spacing:0.22em;text-transform:uppercase;color:var(--amber);margin-bottom:8px}
+  .kicker.ice{color:var(--ice)}
+  .headline{font-size:18px;font-weight:700;letter-spacing:-0.01em;line-height:1.35}
+  .prose{font-size:16px;line-height:1.68;color:var(--ink);margin-top:12px}
+  .prose + .prose{margin-top:12px}
+  .prose .dim{color:var(--muted)}
+  .srcline{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--faint);margin-top:14px;padding-top:12px;border-top:1px solid var(--hair);line-height:1.7}
+  .note{font-size:14px;color:var(--muted);line-height:1.6;margin-top:10px;font-style:italic}
+
+  /* citation chip — tappable, resolves into raw/ */
+  .cite{font-family:ui-monospace,Menlo,monospace;font-style:normal;font-size:10.5px;color:var(--ice);
+    border:1px solid rgba(111,168,214,0.35);border-radius:9px;padding:1px 7px 2px;white-space:nowrap;cursor:pointer;
+    background:none;vertical-align:0.12em;margin:0 1px}
+  .cite:hover{border-color:var(--ice)}
+  sup.fn{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:var(--ice);cursor:pointer}
+
+  /* ---- chart bars: value lives outside the bar, always readable ---- */
+  .bars{margin-top:14px}
+  .brow{display:grid;grid-template-columns:112px 1fr 58px;gap:10px;align-items:center;padding:5px 0}
+  .blbl{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--muted);text-align:right}
+  .btrack{height:12px;background:var(--panel2);border-radius:3px;overflow:hidden}
+  .bfill{height:100%;background:var(--amber);border-radius:3px}
+  .bfill.g{background:var(--green)} .bfill.i{background:var(--ice)}
+  .bval{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--ink);text-align:left}
+
+  /* ---- canon ---- */
+  .canonhead{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}
+  .daytick{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--faint)}
+  .citefoot{margin-top:14px;padding-top:12px;border-top:1px solid var(--hair)}
+  .citefoot .cf{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--faint);line-height:2}
+
+  /* ---- library rows ---- */
+  .row{display:flex;align-items:center;gap:12px;padding:11px 2px;border-bottom:1px solid var(--hair)}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--amber);box-shadow:0 0 8px rgba(240,176,74,0.5);flex-shrink:0;transition:.4s}
+  .row.read .dot{background:transparent;box-shadow:none;border:1px solid var(--hair)}
+  .rmain{flex:1;min-width:0}
+  .rdate{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:var(--faint);letter-spacing:0.06em}
+  .rtitle{font-size:15px;font-weight:600;line-height:1.4;margin:2px 0 1px}
+  .row.read .rtitle{color:var(--muted);font-weight:400}
+  .rgist{font-size:13px;color:var(--muted);line-height:1.45;overflow:hidden;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical}
+  .chk{width:20px;height:20px;border-radius:6px;border:1.5px solid var(--faint);background:none;cursor:pointer;flex-shrink:0;position:relative;transition:.15s}
+  .chk:hover{border-color:var(--muted)}
+  .row.read .chk{background:var(--green);border-color:var(--green)}
+  .row.read .chk::after{content:"";position:absolute;left:6px;top:3px;width:5px;height:9px;border:solid #06210f;border-width:0 2px 2px 0;transform:rotate(45deg)}
+
+  .pane{display:none}.pane.on{display:block}
+  .foot{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:var(--faint);text-align:center;margin-top:30px;letter-spacing:0.06em;line-height:1.8}
+  #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(8px);background:#0f141b;border:1px solid var(--hair);
+    border-radius:8px;padding:8px 14px;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--ice);opacity:0;pointer-events:none;transition:.25s;max-width:92vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  @media (prefers-reduced-motion: reduce){*{transition:none !important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top"><span class="brand">MERIDIAN · READ</span><span class="viewkey">[R]</span></div>
+
+  <div class="wavebox">
+    <svg class="wave" viewBox="0 0 680 64" preserveAspectRatio="none" aria-hidden="true">
+      <line class="baseline" x1="0" y1="32" x2="680" y2="32"/>
+      <path id="wv" class="waveline"
+        d="M0,32 C30,32 45,10 75,10 C105,10 115,54 150,54 C185,54 195,6 235,6 C275,6 285,58 325,58 C355,58 362,32 340,32 C362,32 372,8 410,8 C448,8 458,56 495,56 C532,56 545,12 580,12 C615,12 640,32 680,32"/>
+      <defs><radialGradient id="glow"><stop offset="0%" stop-color="rgba(240,176,74,0.5)"/><stop offset="100%" stop-color="rgba(240,176,74,0)"/></radialGradient></defs>
+      <circle cx="340" cy="32" r="16" fill="url(#glow)"/>
+      <circle cx="340" cy="32" r="6.5" fill="var(--amber)"/>
+    </svg>
+  </div>
+  <div class="statebar">
+    <span class="stateword" id="word">Drifting</span>
+    <span class="statecount mono" id="count">4 unread</span>
+  </div>
+
+  <div class="tabs" role="tablist">
+    <button class="tab on" data-p="tape">Tape</button>
+    <button class="tab" data-p="chart">Chart</button>
+    <button class="tab" data-p="canon">Canon</button>
+    <button class="tab" data-p="essay">Essays</button>
+    <button class="tab" data-p="lib">Library</button>
+  </div>
+
+  <!-- TAPE -->
+  <div class="pane on" id="p-tape">
+    <div class="card">
+      <div class="kicker">Tape wk 34 · 30 entries · lead theme</div>
+      <div class="headline">Term premium does the tightening the Fed won't</div>
+      <p class="prose">Long-end yields grinding higher while the front end sits still — the sample week's tape reads as duration repricing, not inflation repricing. Three sources land on the same mechanism from different doors.</p>
+      <div class="srcline">4 entries · <button class="cite">raw/2026-08-18--sample-macro §"the long end"</button> <button class="cite">+3</button></div>
+    </div>
+    <div class="card">
+      <div class="kicker">Second theme</div>
+      <div class="headline">Capex cycle vs. cash-flow discipline — the sample argument</div>
+      <p class="prose"><span class="dim">Placeholder card copy. Real cards render from </span>state/tape.json<span class="dim"> — headline, kicker, note, srcline — exactly as committed.</span></p>
+      <div class="srcline">3 entries · <button class="cite">raw/2026-08-20--sample-entry §"capex"</button></div>
+    </div>
+  </div>
+
+  <!-- CHART -->
+  <div class="pane" id="p-chart">
+    <div class="card">
+      <div class="kicker">Chart · sample hook</div>
+      <div class="headline">Who's actually paying up for power (sample data)</div>
+      <div class="bars">
+        <div class="brow"><span class="blbl">Utilities capex</span><div class="btrack"><div class="bfill" style="width:86%"></div></div><span class="bval">+86%</span></div>
+        <div class="brow"><span class="blbl">Hyperscalers</span><div class="btrack"><div class="bfill g" style="width:64%"></div></div><span class="bval">+64%</span></div>
+        <div class="brow"><span class="blbl">Grid storage</span><div class="btrack"><div class="bfill i" style="width:41%"></div></div><span class="bval">+41%</span></div>
+        <div class="brow"><span class="blbl">Residential</span><div class="btrack"><div class="bfill i" style="width:12%"></div></div><span class="bval">+12%</span></div>
+      </div>
+      <p class="note">Bars draw from chart.json → bars[] as real SVG/DOM — the value sits outside the bar, a habit worth keeping even where no mail client can strip the fill.</p>
+      <div class="srcline">src · <button class="cite">raw/2026-08-21--sample-power §"capex table"</button></div>
+    </div>
+  </div>
+
+  <!-- CANON -->
+  <div class="pane" id="p-canon">
+    <div class="card">
+      <div class="canonhead">
+        <div class="kicker ice">canon · risk-memos (1996)</div>
+        <div class="daytick">day 4/9</div>
+      </div>
+      <div class="headline">Position size is the only opinion that compounds</div>
+      <p class="prose">The sample lesson renders from the committed <span class="mono" style="font-size:13px">day-NN.json</span> text — never the email HTML. Conviction, the memo argues, is expressed in sizing, not in commentary <button class="cite">§"sizing as speech"</button>. The rest of the day's prose flows at reading measure, serif, 16px, 1.68 line-height — the ergonomics your emails already fought Gmail for.</p>
+      <p class="prose">Every claim keeps its inline citation, and every citation is now a tap-through into the source prose <button class="cite">§"the 1996 postmortem"</button> — the one thing the email surface structurally could not do.</p>
+      <div class="citefoot">
+        <div class="cf">citations → raw/1996--risk-memos §"sizing as speech" · §"the 1996 postmortem"</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ESSAYS -->
+  <div class="pane" id="p-essay">
+    <div class="card">
+      <div class="kicker">Essay · 1,840 words</div>
+      <div class="headline">The tape doesn't care about your macro view (sample)</div>
+      <p class="prose" style="color:var(--muted);font-size:14.5px;margin-top:6px">A sample subtitle sits here, muted, one line.</p>
+      <p class="prose">Essays render from <span class="mono" style="font-size:13px">wiki/essays/*.md</span> with footnotes intact<sup class="fn">1</sup> — each marker resolves through the .citations.json sidecar into the stacks<sup class="fn">2</sup>, popover first, full click-through second.</p>
+      <div class="srcline">[1] raw/2026-07-30--sample §"flows vs views" &nbsp; [2] raw/2026-08-02--sample §"positioning data"</div>
+    </div>
+  </div>
+
+  <!-- LIBRARY -->
+  <div class="pane" id="p-lib">
+    <div class="row" data-i="0"><span class="dot"></span><div class="rmain"><div class="rdate">2026-08-22</div><div class="rtitle">Sample newsletter — the power buildout</div><div class="rgist">One-line gist from state/gists.md renders here, clamped to a single line.</div></div><button class="chk" aria-label="Mark read"></button></div>
+    <div class="row" data-i="1"><span class="dot"></span><div class="rmain"><div class="rdate">2026-08-21</div><div class="rtitle">Sample transcript — rates panel</div><div class="rgist">Term premium, issuance calendar, and the sample argument about duration.</div></div><button class="chk" aria-label="Mark read"></button></div>
+    <div class="row" data-i="2"><span class="dot"></span><div class="rmain"><div class="rdate">2026-08-20</div><div class="rtitle">Sample note — capex discipline</div><div class="rgist">Cash-flow discipline vs. growth capex, the sample week's second theme.</div></div><button class="chk" aria-label="Mark read"></button></div>
+    <div class="row" data-i="3"><span class="dot"></span><div class="rmain"><div class="rdate">2026-08-19</div><div class="rtitle">Sample letter — EM currencies</div><div class="rgist">A sample gist line about carry, positioning, and the dollar.</div></div><button class="chk" aria-label="Mark read"></button></div>
+    <div class="row read" data-i="4"><span class="dot"></span><div class="rmain"><div class="rdate">2026-08-18</div><div class="rtitle">Sample macro letter — the long end</div><div class="rgist">Already read — dot dark, title quiet, checkmark green.</div></div><button class="chk" aria-label="Mark unread"></button></div>
+    <p class="note" style="margin-top:14px">Mark items read and watch the wave settle — reading as regulation. Entries older than the baseline never show as unread.</p>
+  </div>
+
+  <div class="foot">static mockup · sample content only · dark theme (light maps from the email spec)<br>serif for prose · mono for instruments · setpoint tokens throughout</div>
+</div>
+
+<div id="toast" class="mono"></div>
+
+<script>
+(function(){
+  // tabs
+  var tabs=document.querySelectorAll('.tab');
+  tabs.forEach(function(t){t.addEventListener('click',function(){
+    tabs.forEach(function(x){x.classList.remove('on')});t.classList.add('on');
+    document.querySelectorAll('.pane').forEach(function(p){p.classList.remove('on')});
+    document.getElementById('p-'+t.dataset.p).classList.add('on');
+  });});
+
+  // homeostasis: unread count -> wave amplitude + state word
+  var unread=4;
+  var wv=document.getElementById('wv'), word=document.getElementById('word'), count=document.getElementById('count');
+  function setState(){
+    var amp = unread===0 ? 0.05 : Math.min(1, 0.35 + 0.1625*Math.min(unread,4));
+    wv.style.transform='scaleY('+amp+')';
+    count.textContent = unread===0 ? 'all read' : unread+' unread';
+    if(unread===0){word.textContent='At setpoint';word.classList.add('settled');}
+    else if(unread<=2){word.textContent='Holding steady';word.classList.remove('settled');}
+    else{word.textContent='Drifting';word.classList.remove('settled');}
+  }
+  document.querySelectorAll('.row .chk').forEach(function(c){
+    c.addEventListener('click',function(){
+      var r=c.closest('.row');var was=r.classList.contains('read');
+      r.classList.toggle('read');
+      unread += was?1:-1; if(unread<0)unread=0; setState();
+    });
+  });
+  setState();
+
+  // citation chips -> resolver toast
+  var toast=document.getElementById('toast'),tt=null;
+  document.querySelectorAll('.cite').forEach(function(b){
+    b.addEventListener('click',function(){
+      toast.textContent='→ opens '+ (b.textContent.indexOf('raw/')===0? b.textContent : 'source prose at '+b.textContent);
+      toast.classList.add('show');
+      clearTimeout(tt);tt=setTimeout(function(){toast.classList.remove('show')},1800);
+    });
+  });
+})();
+</script>
+</body>
+</html>

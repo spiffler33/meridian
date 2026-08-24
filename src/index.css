@@ -145,6 +145,76 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   SETPOINT TOKENS - the Read pane's palette
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * The reading surface's own palette (docs/PLAN_READING_PANE.md, Appendix A).
+ * Dark is canonical, so it sits on :root; the two light themes remap it below
+ * — the same cascade and the same data-theme switch as every other token. The
+ * pane never carries a theme of its own.
+ *
+ * Contrast on paper-white was measured, not assumed. The spec's light amber
+ * (#b8860f, 3.1:1) and green (#1f8a5b, 4.1:1) both missed the 4.5:1 the plan
+ * asks for as body-sized text, so both are darkened here to ~5.1:1. --sp-faint
+ * sits below the bar in BOTH themes (2.4:1 dark, 2.5:1 light): that is the
+ * whisper tier by design, and nothing load-bearing may be written in it.
+ */
+:root {
+  --sp-bg: #07090d;
+  --sp-panel: #0d1117;
+  --sp-panel2: #11161f;
+  --sp-ink: #e9eef5;
+  --sp-muted: #7b8696;
+  --sp-faint: #46505f;
+  --sp-hair: #1a212b;
+  --sp-amber: #f0b04a;
+  --sp-green: #6ad29a;
+  --sp-ice: #6fa8d6;
+  /* Citation-chip rim: the ice accent at a third strength. A token rather than
+     an opacity utility, because --sp-ice is a var, not colour channels. */
+  --sp-rim: rgba(111, 168, 214, 0.35);
+
+  /* The reading face. Georgia first, deliberately: ui-serif is New York on
+     iOS, a different animal from the one the spec asks for. */
+  --font-read: Georgia, "Times New Roman", serif;
+}
+
+[data-theme="paper"],
+[data-theme="mono"] {
+  --sp-bg: #faf9f7;
+  --sp-panel: #ffffff;
+  --sp-panel2: #f2f0ec;
+  --sp-ink: #1a1f27;
+  --sp-muted: #6b7280;
+  --sp-faint: #9aa1ac;
+  --sp-hair: #e5e2dc;
+  --sp-amber: #8f6200;
+  --sp-green: #197a4f;
+  --sp-ice: #2f6fa3;
+  --sp-rim: rgba(47, 111, 163, 0.35);
+}
+
+/*
+ * On the Read view the whole screen becomes the reading surface: the app's own
+ * tokens resolve to setpoint values, so the existing chrome — header, backup
+ * line — comes with it instead of leaving a seam around the pane. ReadView
+ * sets this on <html>, so the body and the iOS overscroll area follow too.
+ */
+[data-surface="read"] {
+  --color-bg: var(--sp-bg);
+  --color-bg-card: var(--sp-panel);
+  --color-bg-hover: var(--sp-panel2);
+  --color-border: var(--sp-hair);
+  --color-border-focus: var(--sp-muted);
+  --color-text: var(--sp-ink);
+  --color-text-secondary: var(--sp-muted);
+  --color-text-muted: var(--sp-faint);
+  --color-accent: var(--sp-amber);
+  --color-accent-hover: var(--sp-amber);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    BASE STYLES
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -256,4 +326,34 @@ button, input, textarea, [role="button"] {
 ::selection {
   background-color: var(--color-accent);
   color: var(--color-bg);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   READING SURFACE
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Monospace is the instrument face; this is the reading one. Measure is capped
+   here rather than at the layout, because it is a property of the line, not of
+   the column it happens to sit in. */
+.prose-read {
+  font-family: var(--font-read);
+  font-size: 16px;
+  line-height: 1.68;
+  max-width: 70ch;
+}
+
+/* The setpoint instrument. Both of its moving parts settle over the same 0.8s,
+   slowly enough to read as a state change rather than a flicker. */
+.sp-wave {
+  transition: transform 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sp-stateword {
+  transition: color 0.8s ease;
+}
+
+/* Reduced motion: the instrument still reports, it just stops travelling. */
+.sp-still .sp-wave,
+.sp-still .sp-stateword {
+  transition: none;
 }

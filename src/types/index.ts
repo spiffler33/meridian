@@ -68,7 +68,12 @@ export interface AppState {
 }
 
 // View types for navigation
-export type ViewType = 'tower' | 'habits' | 'week' | 'year' | 'settings';
+export type ViewType = 'tower' | 'habits' | 'week' | 'year' | 'read' | 'settings';
+
+// Surfaces inside the Read view. `raw` is a reader rather than a tab: it has
+// no place on the rail, but it is a route from day one because citations land
+// on it (docs/PLAN_READING_PANE.md, phase 4).
+export type ReadSurface = 'tape' | 'chart' | 'canon' | 'essay' | 'library' | 'raw';
 
 // Tower item status
 export type TowerStatus = 'active' | 'waiting' | 'someday' | 'done';

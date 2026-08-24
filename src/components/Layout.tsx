@@ -29,7 +29,7 @@ function NavItem({ label, shortcut, isActive, onClick }: NavItemProps) {
     <button
       onClick={onClick}
       className={`
-        px-3 py-2 text-sm transition-colors
+        px-2 sm:px-3 py-2 text-sm transition-colors
         ${isActive
           ? 'text-accent'
           : 'text-text-muted hover:text-text'
@@ -100,6 +100,12 @@ export function Layout({
                 shortcut="y"
                 isActive={currentView === 'year'}
                 onClick={() => onViewChange('year')}
+              />
+              <NavItem
+                label="read"
+                shortcut="r"
+                isActive={currentView === 'read'}
+                onClick={() => onViewChange('read')}
               />
               <span className="w-px h-4 bg-border mx-2" />
               <NavItem

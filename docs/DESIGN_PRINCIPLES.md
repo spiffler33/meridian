@@ -14,6 +14,7 @@ Traditional todo apps treat tasks as atomic, binary objects. We treat attention 
 
 ### Typography
 - Monospace fonts throughout (JetBrains Mono, Monaco, Menlo)
+- Monospace for instruments; a reading face for long-form prose surfaces
 - Text is the interface
 - Information density over whitespace
 - Let content breathe through line height, not padding

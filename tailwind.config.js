@@ -26,6 +26,20 @@ export default {
         success: 'var(--color-success)',
         warning: 'var(--color-warning)',
         error: 'var(--color-error)',
+        // Setpoint palette - the Read pane (docs/PLAN_READING_PANE.md, App. A)
+        sp: {
+          bg: 'var(--sp-bg)',
+          panel: 'var(--sp-panel)',
+          panel2: 'var(--sp-panel2)',
+          ink: 'var(--sp-ink)',
+          muted: 'var(--sp-muted)',
+          faint: 'var(--sp-faint)',
+          hair: 'var(--sp-hair)',
+          amber: 'var(--sp-amber)',
+          green: 'var(--sp-green)',
+          ice: 'var(--sp-ice)',
+          rim: 'var(--sp-rim)',
+        },
       },
       maxWidth: {
         'content': 'var(--max-width)',
@@ -37,6 +51,7 @@ export default {
         sans: ['var(--font-sans)'],
         mono: ['var(--font-mono)'],
         serif: ['var(--font-serif)'],
+        read: ['var(--font-read)'],
       },
       fontSize: {
         'xs': ['11px', { lineHeight: '1.4' }],

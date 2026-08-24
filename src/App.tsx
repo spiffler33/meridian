@@ -14,6 +14,7 @@ import TowerView from './views/TowerView';
 import { HabitsView } from './views/HabitsView';
 import { WeekView } from './views/WeekView';
 import { YearView } from './views/YearView';
+import { ReadView } from './views/ReadView';
 import { SettingsView } from './views/SettingsView';
 
 function AppContent() {
@@ -60,6 +61,14 @@ function AppContent() {
             selectedYear={nav.selectedYear}
             onYearChange={nav.setSelectedYear}
             onDateSelect={handleHabitsDateSelect}
+          />
+        );
+      case 'read':
+        return (
+          <ReadView
+            surface={nav.read.surface}
+            item={nav.read.item}
+            onSurfaceChange={nav.setReadSurface}
           />
         );
       case 'settings':
