@@ -10,18 +10,25 @@
  */
 
 const DB_NAME = 'meridian'
-const DB_VERSION = 1
+/** v2 adds `contentCache` for the read-only newsletters repo. Nothing else moved. */
+const DB_VERSION = 2
 
 const STATE = 'state'
 const JOURNAL_CACHE = 'journalCache'
 const OUTBOX = 'outbox'
 const META = 'meta'
+const CONTENT_CACHE = 'contentCache'
 
 const BY_SEQ = 'bySeq'
 const STATE_KEY = 'current'
 const DEVICE_ID_LENGTH = 8
 
-type StoreName = typeof STATE | typeof JOURNAL_CACHE | typeof OUTBOX | typeof META
+type StoreName =
+  | typeof STATE
+  | typeof JOURNAL_CACHE
+  | typeof OUTBOX
+  | typeof META
+  | typeof CONTENT_CACHE
 
 /** Scalars kept in the `meta` store. */
 export type MetaKey =
@@ -41,12 +48,40 @@ export type MetaKey =
    * is never journalled, so the key cannot reach the data repo.
    */
   | 'claudeApiKey'
+  /**
+   * The newsletters PAT. Read-only, a different repo and a different grant
+   * from `token`, and kept apart from it for that reason: clearing one must
+   * not silently disarm the other.
+   */
+  | 'newslettersToken'
+  /** Head commit of the newsletters repo as of the last completed sync. */
+  | 'nlHeadSha'
+  /** When that sync completed, epoch ms. */
+  | 'nlTreeFetchedAt'
+  /**
+   * The newsletters tree as of that sync, trimmed to path/sha/size. Cached
+   * because the library has to list itself with no network at all, and the
+   * entry list is the tree's to give — gists.md alone cannot say which
+   * entries exist.
+   */
+  | 'nlTree'
 
 /** A cached journal file as fetched from the data repo. */
 export type JournalCacheRecord = {
   path: string
   text: string
   sha: string | null
+  fetchedAt: number
+}
+
+/**
+ * A cached file from the newsletters repo. `sha` is the blob sha the content
+ * came from, which is what the next sync diffs against — never a commit sha.
+ */
+export type ContentCacheRecord = {
+  path: string
+  text: string
+  sha: string
   fetchedAt: number
 }
 
@@ -134,6 +169,12 @@ export function openDb(): Promise<IDBDatabase> {
         }
         if (!db.objectStoreNames.contains(META)) {
           db.createObjectStore(META)
+        }
+        // v2. Every store above is created only where absent, so a v1 database
+        // arrives here with its four stores and their records untouched and
+        // leaves with a fifth, empty one.
+        if (!db.objectStoreNames.contains(CONTENT_CACHE)) {
+          db.createObjectStore(CONTENT_CACHE, { keyPath: 'path' })
         }
       }
       // Another tab is holding an older version open. Without this the promise
@@ -483,6 +524,48 @@ export function putCachedFile(record: JournalCacheRecord): Promise<void> {
 
 export function allCachedFiles(): Promise<JournalCacheRecord[]> {
   return read<JournalCacheRecord[]>(JOURNAL_CACHE, (s) => s.getAll())
+}
+
+// --- newsletters content cache ---------------------------------------------
+
+export function getCachedContent(path: string): Promise<ContentCacheRecord | undefined> {
+  return read<ContentCacheRecord | undefined>(CONTENT_CACHE, (s) => s.get(path))
+}
+
+export function putCachedContent(record: ContentCacheRecord): Promise<void> {
+  return write(CONTENT_CACHE, (s) => {
+    s.put(record)
+  })
+}
+
+/**
+ * Every cached path and the sha it holds, and nothing else.
+ *
+ * A cursor rather than `getAll` on purpose: the answer this is asked for is a
+ * few kilobytes of shas, while the store it reads can hold megabytes of prose
+ * once raw entries have been opened. `getAll` would materialise all of it at
+ * once to throw the text away.
+ */
+export async function cachedContentShas(): Promise<Map<string, string>> {
+  const tx = await beginTx(CONTENT_CACHE, 'readonly')
+  const req = tx.objectStore(CONTENT_CACHE).openCursor()
+  const shas = new Map<string, string>()
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => {
+      const cursor = req.result
+      if (!cursor) {
+        resolve(shas)
+        return
+      }
+      const record = cursor.value as ContentCacheRecord
+      if (record && typeof record.path === 'string' && typeof record.sha === 'string') {
+        shas.set(record.path, record.sha)
+      }
+      cursor.continue()
+    }
+    req.onerror = () =>
+      reject(dbError('transaction', `reading "${CONTENT_CACHE}" failed`, req.error))
+  })
 }
 
 // --- persistence -----------------------------------------------------------

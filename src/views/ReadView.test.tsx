@@ -7,13 +7,60 @@
  * the two things the shell owns rather than borrows: the screen adopting the
  * reading palette while the view is mounted and handing it back when it is
  * not, and the instrument answering the library rather than a constant.
+ *
+ * The library's data is mocked at the hook. What the sync and its selectors do
+ * is newslettersSync's business and is tested there; what matters here is that
+ * a failure stays on screen next to the rows it could not refresh.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
+import type { NewslettersView } from '../hooks/useNewsletters';
+import type { LibraryEntry } from '../lib/newslettersSync';
 import { ReadView } from './ReadView';
-import { LIBRARY_ROWS } from './readFixtures';
+
+const mocks = vi.hoisted(() => ({
+  view: null as NewslettersView | null,
+}));
+
+vi.mock('../hooks/useNewsletters', () => ({
+  useNewsletters: () => mocks.view,
+}));
+
+const ENTRIES: LibraryEntry[] = [
+  {
+    slug: '2026-08-21--lex-asia-insurers',
+    date: '2026-08-21',
+    name: 'lex-asia-insurers',
+    gist: 'FT Lex: Beijing taxes offshore savings products.',
+  },
+  {
+    slug: '2026-08-18--sample-macro',
+    date: '2026-08-18',
+    name: 'sample-macro',
+    gist: 'The long end does the tightening.',
+  },
+  { slug: '2026-08-17--no-gist', date: '2026-08-17', name: 'no-gist', gist: null },
+];
+
+function library(overrides: Partial<NewslettersView> = {}) {
+  mocks.view = {
+    rows: ENTRIES,
+    loaded: true,
+    configured: true,
+    syncing: false,
+    error: null,
+    lastSyncedAt: 1,
+    refresh: vi.fn(),
+    ...overrides,
+  };
+  return mocks.view;
+}
+
+beforeEach(() => {
+  library();
+});
 
 afterEach(cleanup);
 
@@ -44,12 +91,6 @@ describe('the surfaces', () => {
     expect(container.querySelectorAll('sup')).toHaveLength(2);
   });
 
-  it('renders the library', () => {
-    show('library');
-    expect(screen.getByText('Sample newsletter — the power buildout')).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /^Mark / })).toHaveLength(LIBRARY_ROWS.length);
-  });
-
   it('renders raw at the entry the route names', () => {
     show('raw', ['2026-08-18--sample-macro']);
     expect(screen.getByText('2026-08-18--sample-macro')).toBeInTheDocument();
@@ -58,6 +99,49 @@ describe('the surfaces', () => {
   it('renders raw without an entry rather than blank', () => {
     show('raw');
     expect(screen.getByText('No entry named')).toBeInTheDocument();
+  });
+});
+
+describe('the library', () => {
+  it('lists what the corpus holds, gist and all', () => {
+    show('library');
+    expect(screen.getByText('lex-asia-insurers')).toBeInTheDocument();
+    expect(screen.getByText('FT Lex: Beijing taxes offshore savings products.')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^Mark / })).toHaveLength(ENTRIES.length);
+  });
+
+  it('lists an entry that has no gist rather than dropping it', () => {
+    show('library');
+    expect(screen.getByText('no-gist')).toBeInTheDocument();
+  });
+
+  it('says where the token goes when there is none', () => {
+    library({ configured: false, rows: [] });
+    show('library');
+    expect(screen.getByText(/add a read-only one in settings/)).toBeInTheDocument();
+  });
+
+  it('keeps the last synced copy on screen when a refresh fails, and says so', () => {
+    library({ error: 'offline — showing the last copy that synced' });
+    show('library');
+
+    expect(screen.getByText('offline — showing the last copy that synced')).toBeInTheDocument();
+    expect(screen.getByText('lex-asia-insurers')).toBeInTheDocument();
+  });
+
+  it('offers the failed sync a retry', () => {
+    const view = library({ error: 'the newsletters token was refused — check it in settings' });
+    show('library');
+
+    fireEvent.click(screen.getByRole('button', { name: 'retry' }));
+
+    expect(view.refresh).toHaveBeenCalled();
+  });
+
+  it('does not call an empty library empty until it has looked', () => {
+    library({ rows: [], loaded: false });
+    show('library');
+    expect(screen.queryByText(/nothing synced to this device yet/)).toBeNull();
   });
 });
 
@@ -98,9 +182,15 @@ describe('the reading surface', () => {
 describe('the instrument', () => {
   it('reads the backlog the library is actually carrying', () => {
     show('library');
-    const unread = LIBRARY_ROWS.filter(row => !row.read).length;
-    expect(screen.getByText(`${unread} unread`)).toBeInTheDocument();
+    expect(screen.getByText(`${ENTRIES.length} unread`)).toBeInTheDocument();
     expect(screen.getByText('Drifting')).toBeInTheDocument();
+  });
+
+  it('admits it has nothing to report before the library is read', () => {
+    library({ rows: [], loaded: false });
+    show('library');
+    expect(screen.getByText('Standing by')).toBeInTheDocument();
+    expect(screen.getByText('not synced')).toBeInTheDocument();
   });
 
   it('settles as the backlog is cleared', () => {
@@ -116,10 +206,11 @@ describe('the instrument', () => {
 
   it('drifts again when an entry is marked unread', () => {
     show('library');
-    const alreadyRead = LIBRARY_ROWS.filter(row => row.read).length;
 
-    fireEvent.click(screen.getAllByRole('button', { name: /^Mark .* unread$/ })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: /^Mark .* read$/ })[0]);
+    expect(screen.getByText(`${ENTRIES.length - 1} unread`)).toBeInTheDocument();
 
-    expect(screen.getByText(`${LIBRARY_ROWS.length - alreadyRead + 1} unread`)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Mark .* unread$/ }));
+    expect(screen.getByText(`${ENTRIES.length} unread`)).toBeInTheDocument();
   });
 });

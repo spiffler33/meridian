@@ -4,6 +4,11 @@
  * Pure transport: no IndexedDB, no React, no app state. The token is always a
  * parameter — it lives in IndexedDB and the caller passes it in. It must never
  * appear in a message, a log line, or a thrown object.
+ *
+ * The request plumbing below — `call`, `failure`, `readJson`, `fromBase64` and
+ * the two failure reasons — is GitHub's, not meridian-data's, and is shared
+ * with the read-only newsletters transport in `newsletters.ts`. Everything
+ * else in this file is the journal repo's alone.
  */
 
 export const GITHUB_OWNER = 'spiffler33';
@@ -123,7 +128,7 @@ function describeFailure(kind: GitHubErrorKind, status: number, action: string):
   }
 }
 
-function failure(response: Response, method: string, action: string): GitHubError {
+export function failure(response: Response, method: string, action: string): GitHubError {
   const kind = classify(response, method);
   return new GitHubError(describeFailure(kind, response.status, action), response.status, kind, waitFrom(response));
 }
@@ -169,7 +174,7 @@ function toBase64(text: string): string {
   return btoa(binary);
 }
 
-function fromBase64(data: string): string {
+export function fromBase64(data: string): string {
   // The contents API wraps base64 at 60 columns.
   const compact = data.split('\n').join('').split('\r').join('').split(' ').join('');
   const binary = atob(compact);
@@ -194,7 +199,7 @@ function contentsPath(path: string): string {
   return `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${encoded}`;
 }
 
-async function call(token: string, path: string, request: GitHubRequest = {}): Promise<Response> {
+export async function call(token: string, path: string, request: GitHubRequest = {}): Promise<Response> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     Accept: 'application/vnd.github+json',
@@ -228,7 +233,7 @@ async function call(token: string, path: string, request: GitHubRequest = {}): P
 }
 
 /** Every body read is typed: a truncated or non-JSON body must not escape as a SyntaxError. */
-async function readJson(response: Response, action: string): Promise<object> {
+export async function readJson(response: Response, action: string): Promise<object> {
   let body: unknown;
   try {
     body = await response.json();
@@ -356,9 +361,9 @@ const PROBE_WRITABLE_STATUS = 409;
 /** GitHub refused before the sha was looked at, so the token may not write. */
 const PROBE_BLOCKED_STATUS = 403;
 
-const RATE_LIMITED_REASON = "github's rate limit — the token is fine, try again shortly";
+export const RATE_LIMITED_REASON = "github's rate limit — the token is fine, try again shortly";
 
-const UNREACHABLE_REASON = 'could not reach github — check the connection';
+export const UNREACHABLE_REASON = 'could not reach github — check the connection';
 
 /**
  * Does this token actually hold write permission?

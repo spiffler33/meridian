@@ -26,7 +26,7 @@ const WAVE_PATH =
   'C275,6 285,58 325,58 C355,58 362,32 340,32 C362,32 372,8 410,8 ' +
   'C448,8 458,56 495,56 C532,56 545,12 580,12 C615,12 640,32 680,32';
 
-export type SetpointState = 'At setpoint' | 'Holding steady' | 'Drifting';
+export type SetpointState = 'At setpoint' | 'Holding steady' | 'Drifting' | 'Standing by';
 
 /**
  * unread → scaleY in [0.05 .. 1].
@@ -34,12 +34,18 @@ export type SetpointState = 'At setpoint' | 'Holding steady' | 'Drifting';
  * Anything that is not a positive finite count reads as nothing unread rather
  * than throwing: a bad number must not take the header down with it.
  */
-export function waveAmplitude(unread: number): number {
-  if (!Number.isFinite(unread) || unread <= 0) return AMPLITUDE_FLOOR;
+export function waveAmplitude(unread: number | null): number {
+  if (unread === null || !Number.isFinite(unread) || unread <= 0) return AMPLITUDE_FLOOR;
   return Math.min(1, AMPLITUDE_BASE + AMPLITUDE_STEP * Math.min(unread, AMPLITUDE_FULL_AT));
 }
 
-export function waveState(unread: number): SetpointState {
+/**
+ * `null` is not zero. Before the library has been read there is no backlog to
+ * report, and an instrument that says "at setpoint" because it has not looked
+ * yet is worse than one that admits it.
+ */
+export function waveState(unread: number | null): SetpointState {
+  if (unread === null) return 'Standing by';
   if (!Number.isFinite(unread) || unread <= 0) return 'At setpoint';
   if (unread <= 2) return 'Holding steady';
   return 'Drifting';
@@ -58,11 +64,17 @@ function usePrefersReducedMotion(): boolean {
   return reduced;
 }
 
-export function SetpointWave({ unread }: { unread: number }) {
+export function SetpointWave({ unread }: { unread: number | null }) {
   const amplitude = waveAmplitude(unread);
   const state = waveState(unread);
-  const settled = state === 'At setpoint';
   const still = usePrefersReducedMotion();
+
+  const tone =
+    state === 'At setpoint'
+      ? 'text-sp-green'
+      : state === 'Standing by'
+        ? 'text-sp-faint'
+        : 'text-sp-amber';
 
   return (
     <div className={still ? 'sp-still' : undefined}>
@@ -96,14 +108,12 @@ export function SetpointWave({ unread }: { unread: number }) {
 
       <div className="flex items-baseline justify-between">
         <span
-          className={`sp-stateword font-mono text-[11px] uppercase tracking-[0.18em] ${
-            settled ? 'text-sp-green' : 'text-sp-amber'
-          }`}
+          className={`sp-stateword font-mono text-[11px] uppercase tracking-[0.18em] ${tone}`}
         >
           {state}
         </span>
         <span className="font-mono text-[11px] tabular-nums text-sp-faint">
-          {unread > 0 ? `${unread} unread` : 'all read'}
+          {unread === null ? 'not synced' : unread > 0 ? `${unread} unread` : 'all read'}
         </span>
       </div>
     </div>

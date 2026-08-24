@@ -12,11 +12,11 @@
 import { useEffect, useState } from 'react';
 import type { ReadSurface } from '../types';
 import { SetpointWave } from '../components/SetpointWave';
+import { useNewsletters, type NewslettersView } from '../hooks/useNewsletters';
 import {
   CANON_DAY,
   CHART_CARD,
   ESSAY_CARD,
-  LIBRARY_ROWS,
   TAPE_CARDS,
   type ChartBar,
   type Segment,
@@ -200,16 +200,56 @@ function EssayPane() {
   );
 }
 
+/**
+ * What the library is doing, in one line, above the rows rather than instead
+ * of them: a failed sync still leaves the last synced copy on screen, and says
+ * so. A failure that only hid the content would be indistinguishable from an
+ * empty corpus.
+ */
+function LibraryState({ view }: { view: NewslettersView }) {
+  if (view.error) {
+    return (
+      <div className="flex items-baseline gap-2 pb-2 font-mono text-[10.5px] text-error">
+        <span>{view.error}</span>
+        <button onClick={view.refresh} className="underline underline-offset-2">
+          retry
+        </button>
+      </div>
+    );
+  }
+  if (!view.configured) {
+    return (
+      <div className="pb-2 font-mono text-[10.5px] text-sp-muted">
+        no newsletters token on this device — add a read-only one in settings
+      </div>
+    );
+  }
+  if (view.syncing) {
+    return <div className="pb-2 font-mono text-[10.5px] text-sp-faint">syncing…</div>;
+  }
+  if (view.loaded && view.rows.length === 0) {
+    return (
+      <div className="pb-2 font-mono text-[10.5px] text-sp-faint">
+        nothing synced to this device yet
+      </div>
+    );
+  }
+  return null;
+}
+
 function LibraryPane({
+  view,
   readSlugs,
   onToggle,
 }: {
+  view: NewslettersView;
   readSlugs: Set<string>;
   onToggle: (slug: string) => void;
 }) {
   return (
     <>
-      {LIBRARY_ROWS.map(row => {
+      <LibraryState view={view} />
+      {view.rows.map(row => {
         const isRead = readSlugs.has(row.slug);
         return (
           <div key={row.slug} className="flex items-center gap-3 border-b border-sp-hair px-[2px] py-[11px]">
@@ -221,20 +261,26 @@ function LibraryPane({
             />
             <div className="min-w-0 flex-1">
               <div className="font-mono text-[10px] tracking-[0.06em] text-sp-faint">{row.date}</div>
+              {/* The slug is the title. The corpus has no other one that can be
+                  known without opening the entry, and inventing a prettier
+                  version of an identifier would only make it harder to match
+                  against a citation. */}
               <div
-                className={`font-read leading-[1.4] ${
-                  isRead ? 'text-[15px] text-sp-muted' : 'text-[15px] font-semibold text-sp-ink'
+                className={`truncate font-mono text-[12.5px] leading-[1.5] ${
+                  isRead ? 'text-sp-muted' : 'text-sp-ink'
                 }`}
               >
-                {row.title}
+                {row.name}
               </div>
-              <div className="truncate font-read text-[13px] leading-[1.45] text-sp-muted">
-                {row.gist}
-              </div>
+              {row.gist && (
+                <div className="truncate font-read text-[13px] leading-[1.45] text-sp-muted">
+                  {row.gist}
+                </div>
+              )}
             </div>
             <button
               onClick={() => onToggle(row.slug)}
-              aria-label={isRead ? `Mark ${row.title} unread` : `Mark ${row.title} read`}
+              aria-label={isRead ? `Mark ${row.slug} unread` : `Mark ${row.slug} read`}
               className={`h-5 w-5 flex-shrink-0 rounded-md border-[1.5px] ${
                 isRead ? 'border-sp-green bg-sp-green' : 'border-sp-faint hover:border-sp-muted'
               }`}
@@ -244,10 +290,12 @@ function LibraryPane({
           </div>
         );
       })}
-      <p className="mt-[14px] font-read text-sm italic leading-[1.6] text-sp-muted">
-        Marking read here is local to this screen for now — reading becomes cockpit data in a
-        later phase, and entries older than the baseline never show as unread.
-      </p>
+      {view.rows.length > 0 && (
+        <p className="mt-[14px] font-read text-sm italic leading-[1.6] text-sp-muted">
+          Marking read here is local to this screen for now — reading becomes cockpit data in a
+          later phase, and entries older than the baseline never show as unread.
+        </p>
+      )}
     </>
   );
 }
@@ -275,11 +323,12 @@ export function ReadView({ surface, item, onSurfaceChange }: ReadViewProps) {
     return () => document.documentElement.removeAttribute('data-surface');
   }, []);
 
-  // Fixture read-state, local to this screen. It exists so the instrument can
-  // be judged moving; phase 5 replaces it with folded `readItem` events.
-  const [readSlugs, setReadSlugs] = useState<Set<string>>(
-    () => new Set(LIBRARY_ROWS.filter(row => row.read).map(row => row.slug))
-  );
+  const view = useNewsletters();
+
+  // Read-state, local to this screen. It exists so the instrument can be
+  // judged moving; phase 5 replaces it with folded `readItem` events, and
+  // with the baseline that stops day one reading as 300-odd alarms.
+  const [readSlugs, setReadSlugs] = useState<Set<string>>(() => new Set());
 
   const toggleRead = (slug: string) => {
     setReadSlugs(prev => {
@@ -289,9 +338,15 @@ export function ReadView({ surface, item, onSurfaceChange }: ReadViewProps) {
     });
   };
 
+  // Not zero until the library has actually been read: an instrument that
+  // reports "all read" because it has not looked yet is lying.
+  const unread = view.loaded && view.rows.length > 0
+    ? view.rows.filter(row => !readSlugs.has(row.slug)).length
+    : null;
+
   return (
     <div>
-      <SetpointWave unread={LIBRARY_ROWS.length - readSlugs.size} />
+      <SetpointWave unread={unread} />
 
       <div
         role="tablist"
@@ -320,7 +375,9 @@ export function ReadView({ surface, item, onSurfaceChange }: ReadViewProps) {
         {surface === 'chart' && <ChartPane />}
         {surface === 'canon' && <CanonPane />}
         {surface === 'essay' && <EssayPane />}
-        {surface === 'library' && <LibraryPane readSlugs={readSlugs} onToggle={toggleRead} />}
+        {surface === 'library' && (
+          <LibraryPane view={view} readSlugs={readSlugs} onToggle={toggleRead} />
+        )}
         {surface === 'raw' && <RawPane item={item} />}
       </div>
     </div>

@@ -58,15 +58,6 @@ export interface EssayCard {
   footnotes: string;
 }
 
-export interface LibraryRow {
-  slug: string;
-  date: string;
-  title: string;
-  gist: string;
-  /** Seed state only. Phase 5 folds this from `readItem` events. */
-  read: boolean;
-}
-
 export const TAPE_CARDS: TapeCard[] = [
   {
     id: '2026-w34',
@@ -145,41 +136,3 @@ export const ESSAY_CARD: EssayCard = {
   ],
   footnotes: '[1] raw/2026-07-30--sample §"flows vs views"   [2] raw/2026-08-02--sample §"positioning data"',
 };
-
-export const LIBRARY_ROWS: LibraryRow[] = [
-  {
-    slug: '2026-08-22--sample-power',
-    date: '2026-08-22',
-    title: 'Sample newsletter — the power buildout',
-    gist: 'One-line gist from state/gists.md renders here, clamped to a single line.',
-    read: false,
-  },
-  {
-    slug: '2026-08-21--sample-rates',
-    date: '2026-08-21',
-    title: 'Sample transcript — rates panel',
-    gist: 'Term premium, issuance calendar, and the sample argument about duration.',
-    read: false,
-  },
-  {
-    slug: '2026-08-20--sample-entry',
-    date: '2026-08-20',
-    title: 'Sample note — capex discipline',
-    gist: "Cash-flow discipline vs. growth capex, the sample week's second theme.",
-    read: false,
-  },
-  {
-    slug: '2026-08-19--sample-em',
-    date: '2026-08-19',
-    title: 'Sample letter — EM currencies',
-    gist: 'A sample gist line about carry, positioning, and the dollar.',
-    read: false,
-  },
-  {
-    slug: '2026-08-18--sample-macro',
-    date: '2026-08-18',
-    title: 'Sample macro letter — the long end',
-    gist: 'Already read — dot dark, title quiet, checkmark green.',
-    read: true,
-  },
-];
