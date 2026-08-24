@@ -88,7 +88,8 @@ Failure is always visible: "Last backed up <relative time> from this device", an
 A **fine-grained PAT**: single repo `meridian-data`, **Contents: read and write**, no expiration. Entered in Settings.
 
 - It lives **only** in the IndexedDB `meta` store under `token`. Never in source, a bundle, an env file, a commit, a log, a URL, or an error message. `github.ts` takes it as a parameter and stores nothing.
-- `verifyAccess` reads `permissions.push` off the repo body rather than trusting the status code: a read-only token passes a plain read check then **fails silently on the first push** — catching that is the whole point of the button.
+- `verifyAccess` proves write access by attempting a write that cannot land: `PUT journal/.gitkeep` carrying a `sha` of forty zeros. **409 = writable** (GitHub reached the sha check, and the sha guarantees nothing was committed), **403 = not writable**, any other status = could not confirm. Status code only, never the message text. It takes no push lock: a failed verify is not a failed backup.
+- Never "simplify" that back to reading `permissions.push` off the repo body. Measured against the owner's real PAT: `permissions` reports the authenticated **user's role on the repo**, not the token's grant, so it returns `push: true` for a Contents:read-only PAT on a repo the owner owns. The check then cannot fail, and that is exactly the token the button exists to catch.
 - The Claude API key is a separate device-local `meta` key (`claudeApiKey`). `meta` is never journalled, which is why secrets may live there.
 
 ## Local layer

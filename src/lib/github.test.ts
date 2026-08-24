@@ -94,8 +94,6 @@ function fakeGitHub(
   options: {
     files?: Record<string, string>;
     listing?: unknown[] | null;
-    /** What GitHub reports the token may do. `null` omits the block entirely. */
-    permissions?: Record<string, boolean> | null;
   } = {},
 ) {
   const files = new Map<string, { text: string; sha: string }>();
@@ -139,13 +137,7 @@ function fakeGitHub(
       return forcedResponse(forced);
     }
 
-    if (path === '') {
-      const permissions =
-        options.permissions === undefined ? { pull: true, push: true } : options.permissions;
-      const body: Record<string, unknown> = { full_name: `${GITHUB_OWNER}/${GITHUB_REPO}` };
-      if (permissions !== null) body.permissions = permissions;
-      return response(200, body);
-    }
+    if (path === '') return response(200, { full_name: `${GITHUB_OWNER}/${GITHUB_REPO}` });
 
     if (path === 'journal' && method === 'GET') {
       const listing = options.listing ?? null;
@@ -245,9 +237,26 @@ afterEach(() => {
 // ============================================================================
 
 describe('verifyAccess', () => {
-  it('claims only what GitHub reported, and sends the documented auth headers', async () => {
-    const github = fakeGitHub();
+  /**
+   * Written out rather than imported: the probe's whole safety rests on this
+   * exact sha reaching GitHub, so the test must fail if the module changes it.
+   */
+  const PROBE_SHA = '0000000000000000000000000000000000000000';
+  const PROBE_PATH = 'journal/.gitkeep';
+
+  /** Nothing verifyAccess sends may be capable of writing: every PUT carries the sentinel. */
+  function expectNothingCouldWrite(github: FakeGitHub): void {
+    for (const put of github.puts()) {
+      expect(put.path).toBe(PROBE_PATH);
+      expect(put.body?.sha).toBe(PROBE_SHA);
+    }
+  }
+
+  it('confirms write access from a conflicting probe, and sends the documented auth headers', async () => {
+    const github = fakeGitHub({ files: { [PROBE_PATH]: '' } });
+
     expect(await verifyAccess(TOKEN)).toEqual({ ok: true });
+
     expect(github.calls[0].headers).toEqual({
       Authorization: `Bearer ${TOKEN}`,
       Accept: 'application/vnd.github+json',
@@ -255,35 +264,79 @@ describe('verifyAccess', () => {
     });
   });
 
-  it('rejects a read-only token, which a visible repo alone would have passed', async () => {
-    const github = fakeGitHub({ permissions: { pull: true, push: false } });
+  it('probes journal/.gitkeep with a sha that cannot match, and leaves it untouched', async () => {
+    const github = fakeGitHub({ files: { [PROBE_PATH]: '' } });
+    const before = github.sha(PROBE_PATH);
+
+    expect(await verifyAccess(TOKEN)).toEqual({ ok: true });
+
+    expect(github.methods()).toEqual(['GET', 'PUT']);
+    expect(github.puts()).toHaveLength(1);
+    expect(github.puts()[0].path).toBe(PROBE_PATH);
+    expect(github.puts()[0].body?.sha).toBe(PROBE_SHA);
+    // The write loses its own conflict check, so the file cannot have moved.
+    expect(github.text(PROBE_PATH)).toBe('');
+    expect(github.sha(PROBE_PATH)).toBe(before);
+  });
+
+  it('rejects a token the probe may not write with, and names the permission', async () => {
+    const github = fakeGitHub({ files: { [PROBE_PATH]: '' } });
+    github.failPuts.push(403);
 
     const result = await verifyAccess(TOKEN);
 
     expect(result.ok).toBe(false);
     expect(result.reason).toContain('read-only');
+    expect(result.reason).toContain('contents read and write');
     expect(result.reason).not.toContain(TOKEN);
-    // Confirming write access must not write anything.
-    expect(github.methods()).toEqual(['GET']);
+    expectNothingCouldWrite(github);
   });
 
-  it('will not confirm access GitHub did not report', async () => {
-    fakeGitHub({ permissions: null });
+  it('does not blame the token when the probe is rate limited', async () => {
+    const github = fakeGitHub({ files: { [PROBE_PATH]: '' } });
 
-    const result = await verifyAccess(TOKEN);
+    github.failPuts.push({ status: 403, headers: { 'x-ratelimit-remaining': '0' } });
+    const spent = await verifyAccess(TOKEN);
+    expect(spent.ok).toBe(false);
+    expect(spent.reason).toContain('rate limit');
+    expect(spent.reason).not.toContain('read-only');
 
-    expect(result.ok).toBe(false);
-    expect(result.reason).toContain('did not report write access');
+    github.failPuts.push(429);
+    const throttled = await verifyAccess(TOKEN);
+    expect(throttled.ok).toBe(false);
+    expect(throttled.reason).toContain('rate limit');
+    expect(throttled.reason).not.toContain('read-only');
   });
 
-  it('does not confirm access from a body it could not read', async () => {
+  it('will not confirm write access from a status that is neither 409 nor 403', async () => {
+    const github = fakeGitHub({ files: { [PROBE_PATH]: '' } });
+
+    github.failPuts.push(422);
+    const unprocessable = await verifyAccess(TOKEN);
+    expect(unprocessable.ok).toBe(false);
+    expect(unprocessable.reason).toContain('could not confirm write access');
+
+    github.failPuts.push(500);
+    const broken = await verifyAccess(TOKEN);
+    expect(broken.ok).toBe(false);
+    expect(broken.reason).toContain('could not confirm write access');
+
+    expectNothingCouldWrite(github);
+  });
+
+  it('will not confirm write access, or create the file, when the probe target is gone', async () => {
     const github = fakeGitHub();
-    github.failGets.push({ status: 200, unreadable: true });
+    github.failPuts.push(404);
 
     const result = await verifyAccess(TOKEN);
 
     expect(result.ok).toBe(false);
-    expect(result.reason).not.toContain(TOKEN);
+    expect(result.reason).toContain('could not confirm write access');
+    expect(result.reason).toContain(PROBE_PATH);
+    // A missing probe target is never answered by creating one.
+    expect(github.puts()).toHaveLength(1);
+    expectNothingCouldWrite(github);
+    expect(github.text(PROBE_PATH)).toBeUndefined();
   });
 
   it('reports a rejected token on 401 and on a 403 that is not a rate limit', async () => {

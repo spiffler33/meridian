@@ -340,22 +340,78 @@ function withPushLock<T>(run: () => Promise<T>): Promise<T> {
 // API
 // ============================================================================
 
+/** The file the write probe aims at. It already exists; the probe never writes it. */
+const ACCESS_PROBE_PATH = `${JOURNAL_DIR}/.gitkeep`;
+
 /**
- * What GitHub reports the *authenticated token* may do with this repository.
- * `push` is write access: for a fine-grained PAT it follows Contents
- * read/write, which is exactly the permission a backup needs.
- *
- * UNVERIFIED, and the reason the copy above the button claims only what GitHub
- * reported rather than that the token will work: `permissions.push` has
- * historically described the authenticated *user's* role on the repository
- * rather than the *token's* grant. On a repo the owner administers it may well
- * come back `push: true` for a Contents:read-only PAT — precisely the token
- * this check exists to reject. Settling it needs one manual run with a real
- * read-only PAT, which only the owner can mint; until then treat a pass as
- * "GitHub raised no objection", not as proof.
+ * A blob sha no file can have. Its only job is to guarantee the probe write
+ * loses its own conflict check, so GitHub answers with a verdict and commits
+ * nothing. Never use it for a real write.
  */
-interface RepoResponse {
-  permissions?: { push?: unknown };
+const IMPOSSIBLE_SHA = '0000000000000000000000000000000000000000';
+
+/** GitHub got as far as comparing the sha, so the token may write. */
+const PROBE_WRITABLE_STATUS = 409;
+
+/** GitHub refused before the sha was looked at, so the token may not write. */
+const PROBE_BLOCKED_STATUS = 403;
+
+const RATE_LIMITED_REASON = "github's rate limit — the token is fine, try again shortly";
+
+const UNREACHABLE_REASON = 'could not reach github — check the connection';
+
+/**
+ * Does this token actually hold write permission?
+ *
+ * `permissions.push` on the repo body does NOT answer that, and reading it was
+ * the bug this replaces: `permissions` reports the authenticated *user's* role
+ * on the repository, not the token's grant. On a repo the owner owns it comes
+ * back `push: true` for every token, a Contents:read-only PAT included
+ * (measured against the owner's real PAT), so the check could not fail and the
+ * button was worthless — while catching exactly that token is its whole point.
+ *
+ * The only thing that answers is attempting a write, so this attempts one that
+ * cannot land. The sha it sends matches nothing, so a token that may write is
+ * turned away at the conflict check (409) having written nothing, and a token
+ * that may not is turned away earlier, on permission (403). The verdict is the
+ * status code alone; the message GitHub sends with it is never read. Any other
+ * status is "could not confirm", never a pass.
+ *
+ * No push lock, deliberately: the probe writes nothing, and a failed verify is
+ * not a failed backup, so it must not be reported as one.
+ */
+async function probeWriteAccess(token: string): Promise<AccessResult> {
+  let response: Response;
+  try {
+    response = await call(token, contentsPath(ACCESS_PROBE_PATH), {
+      method: 'PUT',
+      body: {
+        message: `meridian: verify write access to ${ACCESS_PROBE_PATH}`,
+        content: toBase64(''),
+        sha: IMPOSSIBLE_SHA,
+      },
+    });
+  } catch {
+    return { ok: false, reason: UNREACHABLE_REASON };
+  }
+
+  if (classify(response, 'PUT') === 'ratelimit') return { ok: false, reason: RATE_LIMITED_REASON };
+  if (response.status === PROBE_WRITABLE_STATUS) return { ok: true };
+  if (response.status === PROBE_BLOCKED_STATUS) {
+    return {
+      ok: false,
+      reason: `the token is read-only — it needs contents read and write on ${GITHUB_OWNER}/${GITHUB_REPO}`,
+    };
+  }
+  // The probe cannot run without its target, and the answer to a missing target
+  // is never to create it: that would be the write this check refuses to make.
+  if (response.status === 404) {
+    return {
+      ok: false,
+      reason: `could not confirm write access: ${ACCESS_PROBE_PATH} is missing from ${GITHUB_OWNER}/${GITHUB_REPO}`,
+    };
+  }
+  return { ok: false, reason: `could not confirm write access: github returned http ${response.status}` };
 }
 
 export async function verifyAccess(token: string): Promise<AccessResult> {
@@ -363,37 +419,16 @@ export async function verifyAccess(token: string): Promise<AccessResult> {
   try {
     response = await call(token, `/repos/${GITHUB_OWNER}/${GITHUB_REPO}`);
   } catch {
-    return { ok: false, reason: 'could not reach github — check the connection' };
+    return { ok: false, reason: UNREACHABLE_REASON };
   }
 
-  if (response.ok) {
-    // A 200 only proves the token can READ. A Contents:read token passes that
-    // and then fails on the first push — the silent failure this button exists
-    // to catch — so the answer comes from the permissions GitHub reports, not
-    // from the status code.
-    let body: RepoResponse;
-    try {
-      body = (await readJson(response, 'checking repository access')) as RepoResponse;
-    } catch {
-      return { ok: false, reason: 'github sent a repository body that could not be read' };
-    }
-    const writable = body.permissions?.push;
-    if (writable === true) return { ok: true };
-    if (writable === false) {
-      return {
-        ok: false,
-        reason: `the token is read-only — it needs contents read and write on ${GITHUB_OWNER}/${GITHUB_REPO}`,
-      };
-    }
-    return {
-      ok: false,
-      reason: 'github did not report write access for this token, so a backup cannot be confirmed',
-    };
-  }
+  // A 200 only proves the token can read. Write permission is a separate
+  // question, and only the probe answers it.
+  if (response.ok) return probeWriteAccess(token);
 
   const kind = classify(response, 'GET');
   if (kind === 'ratelimit') {
-    return { ok: false, reason: "github's rate limit — the token is fine, try again shortly" };
+    return { ok: false, reason: RATE_LIMITED_REASON };
   }
   if (kind === 'auth') {
     return { ok: false, reason: `github rejected the token — it needs contents read and write on ${GITHUB_OWNER}/${GITHUB_REPO}` };

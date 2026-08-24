@@ -325,10 +325,10 @@ export function SettingsView() {
         return;
       }
       const result = await verifyAccess(token);
-      // Only what was actually established: GitHub reported write access. See
-      // the note in github.ts on why that is not the same as proving it works.
+      // The probe proves write access rather than asking GitHub to self-report
+      // it, so this can claim the real thing. See github.ts for how.
       setAccessMessage(
-        result.ok ? 'github reports write access for this token' : result.reason ?? 'access could not be confirmed'
+        result.ok ? 'write access confirmed' : result.reason ?? 'access could not be confirmed'
       );
       setAccessFailed(!result.ok);
     } catch {
