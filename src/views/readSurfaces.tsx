@@ -1,0 +1,589 @@
+/**
+ * The four committed surfaces, plus the source reader they all point at.
+ *
+ * Every one of these renders what the pipeline already committed — the same
+ * artifacts the email edition is built from, drawn for a screen the owner
+ * controls instead of one Gmail does. Nothing is recomputed here and nothing
+ * is invented: a field the file does not carry renders as absent rather than
+ * as the word "undefined".
+ *
+ * Citations are drawn but inert this phase. Phase 4 makes every one of them a
+ * tap into the source prose, which is the point of the whole pane.
+ */
+
+import { useCallback, useState } from 'react';
+
+import { Markdown } from '../components/Markdown';
+import {
+  BackLink,
+  Card,
+  Cite,
+  Failed,
+  Headline,
+  Kicker,
+  ListRow,
+  Note,
+  Pending,
+  Rail,
+  RailItem,
+  SrcLine,
+} from '../components/readUi';
+import { useAsync } from '../hooks/useAsync';
+import { bodyBlocks, parseMarkdown } from '../lib/markdown';
+import {
+  TAPE_PATH,
+  cachedJson,
+  cachedText,
+  cachedTree,
+  canonDocIds,
+  chartIds,
+  chartPath,
+  dayPath,
+  describeReadFailure,
+  essayPath,
+  essaySlugs,
+  fetchEntry,
+  syllabusPath,
+} from '../lib/newslettersRead';
+import type { ReadSurface } from '../types';
+
+export interface SurfaceProps {
+  item: string[];
+  onNavigate: (surface: ReadSurface, item: string[]) => void;
+}
+
+/** Nothing has been synced yet, so there is nothing to be wrong about. */
+function Unsynced({ what }: { what: string }) {
+  return (
+    <div className="py-2 font-mono text-[10.5px] text-sp-faint">
+      no {what} on this device yet — open with a token to sync
+    </div>
+  );
+}
+
+function Trouble({ error }: { error: unknown }) {
+  const { what, detail } = describeReadFailure(error);
+  return <Failed what={what} detail={detail} />;
+}
+
+// ---------------------------------------------------------------------------
+// Tape
+// ---------------------------------------------------------------------------
+
+interface TapeRow {
+  id?: string;
+  display_name?: string;
+  label?: string;
+  state?: string;
+  touches?: number[];
+  this_window?: number;
+  delta?: number;
+  source_chips?: string[];
+}
+
+interface TapeCard extends TapeRow {
+  stance_left?: string;
+  stance_right?: string;
+  pressure_text?: string;
+  evidence?: { text?: string; slug?: string; citation?: string }[];
+}
+
+interface TapeFile {
+  window?: { key?: string; start?: string; end?: string };
+  stats?: { entries_in?: number; sources_in?: number; figures_in?: number };
+  tape?: TapeRow[];
+  cards?: TapeCard[];
+}
+
+const STATE_TONE: Record<string, string> = {
+  HOT: 'text-sp-amber',
+  NEW: 'text-sp-green',
+  BUILDING: 'text-sp-ice',
+  COOLING: 'text-sp-faint',
+};
+
+function stateTone(state: string | undefined): string {
+  return (state && STATE_TONE[state]) ?? 'text-sp-muted';
+}
+
+function signed(value: number | undefined): string | null {
+  if (typeof value !== 'number' || value === 0) return null;
+  return value > 0 ? `+${value}` : `${value}`;
+}
+
+export function TapePane() {
+  const load = useCallback(() => cachedJson<TapeFile>(TAPE_PATH), []);
+  const { value, error, pending } = useAsync(load);
+
+  if (pending) return <Pending what="the tape" />;
+  if (error) return <Trouble error={error} />;
+  if (!value) return <Unsynced what="tape" />;
+
+  const rows = value.tape ?? [];
+  const cards = value.cards ?? [];
+
+  return (
+    <>
+      <div className="mb-4 flex items-baseline justify-between font-mono text-[10.5px] text-sp-faint">
+        <span>
+          {value.window?.key ?? 'tape'}
+          {value.window?.start && value.window?.end
+            ? ` · ${value.window.start} → ${value.window.end}`
+            : ''}
+        </span>
+        {typeof value.stats?.entries_in === 'number' && (
+          <span className="tabular-nums">
+            {value.stats.entries_in} entries · {value.stats.sources_in ?? 0} sources
+          </span>
+        )}
+      </div>
+
+      {rows.length > 0 && (
+        <div className="mb-5 border-y border-sp-hair py-1">
+          {rows.map((row, index) => (
+            <div
+              key={row.id ?? index}
+              className="flex items-baseline justify-between gap-3 py-[3px] font-mono text-[10.5px]"
+            >
+              <span className="truncate text-sp-muted">{row.display_name ?? row.id ?? '—'}</span>
+              <span className="flex flex-shrink-0 items-baseline gap-2 tabular-nums">
+                {typeof row.this_window === 'number' && (
+                  <span className="text-sp-faint">{row.this_window}</span>
+                )}
+                {signed(row.delta) && <span className="text-sp-faint">{signed(row.delta)}</span>}
+                <span className={stateTone(row.state)}>{row.state ?? ''}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {cards.map((card, index) => (
+        <Card key={card.id ?? index}>
+          <Kicker>
+            {card.display_name ?? card.id ?? 'theme'}
+            {card.state ? ` · ${card.state}` : ''}
+            {card.source_chips?.length ? ` · ${card.source_chips.join(' ')}` : ''}
+          </Kicker>
+          {card.label && <Headline>{card.label}</Headline>}
+
+          {card.stance_left && <p className="prose-read mt-3 text-sp-ink">{card.stance_left}</p>}
+          {card.stance_right && (
+            <>
+              <div className="mt-3 font-mono text-[10px] uppercase tracking-[0.22em] text-sp-faint">
+                against
+              </div>
+              <p className="prose-read mt-1 text-sp-ink">{card.stance_right}</p>
+            </>
+          )}
+          {card.pressure_text && <Note>{card.pressure_text}</Note>}
+
+          {card.evidence?.length ? (
+            <SrcLine>
+              {card.evidence.map((item, evidenceIndex) => (
+                <div key={evidenceIndex} className="mb-2 last:mb-0">
+                  {item.text && (
+                    <span className="font-read text-[13px] leading-[1.5] text-sp-muted">
+                      {item.text}{' '}
+                    </span>
+                  )}
+                  {item.citation && <Cite>{item.citation}</Cite>}
+                </div>
+              ))}
+            </SrcLine>
+          ) : null}
+        </Card>
+      ))}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Chart
+// ---------------------------------------------------------------------------
+
+interface ChartFile {
+  date?: string;
+  entries?: string[];
+  card?: {
+    kicker?: string;
+    headline?: string;
+    srcline?: string;
+    metric?: string;
+    note?: string;
+    bars?: { label?: string; value?: string; w?: number; group?: number }[];
+  };
+}
+
+const GROUP_TONE = ['bg-sp-amber', 'bg-sp-green', 'bg-sp-ice'];
+
+export function ChartPane({ item, onNavigate }: SurfaceProps) {
+  const loadIds = useCallback(async () => chartIds((await cachedTree()).map(file => file.path)), []);
+  const ids = useAsync(loadIds);
+
+  const chosen = item[0] ?? ids.value?.[0] ?? null;
+  const load = useCallback(
+    () => (chosen === null ? Promise.resolve(null) : cachedJson<ChartFile>(chartPath(chosen))),
+    [chosen]
+  );
+  const chart = useAsync(load);
+
+  if (ids.pending) return <Pending what="the charts" />;
+  if (ids.error) return <Trouble error={ids.error} />;
+  if (!ids.value || ids.value.length === 0) return <Unsynced what="charts" />;
+
+  const card = chart.value?.card;
+  const bars = card?.bars ?? [];
+  // `w` is the quantity itself, not a percentage — the widest bar sets the
+  // scale, so a chart of trillions and a chart of vessels per day both draw.
+  const widest = bars.reduce((most, bar) => Math.max(most, bar.w ?? 0), 0);
+
+  return (
+    <>
+      <Rail>
+        {ids.value.map(id => (
+          <RailItem
+            key={id}
+            active={id === chosen}
+            onClick={() => onNavigate('chart', [id])}
+          >
+            {id.slice(0, 10)}
+          </RailItem>
+        ))}
+      </Rail>
+
+      {chart.pending && <Pending what="the chart" />}
+      {chart.error ? <Trouble error={chart.error} /> : null}
+      {!chart.pending && !chart.error && !card && chosen !== null && (
+        <Failed what="this chart has no card in it" detail={chartPath(chosen)} />
+      )}
+
+      {card && (
+        <Card>
+          {card.kicker && <Kicker>{card.kicker}</Kicker>}
+          {card.headline && <Headline>{card.headline}</Headline>}
+          {card.metric && (
+            <div className="mt-2 font-mono text-[10.5px] text-sp-muted">{card.metric}</div>
+          )}
+
+          <div className="mt-[14px]">
+            {bars.map((bar, index) => (
+              <div
+                key={index}
+                className="grid grid-cols-[92px_1fr_64px] items-center gap-[10px] py-[5px] sm:grid-cols-[132px_1fr_72px]"
+              >
+                <span className="truncate text-right font-mono text-[11px] text-sp-muted">
+                  {bar.label ?? ''}
+                </span>
+                <div className="h-3 overflow-hidden rounded-[3px] bg-sp-panel2">
+                  <div
+                    className={`h-full rounded-[3px] ${GROUP_TONE[(bar.group ?? 0) % GROUP_TONE.length]}`}
+                    style={{ width: widest > 0 ? `${((bar.w ?? 0) / widest) * 100}%` : '0%' }}
+                  />
+                </div>
+                {/* Outside the bar, always: it survives a stripped fill in mail
+                    and a narrow phone here. */}
+                <span className="text-left font-mono text-[11.5px] tabular-nums text-sp-ink">
+                  {bar.value ?? ''}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {card.note && <Note>{card.note}</Note>}
+          <SrcLine>
+            {card.srcline ?? 'src'}
+            {chart.value?.entries?.length ? (
+              <div className="mt-2">
+                {chart.value.entries.map(entry => (
+                  <Cite key={entry}>{entry}</Cite>
+                ))}
+              </div>
+            ) : null}
+          </SrcLine>
+        </Card>
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Canon
+// ---------------------------------------------------------------------------
+
+interface Syllabus {
+  doc_id?: string;
+  days?: { day?: number; title?: string; covers?: string; idea?: string }[];
+}
+
+interface CanonDay {
+  doc_id?: string;
+  day?: number;
+  of?: number;
+  subject?: string;
+  text?: string;
+  citations?: string[];
+}
+
+export function CanonPane({ item, onNavigate }: SurfaceProps) {
+  const [doc, day] = item;
+
+  const loadDocs = useCallback(async () => {
+    const ids = canonDocIds((await cachedTree()).map(file => file.path));
+    const syllabi = await Promise.all(ids.map(id => cachedJson<Syllabus>(syllabusPath(id))));
+    return ids.map((id, index) => ({ id, syllabus: syllabi[index] }));
+  }, []);
+  const docs = useAsync(loadDocs);
+
+  const loadDay = useCallback(
+    () =>
+      doc === undefined || day === undefined
+        ? Promise.resolve(null)
+        : cachedJson<CanonDay>(dayPath(doc, Number(day))),
+    [doc, day]
+  );
+  const lesson = useAsync(loadDay);
+
+  if (docs.pending) return <Pending what="the canon" />;
+  if (docs.error) return <Trouble error={docs.error} />;
+  if (!docs.value || docs.value.length === 0) return <Unsynced what="canon lessons" />;
+
+  if (doc === undefined) {
+    return (
+      <>
+        {docs.value.map(entry => (
+          <ListRow
+            key={entry.id}
+            onClick={() => onNavigate('canon', [entry.id])}
+            label={`${entry.syllabus?.days?.length ?? 0} days`}
+            title={entry.id}
+            detail={entry.syllabus?.days?.[0]?.idea ?? null}
+          />
+        ))}
+      </>
+    );
+  }
+
+  const syllabus = docs.value.find(entry => entry.id === doc)?.syllabus ?? null;
+
+  if (day === undefined) {
+    return (
+      <>
+        <BackLink onClick={() => onNavigate('canon', [])}>canon</BackLink>
+        {syllabus?.days?.length ? (
+          syllabus.days.map(entry => (
+            <ListRow
+              key={entry.day ?? entry.title}
+              onClick={() => onNavigate('canon', [doc, String(entry.day ?? 1)])}
+              label={`day ${entry.day ?? '?'}${entry.covers ? ` · ${entry.covers}` : ''}`}
+              title={entry.title ?? `day ${entry.day ?? '?'}`}
+              detail={entry.idea ?? null}
+            />
+          ))
+        ) : (
+          <Failed what="this document has no syllabus on this device" detail={syllabusPath(doc)} />
+        )}
+      </>
+    );
+  }
+
+  const current = Number(day);
+  const of = lesson.value?.of ?? syllabus?.days?.length ?? 0;
+  const title = syllabus?.days?.find(entry => entry.day === current)?.title ?? null;
+
+  return (
+    <>
+      <BackLink onClick={() => onNavigate('canon', [doc])}>{doc}</BackLink>
+
+      {lesson.pending && <Pending what="the lesson" />}
+      {lesson.error ? <Trouble error={lesson.error} /> : null}
+      {!lesson.pending && !lesson.error && !lesson.value && (
+        <Failed what="that day has not been synced to this device" detail={dayPath(doc, current)} />
+      )}
+
+      {lesson.value && (
+        <Card>
+          <div className="flex items-baseline justify-between">
+            <Kicker tone="ice">canon · {lesson.value.doc_id ?? doc}</Kicker>
+            <span className="font-mono text-[10.5px] tabular-nums text-sp-faint">
+              day {lesson.value.day ?? current}
+              {of ? `/${of}` : ''}
+            </span>
+          </div>
+          {title && <Headline>{title}</Headline>}
+
+          {/* From `text`, never the stored email html: the html is built for a
+              mail client, and this is not one. */}
+          {lesson.value.text ? (
+            <Markdown blocks={parseMarkdown(lesson.value.text).blocks} />
+          ) : (
+            <Note>this lesson carries no text.</Note>
+          )}
+
+          {lesson.value.citations?.length ? (
+            <SrcLine>
+              {lesson.value.citations.map(citation => (
+                <Cite key={citation}>§{citation}</Cite>
+              ))}
+            </SrcLine>
+          ) : null}
+
+          <div className="mt-4 flex justify-between font-mono text-[10.5px] text-sp-faint">
+            <button
+              disabled={current <= 1}
+              onClick={() => onNavigate('canon', [doc, String(current - 1)])}
+              className="disabled:opacity-30"
+            >
+              ← previous
+            </button>
+            <button
+              disabled={of > 0 && current >= of}
+              onClick={() => onNavigate('canon', [doc, String(current + 1)])}
+              className="disabled:opacity-30"
+            >
+              next →
+            </button>
+          </div>
+        </Card>
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Essays
+// ---------------------------------------------------------------------------
+
+export function EssayPane({ item, onNavigate }: SurfaceProps) {
+  const [slug] = item;
+
+  const loadList = useCallback(async () => {
+    const slugs = essaySlugs((await cachedTree()).map(file => file.path));
+    const texts = await Promise.all(slugs.map(one => cachedText(essayPath(one))));
+    return slugs.map((one, index) => ({
+      slug: one,
+      title: texts[index] === null ? null : parseMarkdown(texts[index]).title,
+    }));
+  }, []);
+  const list = useAsync(loadList);
+
+  const loadEssay = useCallback(
+    async () => {
+      if (slug === undefined) return null;
+      const text = await cachedText(essayPath(slug));
+      return text === null ? null : parseMarkdown(text);
+    },
+    [slug]
+  );
+  const essay = useAsync(loadEssay);
+
+  if (list.pending) return <Pending what="the essays" />;
+  if (list.error) return <Trouble error={list.error} />;
+  if (!list.value || list.value.length === 0) return <Unsynced what="essays" />;
+
+  if (slug === undefined) {
+    return (
+      <>
+        {list.value.map(entry => (
+          <ListRow
+            key={entry.slug}
+            onClick={() => onNavigate('essay', [entry.slug])}
+            label={entry.slug.slice(0, 10)}
+            title={entry.title ?? entry.slug}
+          />
+        ))}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <BackLink onClick={() => onNavigate('essay', [])}>essays</BackLink>
+
+      {essay.pending && <Pending what="the essay" />}
+      {essay.error ? <Trouble error={essay.error} /> : null}
+      {!essay.pending && !essay.error && !essay.value && (
+        <Failed what="that essay has not been synced to this device" detail={essayPath(slug)} />
+      )}
+
+      {essay.value && (
+        <Card>
+          <Kicker>essay</Kicker>
+          {essay.value.title && <Headline>{essay.value.title}</Headline>}
+          <Markdown blocks={bodyBlocks(essay.value)} />
+
+          {essay.value.footnotes.length > 0 && (
+            <SrcLine>
+              {/* The footnote strip comes out of the essay itself. The sidecar
+                  the plan expected does not exist in the repo; the definitions
+                  live at the foot of the markdown, which is one source rather
+                  than two that can disagree. */}
+              {essay.value.footnotes.map(note => (
+                <div key={note.label} className="mb-1 last:mb-0">
+                  <span className="text-sp-ice">[{note.label}]</span>{' '}
+                  <span className="break-all">
+                    <Markdown blocks={[{ kind: 'paragraph', children: note.children }]} />
+                  </span>
+                </div>
+              ))}
+            </SrcLine>
+          )}
+        </Card>
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The source reader
+// ---------------------------------------------------------------------------
+
+export function RawPane({ item }: SurfaceProps) {
+  const [slug] = item;
+  const [showFigures, setShowFigures] = useState(false);
+
+  const load = useCallback(
+    () => (slug === undefined ? Promise.resolve(null) : fetchEntry(slug)),
+    [slug]
+  );
+  const entry = useAsync(load);
+
+  if (slug === undefined) {
+    return <Failed what="no entry named in this address" />;
+  }
+  if (entry.pending) return <Pending what={slug} />;
+  if (entry.error) return <Trouble error={entry.error} />;
+  if (!entry.value) return <Unsynced what="source entries" />;
+
+  const prose = parseMarkdown(entry.value.prose);
+  const figures = entry.value.figures === null ? null : parseMarkdown(entry.value.figures);
+  const showing = showFigures && figures !== null;
+
+  return (
+    <Card>
+      <div className="flex items-baseline justify-between gap-3">
+        <Kicker>raw · {entry.value.slug.slice(0, 10)}</Kicker>
+        {figures !== null && (
+          <div className="flex flex-shrink-0 gap-2 font-mono text-[10px]">
+            <button
+              onClick={() => setShowFigures(false)}
+              className={showing ? 'text-sp-faint' : 'text-sp-amber'}
+            >
+              prose
+            </button>
+            <span className="text-sp-faint">|</span>
+            <button
+              onClick={() => setShowFigures(true)}
+              className={showing ? 'text-sp-amber' : 'text-sp-faint'}
+            >
+              figures
+            </button>
+          </div>
+        )}
+      </div>
+
+      <Headline>{prose.title ?? entry.value.slug}</Headline>
+      <Markdown blocks={showing && figures ? figures.blocks : bodyBlocks(prose)} />
+    </Card>
+  );
+}

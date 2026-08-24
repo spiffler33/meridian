@@ -69,6 +69,7 @@ function AppContent() {
             surface={nav.read.surface}
             item={nav.read.item}
             onSurfaceChange={nav.setReadSurface}
+            onNavigate={nav.setReadRoute}
           />
         );
       case 'settings':

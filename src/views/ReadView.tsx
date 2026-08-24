@@ -4,9 +4,9 @@
  * The reading surface for the newsletters library. Email stays the broadcast
  * edition; this is the owner's terminal on the same committed artifacts.
  *
- * This phase is the shell: the tabs, the routes, the type split and the
- * instrument, rendering fixtures. No token, no fetch, no journal — the
- * newsletters repo arrives in phase 2 (docs/PLAN_READING_PANE.md).
+ * The shell owns three things: the palette the whole screen adopts while this
+ * view is mounted, the instrument in the header, and the tab rail. Everything
+ * below the rail is a surface, and each surface reads its own file.
  */
 
 import { useEffect, useState } from 'react';
@@ -14,19 +14,19 @@ import type { ReadSurface } from '../types';
 import { SetpointWave } from '../components/SetpointWave';
 import { useNewsletters, type NewslettersView } from '../hooks/useNewsletters';
 import {
-  CANON_DAY,
-  CHART_CARD,
-  ESSAY_CARD,
-  TAPE_CARDS,
-  type ChartBar,
-  type Segment,
-} from './readFixtures';
+  CanonPane,
+  ChartPane,
+  EssayPane,
+  RawPane,
+  TapePane,
+} from './readSurfaces';
 
 interface ReadViewProps {
   surface: ReadSurface;
-  /** The item path from the route, e.g. ['risk-memos', '04'] under canon. */
+  /** The item path from the route, e.g. ['marks-sea-change', '4'] under canon. */
   item: string[];
   onSurfaceChange: (surface: ReadSurface) => void;
+  onNavigate: (surface: ReadSurface, item: string[]) => void;
 }
 
 const TABS: { surface: ReadSurface; label: string }[] = [
@@ -36,169 +36,6 @@ const TABS: { surface: ReadSurface; label: string }[] = [
   { surface: 'essay', label: 'Essays' },
   { surface: 'library', label: 'Library' },
 ];
-
-const BAR_TONE: Record<ChartBar['tone'], string> = {
-  amber: 'bg-sp-amber',
-  green: 'bg-sp-green',
-  ice: 'bg-sp-ice',
-};
-
-function Card({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="mb-4 rounded border border-sp-hair bg-sp-panel px-[18px] pb-4 pt-[18px]">
-      {children}
-    </div>
-  );
-}
-
-function Kicker({ children, tone }: { children: React.ReactNode; tone?: 'ice' }) {
-  return (
-    <div
-      className={`mb-2 font-mono text-[9.5px] uppercase tracking-[0.22em] ${
-        tone === 'ice' ? 'text-sp-ice' : 'text-sp-amber'
-      }`}
-    >
-      {children}
-    </div>
-  );
-}
-
-function Headline({ children }: { children: React.ReactNode }) {
-  return (
-    <h2 className="font-read text-[18px] font-bold leading-[1.35] tracking-[-0.01em] text-sp-ink">
-      {children}
-    </h2>
-  );
-}
-
-/**
- * A citation, drawn but not yet live: chips become tappable in phase 4, and a
- * button that goes nowhere would be a lie about what this pane can do today.
- */
-function Cite({ children }: { children: React.ReactNode }) {
-  return (
-    <span
-      className="mx-px whitespace-nowrap rounded-[9px] border border-sp-rim px-[7px] pb-[2px] pt-px align-[0.12em] font-mono text-[10.5px] text-sp-ice"
-    >
-      {children}
-    </span>
-  );
-}
-
-function Prose({ paragraphs }: { paragraphs: Segment[][] }) {
-  return (
-    <>
-      {paragraphs.map((segments, p) => (
-        <p key={p} className="prose-read mt-3 text-sp-ink">
-          {segments.map((segment, s) => {
-            if (typeof segment === 'string') return <span key={s}>{segment}</span>;
-            if ('cite' in segment) return <Cite key={s}>{segment.cite}</Cite>;
-            return (
-              <sup key={s} className="font-mono text-[10px] text-sp-ice">
-                {segment.fn}
-              </sup>
-            );
-          })}
-        </p>
-      ))}
-    </>
-  );
-}
-
-function SrcLine({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="mt-[14px] border-t border-sp-hair pt-3 font-mono text-[10.5px] leading-[1.7] text-sp-faint">
-      {children}
-    </div>
-  );
-}
-
-function TapePane() {
-  return (
-    <>
-      {TAPE_CARDS.map(card => (
-        <Card key={card.id}>
-          <Kicker>{card.kicker}</Kicker>
-          <Headline>{card.headline}</Headline>
-          <Prose paragraphs={card.prose} />
-          <SrcLine>
-            {card.srcCount} ·{' '}
-            {card.cites.map(cite => (
-              <Cite key={cite}>{cite}</Cite>
-            ))}
-          </SrcLine>
-        </Card>
-      ))}
-    </>
-  );
-}
-
-function ChartPane() {
-  return (
-    <Card>
-      <Kicker>{CHART_CARD.kicker}</Kicker>
-      <Headline>{CHART_CARD.headline}</Headline>
-      {/* The value lives outside the bar. It survives a stripped fill in mail,
-          and it survives a narrow phone here — same reason, different medium. */}
-      <div className="mt-[14px]">
-        {CHART_CARD.bars.map(bar => (
-          <div
-            key={bar.label}
-            className="grid grid-cols-[92px_1fr_58px] items-center gap-[10px] py-[5px] sm:grid-cols-[112px_1fr_58px]"
-          >
-            <span className="text-right font-mono text-[11px] text-sp-muted">{bar.label}</span>
-            <div className="h-3 overflow-hidden rounded-[3px] bg-sp-panel2">
-              <div
-                className={`h-full rounded-[3px] ${BAR_TONE[bar.tone]}`}
-                style={{ width: `${bar.percent}%` }}
-              />
-            </div>
-            <span className="text-left font-mono text-[11.5px] tabular-nums text-sp-ink">
-              {bar.value}
-            </span>
-          </div>
-        ))}
-      </div>
-      <p className="mt-[10px] font-read text-sm italic leading-[1.6] text-sp-muted">
-        {CHART_CARD.note}
-      </p>
-      <SrcLine>
-        src ·{' '}
-        {CHART_CARD.cites.map(cite => (
-          <Cite key={cite}>{cite}</Cite>
-        ))}
-      </SrcLine>
-    </Card>
-  );
-}
-
-function CanonPane() {
-  return (
-    <Card>
-      <div className="flex items-baseline justify-between">
-        <Kicker tone="ice">{CANON_DAY.kicker}</Kicker>
-        <span className="font-mono text-[10.5px] tabular-nums text-sp-faint">
-          day {CANON_DAY.day}/{CANON_DAY.of}
-        </span>
-      </div>
-      <Headline>{CANON_DAY.headline}</Headline>
-      <Prose paragraphs={CANON_DAY.prose} />
-      <SrcLine>{CANON_DAY.citations}</SrcLine>
-    </Card>
-  );
-}
-
-function EssayPane() {
-  return (
-    <Card>
-      <Kicker>{ESSAY_CARD.kicker}</Kicker>
-      <Headline>{ESSAY_CARD.headline}</Headline>
-      <p className="prose-read mt-[6px] text-[14.5px] text-sp-muted">{ESSAY_CARD.subtitle}</p>
-      <Prose paragraphs={ESSAY_CARD.prose} />
-      <SrcLine>{ESSAY_CARD.footnotes}</SrcLine>
-    </Card>
-  );
-}
 
 /**
  * What the library is doing, in one line, above the rows rather than instead
@@ -241,10 +78,12 @@ function LibraryPane({
   view,
   readSlugs,
   onToggle,
+  onOpen,
 }: {
   view: NewslettersView;
   readSlugs: Set<string>;
   onToggle: (slug: string) => void;
+  onOpen: (slug: string) => void;
 }) {
   return (
     <>
@@ -252,19 +91,21 @@ function LibraryPane({
       {view.rows.map(row => {
         const isRead = readSlugs.has(row.slug);
         return (
-          <div key={row.slug} className="flex items-center gap-3 border-b border-sp-hair px-[2px] py-[11px]">
+          <div
+            key={row.slug}
+            className="flex items-center gap-3 border-b border-sp-hair px-[2px] py-[11px]"
+          >
             <span
               className={`h-[7px] w-[7px] flex-shrink-0 rounded-full ${
                 isRead ? 'border border-sp-hair' : 'bg-sp-amber'
               }`}
               style={isRead ? undefined : { boxShadow: '0 0 8px var(--sp-amber)' }}
             />
-            <div className="min-w-0 flex-1">
+            <button onClick={() => onOpen(row.slug)} className="min-w-0 flex-1 text-left">
               <div className="font-mono text-[10px] tracking-[0.06em] text-sp-faint">{row.date}</div>
-              {/* The slug is the title. The corpus has no other one that can be
-                  known without opening the entry, and inventing a prettier
-                  version of an identifier would only make it harder to match
-                  against a citation. */}
+              {/* The slug is the title. The corpus keeps the real one inside
+                  the entry's frontmatter, which is a fetch away; the reader
+                  shows it the moment the entry opens. */}
               <div
                 className={`truncate font-mono text-[12.5px] leading-[1.5] ${
                   isRead ? 'text-sp-muted' : 'text-sp-ink'
@@ -277,7 +118,7 @@ function LibraryPane({
                   {row.gist}
                 </div>
               )}
-            </div>
+            </button>
             <button
               onClick={() => onToggle(row.slug)}
               aria-label={isRead ? `Mark ${row.slug} unread` : `Mark ${row.slug} read`}
@@ -285,7 +126,9 @@ function LibraryPane({
                 isRead ? 'border-sp-green bg-sp-green' : 'border-sp-faint hover:border-sp-muted'
               }`}
             >
-              {isRead && <span className="block text-center text-[12px] leading-4 text-sp-panel">✓</span>}
+              {isRead && (
+                <span className="block text-center text-[12px] leading-4 text-sp-panel">✓</span>
+              )}
             </button>
           </div>
         );
@@ -300,21 +143,7 @@ function LibraryPane({
   );
 }
 
-function RawPane({ item }: { item: string[] }) {
-  const slug = item.join('/');
-  return (
-    <Card>
-      <Kicker>raw</Kicker>
-      <Headline>{slug || 'No entry named'}</Headline>
-      <p className="prose-read mt-3 text-sp-muted">
-        Source prose is fetched on open, and this route is already the one every citation resolves
-        to. The reader itself lands with the surfaces.
-      </p>
-    </Card>
-  );
-}
-
-export function ReadView({ surface, item, onSurfaceChange }: ReadViewProps) {
+export function ReadView({ surface, item, onSurfaceChange, onNavigate }: ReadViewProps) {
   // The whole screen becomes the reading surface while this view is mounted:
   // the app's tokens resolve to setpoint values on <html>, so the header and
   // the backup line come along instead of framing the pane in another palette.
@@ -340,9 +169,10 @@ export function ReadView({ surface, item, onSurfaceChange }: ReadViewProps) {
 
   // Not zero until the library has actually been read: an instrument that
   // reports "all read" because it has not looked yet is lying.
-  const unread = view.loaded && view.rows.length > 0
-    ? view.rows.filter(row => !readSlugs.has(row.slug)).length
-    : null;
+  const unread =
+    view.loaded && view.rows.length > 0
+      ? view.rows.filter(row => !readSlugs.has(row.slug)).length
+      : null;
 
   return (
     <div>
@@ -372,13 +202,18 @@ export function ReadView({ surface, item, onSurfaceChange }: ReadViewProps) {
 
       <div role="tabpanel">
         {surface === 'tape' && <TapePane />}
-        {surface === 'chart' && <ChartPane />}
-        {surface === 'canon' && <CanonPane />}
-        {surface === 'essay' && <EssayPane />}
+        {surface === 'chart' && <ChartPane item={item} onNavigate={onNavigate} />}
+        {surface === 'canon' && <CanonPane item={item} onNavigate={onNavigate} />}
+        {surface === 'essay' && <EssayPane item={item} onNavigate={onNavigate} />}
         {surface === 'library' && (
-          <LibraryPane view={view} readSlugs={readSlugs} onToggle={toggleRead} />
+          <LibraryPane
+            view={view}
+            readSlugs={readSlugs}
+            onToggle={toggleRead}
+            onOpen={slug => onNavigate('raw', [slug])}
+          />
         )}
-        {surface === 'raw' && <RawPane item={item} />}
+        {surface === 'raw' && <RawPane item={item} onNavigate={onNavigate} />}
       </div>
     </div>
   );

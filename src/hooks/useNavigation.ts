@@ -32,6 +32,7 @@ interface UseNavigationReturn extends NavigationState {
   goToPreviousWeek: () => void;
   goToNextWeek: () => void;
   setReadSurface: (surface: ReadSurface) => void;
+  setReadRoute: (surface: ReadSurface, item: string[]) => void;
 }
 
 const VALID_VIEWS: ViewType[] = ['tower', 'habits', 'week', 'year', 'read', 'settings'];
@@ -145,6 +146,10 @@ export function useNavigation(): UseNavigationReturn {
     setState(prev => ({ ...prev, view: 'read', read: { surface, item: [] } }));
   }, []);
 
+  const setReadRoute = useCallback((surface: ReadSurface, item: string[]) => {
+    setState(prev => ({ ...prev, view: 'read', read: { surface, item } }));
+  }, []);
+
   const setSelectedDate = useCallback((selectedDate: string) => {
     setState(prev => ({ ...prev, selectedDate }));
   }, []);
@@ -205,5 +210,6 @@ export function useNavigation(): UseNavigationReturn {
     goToPreviousWeek,
     goToNextWeek,
     setReadSurface,
+    setReadRoute,
   };
 }

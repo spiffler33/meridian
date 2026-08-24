@@ -60,45 +60,36 @@ function library(overrides: Partial<NewslettersView> = {}) {
 
 beforeEach(() => {
   library();
+  navigate.mockReset();
 });
 
 afterEach(cleanup);
 
+const navigate = vi.fn();
+
 function show(surface: Parameters<typeof ReadView>[0]['surface'], item: string[] = []) {
-  return render(<ReadView surface={surface} item={item} onSurfaceChange={vi.fn()} />);
+  return render(
+    <ReadView surface={surface} item={item} onSurfaceChange={vi.fn()} onNavigate={navigate} />
+  );
 }
 
 describe('the surfaces', () => {
-  it('renders tape', () => {
+  // What each surface renders is its own business and is covered in
+  // readSurfaces.test.tsx. What the shell owes is that the route reaches the
+  // right one — here, against a device with nothing synced, which is also the
+  // state a new device is in.
+  it('mounts the surface the route names', async () => {
     show('tape');
-    expect(screen.getByText("Term premium does the tightening the Fed won't")).toBeInTheDocument();
-  });
+    expect(await screen.findByText(/no tape on this device yet/)).toBeInTheDocument();
 
-  it('renders chart with the value outside the bar', () => {
-    show('chart');
-    expect(screen.getByText('Utilities capex')).toBeInTheDocument();
-    expect(screen.getByText('+86%')).toBeInTheDocument();
-  });
-
-  it('renders canon with its day ticker', () => {
+    cleanup();
     show('canon');
-    expect(screen.getByText('day 4/9')).toBeInTheDocument();
+    expect(await screen.findByText(/no canon lessons on this device yet/)).toBeInTheDocument();
   });
 
-  it('renders an essay with its footnote marks', () => {
-    const { container } = show('essay');
-    expect(screen.getByText('A sample subtitle sits here, muted, one line.')).toBeInTheDocument();
-    expect(container.querySelectorAll('sup')).toHaveLength(2);
-  });
-
-  it('renders raw at the entry the route names', () => {
-    show('raw', ['2026-08-18--sample-macro']);
-    expect(screen.getByText('2026-08-18--sample-macro')).toBeInTheDocument();
-  });
-
-  it('renders raw without an entry rather than blank', () => {
+  it('says an address with no entry in it is exactly that', () => {
     show('raw');
-    expect(screen.getByText('No entry named')).toBeInTheDocument();
+    expect(screen.getByText('no entry named in this address')).toBeInTheDocument();
   });
 });
 
@@ -113,6 +104,14 @@ describe('the library', () => {
   it('lists an entry that has no gist rather than dropping it', () => {
     show('library');
     expect(screen.getByText('no-gist')).toBeInTheDocument();
+  });
+
+  it('opens the source entry when a row is tapped', () => {
+    show('library');
+
+    fireEvent.click(screen.getByText('lex-asia-insurers'));
+
+    expect(navigate).toHaveBeenCalledWith('raw', ['2026-08-21--lex-asia-insurers']);
   });
 
   it('says where the token goes when there is none', () => {
@@ -152,8 +151,9 @@ describe('the tab rail', () => {
     expect(screen.getByRole('tab', { name: 'Tape' })).toHaveAttribute('aria-selected', 'false');
   });
 
-  it('leaves every tab unselected on a surface that has no tab', () => {
+  it('leaves every tab unselected on a surface that has no tab', async () => {
     show('raw');
+    await screen.findByText('no entry named in this address');
     for (const tab of screen.getAllByRole('tab')) {
       expect(tab).toHaveAttribute('aria-selected', 'false');
     }
@@ -161,7 +161,9 @@ describe('the tab rail', () => {
 
   it('asks the router for the new surface rather than switching on its own', () => {
     const onSurfaceChange = vi.fn();
-    render(<ReadView surface="tape" item={[]} onSurfaceChange={onSurfaceChange} />);
+    render(
+      <ReadView surface="tape" item={[]} onSurfaceChange={onSurfaceChange} onNavigate={navigate} />
+    );
 
     fireEvent.click(screen.getByRole('tab', { name: 'Library' }));
 
