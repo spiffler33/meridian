@@ -120,8 +120,13 @@ Build:
 - Wave goes live: `unread` from folded state; per-tab unread ticks in the tab rail (mono, small).
 - Year view: reading joins the heatmap signal (a day with ≥1 `readItem` counts — smallest honest integration; do not redesign the heatmap).
 - Compatibility note in code: an older deployed build folding a `readItem` event skips-with-warnings by design; single owner updates both devices. Verify the skip path in a test, don't assume it.
+- **Error boundary — added to this phase 2026-08-24, the precondition for merging to `main`.** The app has none today: a render-time throw anywhere unmounts the whole tree, and `main` deploys the daily cockpit. One class component (`src/components/ViewBoundary.tsx` — boundaries must be classes; plain constructor, no parameter properties, `erasableSyntaxOnly` forbids them), wrapping `renderView()`'s result inside `<Layout>` in `App.tsx:83` so the shell and its nav survive a dead view.
+  - **Keyed on `nav.view`**, so changing tab clears a caught error. Without the key the fallback latches and the app is stuck on it for the session.
+  - Fallback is a `Failed`-shaped card: names the view that died, offers *reload* and stays inside the shell so another tab is one tap away. **Never renders the error's message or stack** — the secrets fence says nothing derived from a failure raised near a token may be shown. `import.meta.env.DEV` may `console.error` the real thing, matching `AppContext`'s boot catch.
+  - Not a silent swallow: a dead view must say it is dead. Silent failure is a bug here as everywhere else.
+  - Tests: a child that throws renders the fallback while the nav rail still renders; switching view clears it; the message text never reaches the DOM.
 
-Tests: fold with `readItem` (upsert, delete, resurrect, natural-key adoption); baseline-idempotent (second device must not reset it); unread selector; heatmap contribution; old-`ENTITY` skip simulation.
+Tests: fold with `readItem` (upsert, delete, resurrect, natural-key adoption); baseline-idempotent (second device must not reset it); unread selector; heatmap contribution; old-`ENTITY` skip simulation; the boundary's three cases above.
 
 **GATE 5:** two-device check — mark read on phone, watch laptop settle after sync. Journal in `meridian-data` shows clean `readItem` lines, one baseline event total. STOP. Plan complete; ideas.json / search / AI / `.queue/` surfaces are explicitly out of scope and get their own plans.
 
@@ -305,3 +310,11 @@ all four surfaces, checks the inert path when a lesson names no source, and cove
 
 **Still open at Gate 4:** the wave still reads ~322 unread and pins at Drifting until phase 5's
 baseline lands — expected, not a bug.
+
+### 2026-08-24 — amendment: the error boundary joins phase 5
+
+Asked why phases 1–4 were not going to `main`, two answers held and one of them is fixable.
+
+The app has **no error boundary at all** (`grep -rn "ErrorBoundary\|componentDidCatch\|getDerivedStateFromError" src/` → nothing), so a render-time throw in any view unmounts the whole tree — and `main` deploys the daily cockpit. That is the one blocker worth removing rather than working around, so it is now part of phase 5's build list above, and the precondition for the merge.
+
+The other reason stands and is not fixable by writing code: **the v1→v2 database migration is one-way.** Phase 2 added `contentCache` and bumped `DB_VERSION`. Deploying upgrades both devices; a rollback then has a v1 build opening a v2 database, which throws `VersionError`, which `AppContext`'s boot catch turns into `DEFAULT_HABITS` — the data is intact underneath but the app reads as wiped and every write fails until `main` is deployed forward again. So "just roll it back" is not available, and the merge should happen once, with phases 1–5 together, after gates 4 and 5.
