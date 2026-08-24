@@ -16,6 +16,19 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 :root {
+  /*
+   * Holding paint, used only for the instant before React applies the stored
+   * theme. The stored theme lives in IndexedDB, which cannot be read
+   * synchronously, so the first paint has to come from somewhere: the system
+   * canvas, which is near-black on a dark OS and near-white on a light one.
+   * Naming a real theme's colours here is what made every paper and mono open
+   * flash dark first. Each theme block below overrides these.
+   */
+  color-scheme: light dark;
+  --color-bg: Canvas;
+  --color-text: CanvasText;
+  --font-family: var(--font-sans);
+
   /* Typography */
   --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
@@ -40,7 +53,8 @@
    DARK THEME (Default) - Modern Terminal
    ═══════════════════════════════════════════════════════════════════════════ */
 
-[data-theme="dark"], :root {
+[data-theme="dark"] {
+  color-scheme: dark;
   --color-bg: #111111;
   --color-bg-card: #1a1a1a;
   --color-bg-hover: #222222;
@@ -59,6 +73,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 [data-theme="matrix"] {
+  color-scheme: dark;
   --color-bg: #000000;
   --color-bg-card: #0a0a0a;
   --color-bg-hover: #111111;
@@ -77,6 +92,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 [data-theme="paper"] {
+  color-scheme: light;
   --color-bg: #FAF8F1;
   --color-bg-card: #FFFFFF;
   --color-bg-hover: #F5F3EC;
@@ -95,6 +111,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 [data-theme="midnight"] {
+  color-scheme: dark;
   --color-bg: #0F0F23;
   --color-bg-card: #161629;
   --color-bg-hover: #1c1c36;
@@ -113,6 +130,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 [data-theme="mono"] {
+  color-scheme: light;
   --color-bg: #FFFFFF;
   --color-bg-card: #FFFFFF;
   --color-bg-hover: #F5F5F5;

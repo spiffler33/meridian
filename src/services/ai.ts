@@ -1,11 +1,14 @@
 /**
- * AI Service - Claude API Integration via Supabase Edge Function
+ * AI Service
  *
- * Parses natural language into structured tower items.
- * Calls Edge Function to avoid CORS and keep API key server-side.
+ * Tower brain-dump capture.
+ *
+ * The server-side parse is gone with the server. `parseTowerInput` is now the
+ * local fallback it always had, and nothing more: whatever the owner typed is
+ * saved as one active item. Rebuilding the parse is a later plan, and this is
+ * deliberately the whole seam it will replace.
  */
 
-import { supabase } from './supabase';
 import type { TowerItemInput } from './data';
 
 /**
@@ -21,88 +24,12 @@ export interface ParsedTowerItem {
 }
 
 /**
- * Parse user input into structured tower items (can return multiple from one brain dump)
+ * Parse user input into structured tower items.
  *
- * Design: Trust Claude for rambling/messy input, or save as-is.
- * Calls Supabase Edge Function to avoid CORS and keep API key secure.
+ * One item, exactly as typed. See the module note.
  */
 export async function parseTowerInput(userInput: string): Promise<ParsedTowerItem[]> {
-  const trimmed = userInput.trim();
-
-  try {
-    // Call Edge Function (handles Claude API server-side)
-    const { data, error } = await supabase.functions.invoke('parse-task', {
-      body: { input: userInput },
-    });
-
-    if (error) {
-      if (import.meta.env.DEV) console.error('Edge function error:', error);
-      return [{ text: trimmed, status: 'active' }];
-    }
-
-    if (data.error) {
-      if (import.meta.env.DEV) console.error('Parse service error:', data.error);
-      return [{ text: trimmed, status: 'active' }];
-    }
-
-    // Handle array of items
-    const items = data.items || [data];
-    return items.map((item: unknown) => validateParsedItem(item, trimmed));
-  } catch (err) {
-    if (import.meta.env.DEV) console.error('AI parsing failed:', err);
-    return [{ text: trimmed, status: 'active' }];
-  }
-}
-
-/**
- * Validate and sanitize parsed item
- */
-function validateParsedItem(parsed: unknown, fallbackText: string): ParsedTowerItem {
-  const result: ParsedTowerItem = {
-    text: fallbackText.trim(),
-    status: 'active',
-    isEvent: false,
-  };
-
-  if (typeof parsed !== 'object' || parsed === null) {
-    return result;
-  }
-
-  const p = parsed as Record<string, unknown>;
-
-  // Text
-  if (typeof p.text === 'string' && p.text.trim()) {
-    result.text = p.text.trim();
-  }
-
-  // Status
-  if (p.status === 'active' || p.status === 'waiting' || p.status === 'someday') {
-    result.status = p.status;
-  }
-
-  // WaitingOn (only if status is waiting)
-  if (result.status === 'waiting' && typeof p.waitingOn === 'string' && p.waitingOn.trim()) {
-    result.waitingOn = p.waitingOn.trim();
-  }
-
-  // ExpectsBy (validate date format)
-  if (typeof p.expectsBy === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(p.expectsBy)) {
-    result.expectsBy = p.expectsBy;
-  }
-
-  // Effort
-  if (p.effort === 'quick' || p.effort === 'medium' || p.effort === 'deep') {
-    result.effort = p.effort;
-  }
-
-  // isEvent (default to false)
-  if (typeof p.isEvent === 'boolean') {
-    result.isEvent = p.isEvent;
-  } else {
-    result.isEvent = false;
-  }
-
-  return result;
+  return [{ text: userInput.trim(), status: 'active' }];
 }
 
 /**

@@ -78,7 +78,7 @@ export function HabitsView({ selectedDate, onPrevious, onNext, onDateSelect }: H
     setLoadingStats(true);
 
     try {
-      // Fetch completion dates from Supabase
+      // Fetch completion dates from the local journal
       const completionDates = await getHabitCompletionDates(habitId);
 
       // Calculate stats using pure functions

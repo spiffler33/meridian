@@ -7,6 +7,7 @@
 import { useState, useEffect } from 'react';
 import type { ViewType } from '../types';
 import { isToday } from '../utils/dates';
+import { BackupStatus } from './BackupStatus';
 
 interface LayoutProps {
   currentView: ViewType;
@@ -132,6 +133,24 @@ export function Layout({
           {children}
         </div>
       </main>
+
+      {/*
+        Backup status. Sticky rather than static: as a plain footer at the end
+        of a min-h-screen column it sits at the bottom of the year and tower
+        views' documents, which on a phone is several screens below the fold —
+        the one window into whether the data is safe, permanently off-screen.
+        Sticky keeps its own space in the flow, so it still never covers
+        content, and the safe-area padding keeps it clear of the iPhone home
+        indicator in the installed app.
+      */}
+      <footer
+        className="sticky bottom-0 border-t border-border bg-bg"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      >
+        <div className="max-w-content mx-auto px-4 py-2">
+          <BackupStatus />
+        </div>
+      </footer>
     </div>
   );
 }

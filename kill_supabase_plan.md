@@ -12,7 +12,8 @@ Meridian is a single-user personal cockpit used on an iPhone (as a home-screen P
 DATA MODEL — EVENT JOURNAL
 - All state changes are events with fields: `id` (UUID), `device` (short id chosen at first run, editable in Settings), `seq` (per-device monotonic counter, persisted locally), `ts` (epoch ms), `type` ("upsert" | "delete"), `entity`, `entityId`, `fields` (partial object; absent for delete).
 - Journals live in the data repo at `journal/YYYY-MM.<device>.jsonl` — one JSON object per line. Each device appends ONLY to its own current-month file. A new month means a new file; there is NO compaction step, ever.
-- Rebuilding state = fetch journals, sort events by (ts, device, seq), apply field-level last-writer-wins per (entity, entityId); a delete is a tombstone beating older upserts; dedupe by event id; skip unparseable lines and surface a visible warning instead of crashing.
+- Rebuilding state = fetch journals, sort events by **(ts, device, seq, id)**, apply field-level last-writer-wins per (entity, entityId); a delete is a tombstone beating older upserts; dedupe by event id; skip unparseable lines and surface a visible warning instead of crashing.
+  - **AMENDMENT 2026-08-23 (orchestrator, owner asleep, in-scope):** the original spec's `(ts, device, seq)` is NOT a total order. Adversarial review reproduced two devices converging on *different* state depending on journal fetch order, and a tied upsert-vs-delete letting an entity survive its own delete. Ties are reachable via a seq counter reset (Safari evicts site data after 7 idle days), a restored backup, or a reused device id. Appending `id` as a final tiebreak makes the order total and fetch-order-independent. This is a strict refinement — it changes nothing where the original triple already discriminated.
 - `snapshot.json` in the repo is an optional derived cache for fast restore. It is never authoritative; on any doubt, replay journals.
 
 LOCAL LAYER
@@ -24,6 +25,7 @@ GITHUB SYNC
 - All writes go through the GitHub contents API against `meridian-data`, SHA-conditional; on a 409/SHA mismatch, refetch and retry; serialize pushes with the Web Locks API so two tabs cannot race. Pushes are idempotent because folding dedupes by event id.
 - Flush the outbox: ~5 s after the last edit, on `visibilitychange`/`pagehide`, and on app foreground. Unflushed events must survive app kill via the outbox.
 - Reads on open: list the journal directory, fetch current + previous month for every device id seen, plus `snapshot.json`; update the IndexedDB journal cache.
+  - **AMENDMENT 2026-08-23 (orchestrator, owner asleep, in-scope):** current+previous-month is correct for a WARM open only. On a COLD restore — IndexedDB empty, which is exactly acceptance test D, the mandatory restore drill — that rule makes every journal file older than two months unreachable, so the restore would silently return partial history. Since `snapshot.json` is explicitly never authoritative, a cold restore MUST fetch every journal file the directory lists. Warm opens keep the cheap current+previous path. Phase 7 implements both paths; Phase 5's seed file is dated to its source data (`journal/2026-01.seed.jsonl`) and is reachable only because of this amendment.
 - Auth: a fine-grained PAT (single repo: `meridian-data`; permission: Contents read/write; no expiration) entered by the user on a Settings screen with a "Verify access" button. The token lives only in IndexedDB. It must never appear in source, bundle, env files, or any commit.
 - Failure visibility: the UI always shows "Last backed up <relative time> from this device"; a failed push turns this into a persistent red state with a retry action. Silent failure is a bug.
 
@@ -93,11 +95,12 @@ Phase 0 exports **all** rows regardless of owner. Phase 5 seeds only the profile
 
 ## DECISIONS — ratified before the run; phases implement these verbatim
 
-**DECISION 1 — AI features and CSP.** Keep `claude.ts` (daily insight), drop the `parse-task` edge-function path.
-- `src/services/ai.ts` `parseTowerInput()` keeps its existing local fallback as its only behaviour; the `supabase.functions.invoke` call is deleted. `explainWhyThis()` is already pure client-side and is untouched.
-- `src/services/claude.ts` stays, with `apiKey` read from IndexedDB instead of `profiles.claude_api_key`.
-- CSP `connect-src` is therefore exactly: `'self' https://api.github.com https://api.anthropic.com`.
-- `script-src 'self'`; no other host is permitted anywhere.
+**DECISION 1 — AI is on life support; full rebuild is a LATER plan.** Ratified 2026-08-23: do the bare minimum to keep the app coherent, invest nothing in AI quality now.
+- `src/services/ai.ts` `parseTowerInput()` — delete the `supabase.functions.invoke('parse-task')` call; its existing local fallback (`{ text: trimmed, status: 'active' }`) becomes its only behaviour. The Tower brain-dump keeps working, just without parsing.
+- `src/services/claude.ts` — unchanged logic. Only the key source moves: `loadApiKey()` reads from the IndexedDB `meta` store instead of `profiles.claude_api_key`. Smallest possible diff; do not redesign, do not add retries, do not change the model.
+- The existing API-key field in `SettingsView` is repointed at IndexedDB. No new AI UI.
+- CSP `connect-src` is therefore exactly: `'self' https://api.github.com https://api.anthropic.com`. `script-src 'self'`.
+- **Out of scope for this run**: any improvement to insight quality, prompt, model choice, or bringing back server-side parsing. Leave the seams obvious for the later rebuild.
 
 **DECISION 2 — Auth is removed entirely.** No login screen; the app opens straight to Today. Delete `src/services/auth.ts`, `src/store/AuthContext.tsx`, `src/components/AuthScreen.tsx`. `LoadingScreen` is kept only if the IndexedDB first-paint needs it. Safe on public Pages: no data is served by the origin — a stranger loading the URL gets an empty local app and cannot fetch anything without the PAT.
 
@@ -109,8 +112,12 @@ Phase 0 exports **all** rows regardless of owner. Phase 5 seeds only the profile
 
 > **SECURITY DEBT — act on this.** The key was pasted into a chat transcript. Rotate it in the Supabase dashboard as soon as Phase 0 has produced a verified export, and before the project is left idle. Tracked as the first item in "After the run".
 
-**DECISION 6 — Which profile(s) to seed.** *(pending ratification — see the question posed with this plan)*
-Default if unanswered: seed **`vats` only** (`ba1d1269-aa10-436b-bb42-c784c1fcbf17`). `mingz` and `mansi` are other people's accounts and are out of scope for a single-user local app; `testuser` holds 70 tower items and 42 completions that may be real early history worth merging. Phase 5 is BLOCKED until this is answered; every other phase is unaffected.
+**DECISION 6 — Seed `vats` only.** Ratified 2026-08-23: `ba1d1269-aa10-436b-bb42-c784c1fcbf17`. `testuser`, `mingz` and `mansi` are exported in Phase 0 for the record and are NOT seeded.
+Phase 5 target counts, pre-registered: habits 12 · daily_entries 9 · habit_completions 176 · tasks 0 · year_themes 1 · tower_items 84 · packs 2 · pack_sessions 18 (all 18 belong to vats-owned packs — verified) · profile 1.
+
+**DECISION 8 — Every phase runs on Opus. No Sonnet anywhere in this run.** Owner override, ratified 2026-08-23, superseding the standing Sonnet-default tiering rule in `~/.claude/CLAUDE.md` for this run only. The verification ladder is unchanged: a bigger coder does not waive the independent re-run, and seam-design phases still get the adversarial diff review.
+
+**DECISION 7 — All work lands on branch `local-first`, never `main`.** `.github/workflows/deploy.yml` fires on push to `main` and would deploy a half-migrated app over the live meridian.spiffler.xyz that is in daily use. Phase commits stay on the branch; the branch is pushed (safe — no workflow trigger); `main` is merged only after the Phase 12 acceptance drill passes.
 
 ---
 
@@ -132,16 +139,16 @@ Default if unanswered: seed **`vats` only** (`ba1d1269-aa10-436b-bb42-c784c1fcbf
 - Counts match this pre-registered baseline exactly: profiles 4 · habits 43 · daily_entries 13 · habit_completions 219 · tasks 0 · year_themes 2 · tower_items 156 · packs 3 · pack_sessions 18 · friendships 0 · activities 0. Any drift → STOP and report, do not proceed.
 - `grep -rn "sb_secret_" exports/ scripts/ 2>/dev/null | wc -l` → `0` (no credential leaked into the export or a script).
 - `profiles.json` must retain `claude_api_key` values — they are user secrets. Confirm the export repo is private before pushing: `gh repo view spiffler33/meridian-data --json isPrivate --jq .isPrivate` → `true`.
-`depends_on: []` · `weight: heavy` · `live_model: no` · `coder: sonnet` · `verify_class: complete` · `kind: recipe`
-- [ ] done
+`depends_on: []` · `weight: heavy` · `live_model: no` · `coder: opus` · `verify_class: complete` · `kind: recipe`
+- [x] done — 2cd6554 in meridian-data; counts verified against live 2026-08-23
 
 ### Phase 1 — Test harness
 **Goal**: `npm test` exists and passes, so later phases have machine-checkable criteria.
 **Scope**: `package.json`, `vitest.config.ts`, `src/lib/__tests__/smoke.test.ts`
 **Steps**: add `vitest` + `fake-indexeddb` devDeps; `"test": "vitest"` script; `vitest.config.ts` with `environment: 'jsdom'` and a setup file importing `fake-indexeddb/auto`; one smoke test.
 **Done-criteria**: `npm test -- --run` → exit 0, ≥1 test passed. `npm run build` → exit 0.
-`depends_on: []` · `weight: light` · `live_model: no` · `coder: sonnet` · `verify_class: complete` · `kind: recipe`
-- [ ] done
+`depends_on: []` · `weight: light` · `live_model: no` · `coder: opus` · `verify_class: complete` · `kind: recipe`
+- [x] done — vitest 3.2.7 (vite-5 compatible), 2/2 pass, build+tsc clean, lint unchanged at 8 pre-existing
 
 ### Phase 2 — Journal core: event model and fold
 **Goal**: the pure, dependency-free heart of the system — everything else rests on it.
@@ -158,40 +165,39 @@ Default if unanswered: seed **`vats` only** (`ba1d1269-aa10-436b-bb42-c784c1fcbf
 Tests 2–5 are acceptance C; test 7 is acceptance F.
 **Why opus**: the delete-vs-later-upsert precedence and the tie-break ordering are the two judgment calls in the whole rework, and a silent error here corrupts data irrecoverably rather than failing loudly.
 `depends_on: [1]` · `weight: heavy` · `live_model: no` · `coder: opus` · `verify_class: complete` · `kind: seam-design`
-- [ ] done
+- [x] done — 18 tests; order key now (ts,device,seq,id) after review found it non-total; deep-copy on fold
 
 ### Phase 3 — IndexedDB layer
 **Goal**: the local working copy, durable across app kill.
 **Scope**: `src/lib/db.ts`, `src/lib/db.test.ts`
 **Steps**: one database, stores `state`, `journalCache`, `outbox`, `meta` (deviceId, seq, token, lastBackupAt, lastBackupError, skippedContextPrompt, theme). Typed accessors; `nextSeq()` persists before returning. `requestPersistence()` wrapping `navigator.storage.persist()`.
 **Done-criteria**: `npm test -- --run src/lib/db.test.ts` exit 0, covering: round-trip through each store; `nextSeq()` strictly increasing across a simulated close/reopen; outbox entries survive close/reopen; `requestPersistence()` returns the boolean and never throws when the API is absent.
-`depends_on: [1]` · `weight: heavy` · `live_model: no` · `coder: sonnet` · `verify_class: sample` · `kind: recipe`
-- [ ] done
+`depends_on: [1]` · `weight: heavy` · `live_model: no` · `coder: opus` · `verify_class: sample` · `kind: recipe`
+- [x] done — 32 tests; enqueue validation, real error causes, dead-handle recovery, strict durability
 
 ### Phase 4 — GitHub contents-API sync client
 **Goal**: SHA-conditional, race-safe, idempotent transport.
 **Scope**: `src/lib/github.ts`, `src/lib/github.test.ts` (no IndexedDB imports — the token is passed in)
 **Steps**: `listJournal()`, `getFile(path)`, `putFile(path, content, sha)`, `appendLines(path, lines)`, `verifyAccess(token)`. 409/SHA mismatch → refetch and retry (bounded). Serialize every write under one Web Locks name; fall back to an in-module promise chain where `navigator.locks` is absent.
 **Done-criteria**: `npm test -- --run src/lib/github.test.ts` exit 0 with mocked `fetch`, covering: a 409 triggers exactly one refetch and the retry succeeds; a 401 surfaces a typed auth error rather than throwing raw; two concurrent `appendLines` calls to the same path issue their PUTs strictly in sequence; `listJournal` groups `YYYY-MM.<device>.jsonl` by device; the retry is bounded and gives up with a typed error.
-`depends_on: [1]` · `weight: heavy` · `live_model: no` · `coder: sonnet` · `verify_class: sample` · `kind: recipe`
-- [ ] done
+`depends_on: [1]` · `weight: heavy` · `live_model: no` · `coder: opus` · `verify_class: sample` · `kind: recipe`
+- [x] done — 38 tests; 30s abort, ratelimit vs auth, newline guard, 409-on-GET as absent
 
 ### Phase 5 — Seed journal from the Phase 0 export
 **Goal**: turn the export into `journal/YYYY-MM.seed.jsonl` so a fresh device restores real history.
 **Scope**: scratchpad transform script; writes into the `meridian-data` clone. No app code.
 **Steps**: filter every table to the `user_id`(s) named in DECISION 6 (`pack_sessions` via its parent `packs.user_id`); map the 9 ported tables to entities; `ts` from `created_at`/`updated_at` where the source has it, else a fixed floor timestamp; `device: "seed"`; `seq` monotonic in emission order; one `upsert` event per row. Skip `friendships` and `activities`. Drop the `user_id` column itself — the local model has no owner concept.
 **Done-criteria**: replay the produced file through Phase 2's `fold()` → per-entity counts exactly equal the DECISION 6 owner's row counts from the table above; `warnings[]` is empty; every line parses as JSON with all seven required event fields present; `grep -c user_id journal/*.seed.jsonl` → `0`.
-**Blocked until DECISION 6 is ratified.**
-`depends_on: [0, 2]` · `weight: light` · `live_model: no` · `coder: sonnet` · `verify_class: complete` · `kind: transcription`
-- [ ] done
+`depends_on: [0, 2]` · `weight: light` · `live_model: no` · `coder: opus` · `verify_class: complete` · `kind: transcription`
+- [x] done — ca9b1f2 in meridian-data; 303 events, all 8 entity counts exact, 1512/1512 field values verified
 
 ### Phase 6 — Domain adapter: entities and the local data API
 **Goal**: `src/services/data.ts` keeps every exported signature and stops knowing Supabase exists.
 **Scope**: `src/lib/entities.ts`, `src/services/data.ts`, `src/lib/entities.test.ts`
 **Steps**: entity definitions for the 9 ported tables; reimplement all ~35 exports against fold-state + journal appends. Preserve exactly: `getPacks()` session counts (manual aggregation), tower ordering `expects_by ASC NULLS LAST, last_touched ASC`, `sort_order` assignment for `createHabit`/`createTask`, `updateTask`'s `completed_at` set/clear side-effect, `updateTowerItem`'s `last_touched` bump, soft-delete semantics on `habits`/`packs`.
 **Done-criteria**: `npx tsc -b` exit 0; `npm test -- --run` exit 0 with tests asserting the four preserved behaviours above; `grep -c "supabase" src/services/data.ts` → `0`; every function name exported before the phase is still exported after (`node -e` diff of the export list against a pre-phase snapshot → empty).
-`depends_on: [2, 3]` · `weight: heavy` · `live_model: no` · `coder: sonnet` · `verify_class: sample` · `kind: seam-design`
-- [ ] done
+`depends_on: [2, 3]` · `weight: heavy` · `live_model: no` · `coder: opus` · `verify_class: sample` · `kind: seam-design`
+- [x] done — 65 tests; all 46 exports byte-identical; verified against the real 303-event seed
 
 ### Phase 7 — Rewire the app shell
 **Goal**: first paint from IndexedDB, no auth gate, outbox flushed on the right triggers.
@@ -202,8 +208,8 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 - *Ordering*: first paint reads IndexedDB and never awaits the network; no code path renders a spinner in place of local data.
 - *Pairing*: `AppContext`'s existing optimistic-update-then-revert behaviour on `toggleHabit`, `toggleMit`, `toggleHoliday` survives; each edit emits exactly one journal event, `initializedRef`'s once-only load stays once-only.
 **Done-criteria**: `npx tsc -b` exit 0; `npm run build` exit 0; `npm test -- --run` exit 0; `grep -rn "localStorage" src/ | wc -l` → `0`; `grep -rn "AuthContext\|AuthScreen\|services/auth" src/ | wc -l` → `0`.
-`depends_on: [6]` · `weight: heavy` · `live_model: no` · `coder: sonnet` · `verify_class: sample` · `kind: seam-design`
-- [ ] done
+`depends_on: [6]` · `weight: heavy` · `live_model: no` · `coder: opus` · `verify_class: sample` · `kind: seam-design`
+- [x] done — auth removed, first paint from IndexedDB, sync loop; 17/17 wiring mutations killed
 
 ### Phase 8 — Settings and backup visibility
 **Goal**: the user can set the device id, paste and verify the PAT, see persistence status, and can never be silently un-backed-up.
@@ -211,16 +217,16 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 **Steps**: device-id field; PAT field writing only to IndexedDB, with a "Verify access" button calling `verifyAccess()`; `navigator.storage.persist()` result displayed; iOS home-screen install instructions plus the "browser storage is the convenience copy, GitHub the durable one" explanation; always-visible "Last backed up <relative time> from this device"; failure → persistent red state with a retry action.
 **Standing invariants**: the PAT never enters a log, a URL, an error message, or the DOM as plain text after entry; `SettingsView`'s existing habit CRUD (`createHabit`/`updateHabit`/`deleteHabit`) keeps working.
 **Done-criteria**: `npx tsc -b` and `npm run build` exit 0; `npm test -- --run src/components/BackupStatus.test.tsx` exit 0 covering — renders a relative time when a backup succeeded; renders the persistent red state with a retry control after a failure and does not clear it on re-render; never renders a spinner in any state (acceptance E's UI half). `grep -rn "token" src/ | grep -i "console\." | wc -l` → `0`.
-`depends_on: [7]` · `weight: heavy` · `live_model: no` · `coder: sonnet` · `verify_class: sample` · `kind: seam-design`
-- [ ] done
+`depends_on: [7]` · `weight: heavy` · `live_model: no` · `coder: opus` · `verify_class: sample` · `kind: seam-design`
+- [x] done — backup status always visible, PAT entry + verify, device-id validation; 15/15 mutations killed
 
 ### Phase 9 — Offline shell: manifest and service worker
 **Goal**: make acceptance A physically possible.
 **Scope**: `vite.config.ts`, `package.json`, `index.html`, `public/` icons
 **Steps**: add `vite-plugin-pwa` (DECISION 3); generate `manifest.webmanifest` (name Meridian, standalone, theme `#fafaf9`); precache the built assets; register the SW from `main.tsx`; keep the existing iOS meta tags.
 **Done-criteria**: `npm run build` exit 0; `dist/sw.js` and `dist/manifest.webmanifest` both exist; `grep -c "manifest" dist/index.html` ≥ `1`; `node -e` check that the generated precache manifest lists the hashed JS and CSS entry chunks.
-`depends_on: [7]` · `weight: light` · `live_model: no` · `coder: sonnet` · `verify_class: complete` · `kind: recipe`
-- [ ] done
+`depends_on: [7]` · `weight: light` · `live_model: no` · `coder: opus` · `verify_class: complete` · `kind: recipe`
+- [x] done — vite-plugin-pwa, sw.js + manifest, precache over hashed chunks, CNAME survives
 
 ### Phase 10 — CSP and Supabase removal
 **Goal**: nothing named Supabase remains; the CSP is exactly as ratified.
@@ -233,16 +239,17 @@ Tests 2–5 are acceptance C; test 7 is acceptance F.
 - `grep -c "connect-src 'self' https://api.github.com https://api.anthropic.com" index.html` → `1`.
 - `grep -c "script-src 'self'" index.html` → `1`.
 - `grep -rn "http" dist/assets/*.js | grep -oE "https://[a-z.]+" | sort -u` contains only `api.github.com` and `api.anthropic.com`.
-`depends_on: [7, 9]` · `weight: light` · `live_model: no` · `coder: sonnet` · `verify_class: complete` · `kind: recipe`
-- [ ] done
+  - **Adjudicated 2026-08-24**: the built bundle also contains the literals `console.anthropic.com` (an `<a href>` in Settings — a user-clicked navigation, which `connect-src` does not govern) and `react.dev` (inside react-dom's error-message builder, never fetched and not removable). Verified: the app's only `fetch` call sites are `github.ts` → api.github.com and `claude.ts` → api.anthropic.com. The criterion's intent — no unexpected host is reachable — is met; its literal grep is not, and was not weakened to make it pass.
+`depends_on: [7, 9]` · `weight: light` · `live_model: no` · `coder: opus` · `verify_class: complete` · `kind: recipe`
+- [x] done — supabase/ deleted, dep removed, workflow env stripped, strict CSP added
 
 ### Phase 11 — Write `./CLAUDE.md`
 **Goal**: future sessions inherit the protocol without re-reading the code.
 **Scope**: `CLAUDE.md` (new, this repo)
 **Steps**: document event shape, the fold rule and its precedence order, repo layout of `meridian-data`, flush triggers, token handling, and the "GitHub is durable, IndexedDB is the working copy" rule.
 **Done-criteria**: `CLAUDE.md` exists and contains headings for each of: Event shape · Fold rule · Repo layout · Flush triggers · Token handling. `grep -c "supabase" CLAUDE.md` → `0` except within an explicit "removed 2026-08" historical note.
-`depends_on: [10]` · `weight: light` · `live_model: no` · `coder: sonnet` · `verify_class: prose` · `kind: transcription`
-- [ ] done
+`depends_on: [10]` · `weight: light` · `live_model: no` · `coder: opus` · `verify_class: prose` · `kind: transcription`
+- [x] done — 1799 words, all five headings, limitations carried verbatim, Supabase only as history
 
 ### Phase 12 — Acceptance drill A–F — HUMAN-GATED, `/run-plan` STOPS HERE
 Not automatable: needs a real iPhone, airplane mode, two devices, a fresh browser profile, and a deliberately revoked token. C and F are already covered by Phase 2's unit tests; the rest are hands-on.
