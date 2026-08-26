@@ -1,4 +1,4 @@
-# PLAN — Reading pane (`Read` view)
+# PLAN — Reading pane (`Read` view) — **BUILT AND DEPLOYED 2026-08-26; GATES 4 & 5 UNRUN**
 
 Meridian gains a fifth view: the reading surface for the newsletters library. Email continues unchanged as the broadcast edition; this pane is the owner's terminal. Same committed artifacts, two renderers.
 
@@ -391,3 +391,55 @@ tombstone, resurrect, reload; baseline written once, never reset, idempotent, ne
 
 **GATE 5 is unrun.** Two devices, a mark on the phone, the laptop settling after sync, and one
 baseline event in the journal — the owner's to run.
+
+### 2026-08-26 — after the plan: three gaps the email exposed
+
+The plan is built. What follows was not in it: with the pane on the live site, the owner read a
+chart in Meridian next to the same chart in the email and found the app was printing less. Auditing
+every surface against its own renderer in the newsletters repo turned up three gaps and confirmed the
+rest.
+
+**Chart — the piece, not just the picture** (`7c101b3`). Every `chart.json` carries a `post` block —
+opening paragraph, the argument under *why it's interesting*, three *table talk* questions, a
+provenance footer and the sources with links. All eighteen charts have it, same shape. The pane drew
+none of it, because phase 3's `ChartFile` type was taken from this plan and the plan only listed
+`card`. The prose was in the file the pane already fetched, already cached, the whole time. Pure
+render change: no request, no token, no transport. `post.title` and `post.subtitle` are deliberately
+unread — they repeat the card's headline and kicker, already on screen an inch above.
+
+**Tape — the trend, the resurfacing and the ledger** (`cfdff4a`). The tape is a trend instrument and
+the pane drew only this week's number. Each theme carries eight weeks in `touches` plus `first_seen`;
+`render_tape.py` draws those as eight block characters and Meridian drew nothing, so a theme climbing
+and a theme collapsing looked identical. Now: the sparkline on the edition's own rules (scaled to the
+theme's own busiest week, `·` for weeks before the theme existed — a different fact from a week with
+no touches); the resurfacing line, live like every other mark; the ledger of what was born and what
+went quiet; the masthead's figures count and new voices; and each card's age and weekly move. One
+knowing difference — the edition prints the age as "wk 12 of 12", the same number twice, so Meridian
+prints it once.
+
+**Canon — a course arrives a day at a time** (`07d221a`). A syllabus declares the whole course on day
+one; the days arrive one a morning, and that drip is the pleasure of the thing. The pane offered every
+day the syllabus named, so the Dalio course — nine declared, two written — listed nine doors, seven
+opening onto *"that day has not been synced to this device"*, which is also a lie about the device.
+The tree now says how much exists and the syllabus keeps saying how long it will be: the doc list
+reads "2 of 9 days" in flight, undelivered days stay in the outline at reduced weight marked *not
+yet* and do not navigate, landing on one by address says it has not arrived and where the course has
+got to, and the ticker walks forward only as far as the course has been delivered.
+`canonDayNumbers` is the inverse of `dayPath`, read off a filename this repo's own pipeline writes.
+
+**Audited and confirmed complete:** canon lesson bodies (`text` carries 652 words against the email
+HTML's 657 — the difference is the email footer's source URL, which exists only inside the HTML and
+would need pattern-matching to extract, so it is left), essays and raw entries (whole documents, and
+essays are never emailed at all). `slate_candidates` in `tape.json` is pipeline-internal — `render()`
+never touches it — so its absence is not a gap.
+
+**Merged to `main` and deployed** at the owner's decision, ahead of the gates rather than after them:
+testing on the real origin is a truer test than a LAN dev server (HTTPS, service worker, the phone's
+home-screen PWA), and both devices already hold the data PAT there. The one-way migration risk was
+accepted knowingly, against the migration test, the error boundary and a green suite.
+
+416 tests in 21 files. Build clean, lint at its 6 pre-existing errors, `localStorage` still 0.
+
+**GATES 4 AND 5 REMAIN UNRUN.** Shipping is not passing them. Gate 4: the owner tapping citations on
+a real device. Gate 5: two devices — mark read on the phone, watch the laptop settle, confirm the
+journal shows clean `readItem` lines and exactly one baseline event.
