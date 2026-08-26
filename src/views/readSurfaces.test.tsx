@@ -84,7 +84,32 @@ const CHART = {
       { label: 'SpaceX + OpenAI', value: '~$4tn', w: 4, group: 2 },
     ],
   },
+  // The piece the published edition prints around the picture. Every chart in
+  // the corpus carries one; the pane drew none of it until now.
+  post: {
+    title: "Three unlisted firms already worth half of 2022's Big Tech",
+    subtitle: 'Chart of the Day · 8 August 2026 · FT Lex · The Economist',
+    intro: 'A market capitalisation says what the market thinks a company is worth.',
+    why: 'Neither author is making this comparison, which is the point of putting them together.',
+    questions: [
+      '1. Does a private valuation mean the same thing as a public one?',
+      '2. What would have to be true for these two bars to swap?',
+      '3. Who is on the other side of these marks?',
+    ],
+    footer: 'Two pieces from my commonplace book, never priced against each other.',
+    sources: [
+      {
+        pre: 'FT (Lex), "Making AI pay," 10 Jun 2026 — ',
+        text: 'ft.com',
+        href: 'https://www.ft.com',
+        post: '',
+      },
+    ],
+  },
 };
+
+/** A chart whose file carries the picture and nothing else. */
+const BARE_CHART = { date: '2026-08-09', entries: [], card: CHART.card };
 
 const SYLLABUS = {
   doc_id: 'marks-sea-change',
@@ -215,6 +240,52 @@ describe('chart', () => {
     fireEvent.click(screen.getByRole('button', { name: '2026-08-08' }));
 
     expect(nav).toHaveBeenCalledWith('chart', ['2026-08-08--power']);
+  });
+
+  it('prints the piece the edition prints, in the edition\'s order', async () => {
+    const { container } = render(<ChartPane item={[]} onNavigate={nav} read={read} />);
+    await screen.findByText(/Three unlisted firms/);
+
+    expect(screen.getByText(/A market capitalisation says/)).toBeInTheDocument();
+    expect(screen.getByText("why it's interesting")).toBeInTheDocument();
+    expect(screen.getByText(/Neither author is making/)).toBeInTheDocument();
+    expect(screen.getByText('table talk')).toBeInTheDocument();
+    expect(screen.getByText(/Does a private valuation/)).toBeInTheDocument();
+    expect(screen.getByText(/Who is on the other side/)).toBeInTheDocument();
+    expect(screen.getByText(/never priced against each other/)).toBeInTheDocument();
+
+    // The order is the published one: the picture, then the opening, then the
+    // argument, then the questions.
+    const body = container.textContent ?? '';
+    expect(body.indexOf('A market capitalisation')).toBeLessThan(body.indexOf("why it's interesting"));
+    expect(body.indexOf("why it's interesting")).toBeLessThan(body.indexOf('table talk'));
+  });
+
+  it('links a source out to the browser rather than out of the app', async () => {
+    const { container } = render(<ChartPane item={[]} onNavigate={nav} read={read} />);
+    await screen.findByText(/Three unlisted firms/);
+
+    const link = screen.getByRole('link', { name: 'ft.com' });
+    expect(link).toHaveAttribute('href', 'https://www.ft.com');
+    // A home-screen PWA has no address bar; a same-window navigation would
+    // strand the owner outside the app.
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    // The citation reads as one line: the text before the link, the link, and
+    // whatever follows it.
+    expect(container.textContent).toContain('FT (Lex), "Making AI pay," 10 Jun 2026 — ft.com');
+  });
+
+  it('is still a chart when the file carries no prose at all', async () => {
+    await cache('state/charts/2026-08-08--power/chart.json', JSON.stringify(BARE_CHART), 'c1');
+
+    render(<ChartPane item={['2026-08-08--power']} onNavigate={nav} read={read} />);
+
+    expect(await screen.findByText(/Three unlisted firms/)).toBeInTheDocument();
+    expect(screen.getByText('~$24tn')).toBeInTheDocument();
+    expect(screen.queryByText("why it's interesting")).not.toBeInTheDocument();
+    expect(screen.queryByText('table talk')).not.toBeInTheDocument();
+    expect(screen.queryByText('sources')).not.toBeInTheDocument();
   });
 
   it('names the file when one of the sixteen is malformed', async () => {

@@ -28,9 +28,11 @@ import {
   MarkRead,
   Note,
   Notice,
+  OutLink,
   Pending,
   Rail,
   RailItem,
+  SectionLabel,
   SrcLine,
   type SurfaceRead,
 } from '../components/readUi';
@@ -284,6 +286,23 @@ interface ChartFile {
     note?: string;
     bars?: { label?: string; value?: string; w?: number; group?: number }[];
   };
+  /**
+   * Everything the published edition prints around the chart.
+   *
+   * `card` is the picture; this is the piece. The pane drew only the picture
+   * until now because the plan's shape for this file only listed `card` — the
+   * prose was in every chart the whole time, in the file the pane already
+   * fetches. `title` and `subtitle` are deliberately not read: they repeat the
+   * card's headline and kicker, which are already on screen above.
+   */
+  post?: {
+    intro?: string;
+    why?: string;
+    questions?: string[];
+    footer?: string;
+    /** `pre` and `post` are the text either side of the linked publication. */
+    sources?: { pre?: string; text?: string; href?: string; post?: string }[];
+  };
 }
 
 const GROUP_TONE = ['bg-sp-amber', 'bg-sp-green', 'bg-sp-ice'];
@@ -306,6 +325,9 @@ export function ChartPane({ item, onNavigate, read }: SurfaceProps) {
 
   const card = chart.value?.card;
   const bars = card?.bars ?? [];
+  const post = chart.value?.post;
+  const questions = post?.questions ?? [];
+  const sources = post?.sources ?? [];
   // `w` is the quantity itself, not a percentage — the widest bar sets the
   // scale, so a chart of trillions and a chart of vessels per day both draw.
   const widest = bars.reduce((most, bar) => Math.max(most, bar.w ?? 0), 0);
@@ -363,6 +385,50 @@ export function ChartPane({ item, onNavigate, read }: SurfaceProps) {
           </div>
 
           {card.note && <Note>{card.note}</Note>}
+
+          {/* The piece, in the order the published edition prints it: the
+              opening, the argument, the three questions, then where the
+              numbers came from. Every part is optional and absent renders as
+              absent — a chart whose file carries no prose is still a chart. */}
+          {post?.intro && <p className="prose-read mt-5 text-sp-ink">{post.intro}</p>}
+
+          {post?.why && (
+            <>
+              <SectionLabel>why it's interesting</SectionLabel>
+              <p className="prose-read text-sp-ink">{post.why}</p>
+            </>
+          )}
+
+          {questions.length > 0 && (
+            <>
+              <SectionLabel>table talk</SectionLabel>
+              {questions.map((question, index) => (
+                <p key={index} className="prose-read mb-[10px] text-sp-muted last:mb-0">
+                  {question}
+                </p>
+              ))}
+            </>
+          )}
+
+          {sources.length > 0 && (
+            <>
+              <SectionLabel>sources</SectionLabel>
+              {sources.map((source, index) => (
+                <p key={index} className="prose-read mb-[6px] text-[14px] text-sp-muted last:mb-0">
+                  {source.pre ?? ''}
+                  {source.href && source.text ? (
+                    <OutLink href={source.href}>{source.text}</OutLink>
+                  ) : (
+                    (source.text ?? '')
+                  )}
+                  {source.post ?? ''}
+                </p>
+              ))}
+            </>
+          )}
+
+          {post?.footer && <Note>{post.footer}</Note>}
+
           <SrcLine>
             {card.srcline ?? 'src'}
             {chart.value?.entries?.length ? (

@@ -34,6 +34,42 @@ export function Headline({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * The name of a section inside a card — "why it's interesting", "table talk".
+ *
+ * The published edition sets these as headings. Here they are instrument type
+ * rather than reading type on purpose: they label the prose, they are not part
+ * of it, and a serif heading every two paragraphs would make one chart read as
+ * four documents.
+ */
+export function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mb-[6px] mt-5 font-mono text-[10px] uppercase tracking-[0.22em] text-sp-faint">
+      {children}
+    </div>
+  );
+}
+
+/**
+ * A link out of the corpus.
+ *
+ * Opens in the browser rather than in this window: on the phone this app is a
+ * home-screen PWA with no address bar, so a same-window navigation to a
+ * publication strands the owner outside the app with no way back.
+ */
+export function OutLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-sp-ice underline underline-offset-2"
+    >
+      {children}
+    </a>
+  );
+}
+
 export function SrcLine({ children }: { children: React.ReactNode }) {
   return (
     <div className="mt-[14px] border-t border-sp-hair pt-3 font-mono text-[10.5px] leading-[1.7] text-sp-faint">
