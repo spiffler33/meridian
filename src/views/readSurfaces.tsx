@@ -134,7 +134,10 @@ interface TapeRow {
   display_name?: string;
   label?: string;
   state?: string;
+  /** One count per week in `weeks`, oldest first. The sparkline is this. */
   touches?: number[];
+  /** The week this theme was first seen. Weeks before it never existed. */
+  first_seen?: string;
   this_window?: number;
   delta?: number;
   source_chips?: string[];
@@ -145,13 +148,84 @@ interface TapeCard extends TapeRow {
   stance_right?: string;
   pressure_text?: string;
   evidence?: { text?: string; slug?: string; citation?: string }[];
+  /** An older entry this week's reading pulled back up. */
+  resurfacing?: { slug?: string; text?: string };
 }
 
 interface TapeFile {
   window?: { key?: string; start?: string; end?: string };
-  stats?: { entries_in?: number; sources_in?: number; figures_in?: number };
+  stats?: {
+    entries_in?: number;
+    sources_in?: number;
+    figures_in?: number;
+    new_voices?: string[];
+  };
+  /** The eight week-start dates the `touches` arrays are counted over. */
+  weeks?: string[];
+  /** The day the tape was cut. What a theme's age is measured back from. */
+  run_date?: string;
   tape?: TapeRow[];
   cards?: TapeCard[];
+  /** What entered the tape this week and what went quiet. */
+  ledger?: {
+    born?: { id?: string; display_name?: string; label?: string; note?: string }[];
+    quiet?: { labels?: string; note?: string }[];
+  };
+}
+
+/** Eight levels of block, index 0 being alive but untouched. */
+const SPARK_BLOCKS = '▁▂▃▄▅▆▇█';
+
+/** A week before the theme existed. Not a zero — there was nothing to count. */
+const SPARK_UNBORN = '·';
+
+/**
+ * Eight weeks of a theme, as eight characters.
+ *
+ * The tape is a trend instrument and this is the trend: one block per week,
+ * scaled against the theme's own busiest week rather than the tape's, so a
+ * quiet theme still shows its own shape. The published edition draws exactly
+ * this, so the two readings of one tape agree.
+ *
+ * A week before `first_seen` is a middle dot, not a low block: the theme did
+ * not exist, which is a different fact from a week in which nothing touched it.
+ *
+ * Ties round up here and to even in the edition's Python, so one week in a
+ * hundred can sit one block apart between the two. Blocks, not numbers.
+ */
+function sparkline(
+  touches: readonly number[],
+  weeks: readonly string[],
+  firstSeen: string | undefined
+): string {
+  let busiest = 0;
+  for (const count of touches) if (count > busiest) busiest = count;
+
+  let out = '';
+  for (let index = 0; index < touches.length; index += 1) {
+    const week = weeks[index];
+    if (firstSeen !== undefined && week !== undefined && week < firstSeen.slice(0, 10)) {
+      out += SPARK_UNBORN;
+      continue;
+    }
+    const count = touches[index];
+    if (!Number.isFinite(count) || count <= 0) {
+      out += SPARK_BLOCKS[0];
+      continue;
+    }
+    const level = busiest > 0 ? Math.max(1, Math.min(7, Math.round((count / busiest) * 7))) : 1;
+    out += SPARK_BLOCKS[level];
+  }
+  return out;
+}
+
+/** How many weeks a theme has been on the tape, counting the week it was cut. */
+function weeksSince(firstSeen: string | undefined, runDate: string | undefined): number | null {
+  if (firstSeen === undefined || runDate === undefined) return null;
+  const born = Date.parse(`${firstSeen.slice(0, 10)}T00:00:00Z`);
+  const cut = Date.parse(`${runDate.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(born) || Number.isNaN(cut)) return null;
+  return Math.max(0, Math.floor((cut - born) / 86_400_000 / 7) + 1);
 }
 
 const STATE_TONE: Record<string, string> = {
@@ -181,6 +255,10 @@ export function TapePane({ onNavigate, read }: SurfaceProps) {
 
   const rows = value.tape ?? [];
   const cards = value.cards ?? [];
+  const weeks = value.weeks ?? [];
+  const voices = value.stats?.new_voices ?? [];
+  const born = value.ledger?.born ?? [];
+  const quiet = value.ledger?.quiet ?? [];
   // The window is the readable item, not the card: the tape is published once
   // a week and read once a week.
   const key = readItemKey('tape', value.window?.key ?? 'tape');
@@ -196,10 +274,19 @@ export function TapePane({ onNavigate, read }: SurfaceProps) {
         </span>
         {typeof value.stats?.entries_in === 'number' && (
           <span className="tabular-nums">
-            {value.stats.entries_in} entries · {value.stats.sources_in ?? 0} sources
+            {value.stats.entries_in} entries · {value.stats.sources_in ?? 0} sources ·{' '}
+            {value.stats.figures_in ?? 0} figures
           </span>
         )}
       </div>
+
+      {/* Who is new to the corpus this week. The edition prints it on the
+          masthead; on a phone it needs its own line. */}
+      {voices.length > 0 && (
+        <div className="mb-4 -mt-2 font-mono text-[10.5px] text-sp-faint">
+          {voices.length} new voice{voices.length === 1 ? '' : 's'}: {voices.join(', ')}
+        </div>
+      )}
 
       {rows.length > 0 && (
         <div className="mb-5 border-y border-sp-hair py-1">
@@ -210,6 +297,11 @@ export function TapePane({ onNavigate, read }: SurfaceProps) {
             >
               <span className="truncate text-sp-muted">{row.display_name ?? row.id ?? '—'}</span>
               <span className="flex flex-shrink-0 items-baseline gap-2 tabular-nums">
+                {row.touches?.length ? (
+                  <span className="tracking-[0.02em] text-sp-ice">
+                    {sparkline(row.touches, weeks, row.first_seen)}
+                  </span>
+                ) : null}
                 {typeof row.this_window === 'number' && (
                   <span className="text-sp-faint">{row.this_window}</span>
                 )}
@@ -228,6 +320,26 @@ export function TapePane({ onNavigate, read }: SurfaceProps) {
             {card.state ? ` · ${card.state}` : ''}
             {card.source_chips?.length ? ` · ${card.source_chips.join(' ')}` : ''}
           </Kicker>
+          {/* The card's own eight weeks, the count this one, and how long the
+              theme has been running. The edition carries all three on one line
+              under the header. */}
+          {card.touches?.length ? (
+            <div className="mb-2 flex flex-wrap items-baseline gap-x-2 font-mono text-[10.5px] text-sp-faint">
+              <span className="tracking-[0.02em] text-sp-ice">
+                {sparkline(card.touches, weeks, card.first_seen)}
+              </span>
+              <span className="tabular-nums">
+                {card.this_window ?? 0} touch{card.this_window === 1 ? '' : 'es'} this wk
+                {signed(card.delta) ? ` (${signed(card.delta)})` : ''}
+              </span>
+              {weeksSince(card.first_seen, value.run_date) !== null && (
+                <span className="tabular-nums">
+                  · wk {weeksSince(card.first_seen, value.run_date)}
+                </span>
+              )}
+            </div>
+          ) : null}
+
           {card.label && <Headline>{card.label}</Headline>}
 
           {card.stance_left && <p className="prose-read mt-3 text-sp-ink">{card.stance_left}</p>}
@@ -240,6 +352,21 @@ export function TapePane({ onNavigate, read }: SurfaceProps) {
             </>
           )}
           {card.pressure_text && <Note>{card.pressure_text}</Note>}
+
+          {/* An older entry this week pulled back up — the thing the tape is
+              for. It taps into the entry like any other mark. */}
+          {card.resurfacing?.slug && (
+            <div className="mt-3 font-mono text-[10.5px] leading-[1.6] text-sp-amber">
+              <span className="mr-1">↞ resurfaces:</span>
+              <CiteChip
+                citation={{ grammar: 'slug', slug: card.resurfacing.slug }}
+                onOpen={open}
+              />
+              {card.resurfacing.text && (
+                <span className="ml-1 text-sp-muted">“{card.resurfacing.text}”</span>
+              )}
+            </div>
+          )}
 
           {card.evidence?.length ? (
             <SrcLine>
@@ -265,6 +392,37 @@ export function TapePane({ onNavigate, read }: SurfaceProps) {
           ) : null}
         </Card>
       ))}
+
+      {/* What entered the tape this week and what stopped moving. The edition
+          closes on it, because a theme arriving is news and a theme going
+          quiet is the other half of the same reading. */}
+      {(born.length > 0 || quiet.length > 0) && (
+        <div className="mt-5 border-t border-sp-hair pt-4">
+          <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.22em] text-sp-faint">
+            the ledger — born &amp; gone quiet
+          </div>
+          <div className="font-mono text-[10.5px] leading-[1.9]">
+            {born.map((entry, index) => (
+              <div key={`born-${index}`} className="flex gap-2">
+                <span className="flex-shrink-0 text-sp-amber">● born</span>
+                <span className="text-sp-muted">
+                  {entry.display_name ?? entry.label ?? entry.id ?? '—'}
+                  {entry.note ? ` — ${entry.note}` : ''}
+                </span>
+              </div>
+            ))}
+            {quiet.map((entry, index) => (
+              <div key={`quiet-${index}`} className="flex gap-2">
+                <span className="flex-shrink-0 text-sp-ice">○ quiet</span>
+                <span className="text-sp-muted">
+                  {entry.labels ?? '—'}
+                  {entry.note ? ` — ${entry.note}` : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <MarkRead read={read.isRead(key)} onToggle={() => read.toggle(key)} />
     </>

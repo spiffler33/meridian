@@ -41,11 +41,35 @@ const TREE = [
 /** `<slug> | <what the piece says>`, joined against the tree. */
 const GISTS = '2025-09-16--oracle | The backlog is the size of a small country.';
 
+/** Eight week-starts, the axis every `touches` array is counted over. */
+const WEEKS = [
+  '2026-07-06',
+  '2026-07-13',
+  '2026-07-20',
+  '2026-07-27',
+  '2026-08-03',
+  '2026-08-10',
+  '2026-08-17',
+  '2026-08-24',
+];
+
 const TAPE = {
   window: { key: '2026-W34', start: '2026-08-17', end: '2026-08-23' },
-  stats: { entries_in: 30, sources_in: 12 },
+  stats: { entries_in: 30, sources_in: 12, figures_in: 29, new_voices: ['Sport Money'] },
+  weeks: WEEKS,
+  run_date: '2026-08-23',
   tape: [
-    { id: 'rates', display_name: 'CENTRAL BANKS', state: 'COOLING', this_window: 8, delta: -3 },
+    {
+      id: 'rates',
+      display_name: 'CENTRAL BANKS',
+      state: 'COOLING',
+      this_window: 8,
+      delta: -3,
+      // Born in the fourth week, so the first three never existed. Busiest
+      // week is 8, which is what the rest scale against.
+      touches: [0, 0, 0, 1, 4, 8, 2, 0],
+      first_seen: '2026-07-27',
+    },
     { id: 'power', display_name: 'POWER', state: 'HOT', this_window: 6, delta: 2 },
   ],
   cards: [
@@ -55,9 +79,17 @@ const TAPE = {
       label: 'Bonds and central banks in the inflation re-run',
       state: 'COOLING',
       source_chips: ['FT', 'ECON'],
+      this_window: 8,
+      delta: -3,
+      touches: [0, 0, 0, 1, 4, 8, 2, 0],
+      first_seen: '2026-07-27',
       stance_left: "Bessent's interventions are working.",
       stance_right: 'This is yield-curve control by another name.',
       pressure_text: 'Whether the buyback playbook is stabilising.',
+      resurfacing: {
+        slug: '2025-09-16--oracle',
+        text: 'the same defence, a year earlier',
+      },
       evidence: [
         {
           text: "The BoJ's yen defence may have spent more than $95bn.",
@@ -68,7 +100,14 @@ const TAPE = {
     },
     { id: 'bare' },
   ],
+  ledger: {
+    born: [{ id: 'sport', display_name: 'SPORT MONEY', note: 'private equity buys a league' }],
+    quiet: [{ labels: 'CRYPTO RAILS', note: 'nothing for three weeks' }],
+  },
 };
+
+/** A tape cut before any of this was in the file. */
+const BARE_TAPE = { window: TAPE.window, stats: { entries_in: 4 }, tape: [], cards: [] };
 
 const CHART = {
   date: '2026-08-08',
@@ -202,7 +241,7 @@ describe('tape', () => {
     render(<TapePane item={[]} onNavigate={nav}  read={read} />);
 
     expect(await screen.findByText(/2026-W34/)).toBeInTheDocument();
-    expect(screen.getByText('30 entries · 12 sources')).toBeInTheDocument();
+    expect(screen.getByText('30 entries · 12 sources · 29 figures')).toBeInTheDocument();
     expect(screen.getByText('Bonds and central banks in the inflation re-run')).toBeInTheDocument();
     expect(screen.getByText("Bessent's interventions are working.")).toBeInTheDocument();
     expect(screen.getByText('This is yield-curve control by another name.')).toBeInTheDocument();
@@ -210,6 +249,63 @@ describe('tape', () => {
     // lands on rides in the title rather than in the line.
     const chip = screen.getByRole('button', { name: '2026-08-13--yen-carry' });
     expect(chip).toHaveAttribute('title', '2026-08-13--yen-carry §may have spent');
+  });
+
+  it('draws eight weeks as eight characters, the edition\'s own scale', async () => {
+    render(<TapePane item={[]} onNavigate={nav} read={read} />);
+    await screen.findByText(/2026-W34/);
+
+    // Born in the fourth week, so the first three are middle dots — the theme
+    // did not exist, which is not the same fact as a week with no touches.
+    // The rest scale against the theme's own busiest week, not the tape's.
+    expect(screen.getAllByText('···▂▅█▃▁')).toHaveLength(2);
+  });
+
+  it('says how the week moved and how long the theme has run', async () => {
+    render(<TapePane item={[]} onNavigate={nav} read={read} />);
+    await screen.findByText(/2026-W34/);
+
+    expect(screen.getByText(/8 touches this wk \(-3\)/)).toBeInTheDocument();
+    expect(screen.getByText(/wk 4/)).toBeInTheDocument();
+  });
+
+  it('carries the figures count and who is new to the corpus', async () => {
+    render(<TapePane item={[]} onNavigate={nav} read={read} />);
+
+    expect(await screen.findByText(/30 entries · 12 sources · 29 figures/)).toBeInTheDocument();
+    expect(screen.getByText('1 new voice: Sport Money')).toBeInTheDocument();
+  });
+
+  it('shows what an entry resurfaced, and taps into it', async () => {
+    render(<TapePane item={[]} onNavigate={nav} read={read} />);
+    await screen.findByText(/2026-W34/);
+
+    expect(screen.getByText(/↞ resurfaces/)).toBeInTheDocument();
+    expect(screen.getByText(/the same defence, a year earlier/)).toBeInTheDocument();
+
+    // The slug is a live mark like every other one on this surface.
+    fireEvent.click(screen.getByRole('button', { name: '2025-09-16--oracle' }));
+    expect(nav).toHaveBeenCalledWith('raw', ['2025-09-16--oracle']);
+  });
+
+  it('closes on the ledger — what was born and what went quiet', async () => {
+    render(<TapePane item={[]} onNavigate={nav} read={read} />);
+    await screen.findByText(/2026-W34/);
+
+    expect(screen.getByText('the ledger — born & gone quiet')).toBeInTheDocument();
+    expect(screen.getByText(/SPORT MONEY — private equity buys a league/)).toBeInTheDocument();
+    expect(screen.getByText(/CRYPTO RAILS — nothing for three weeks/)).toBeInTheDocument();
+  });
+
+  it('is still a tape when the file carries none of it', async () => {
+    await cache('state/tape.json', JSON.stringify(BARE_TAPE), 'tape1');
+
+    render(<TapePane item={[]} onNavigate={nav} read={read} />);
+
+    expect(await screen.findByText(/2026-W34/)).toBeInTheDocument();
+    expect(screen.queryByText(/the ledger/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/new voice/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/resurfaces/)).not.toBeInTheDocument();
   });
 
   it('renders a card with almost nothing in it as absent, never as "undefined"', async () => {
