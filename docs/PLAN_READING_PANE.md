@@ -1,4 +1,4 @@
-# PLAN — Reading pane (`Read` view) — **COMPLETE 2026-08-26. All phases shipped, both gates passed.**
+# PLAN — Reading pane (`Read` view) — **COMPLETE 2026-08-26. All phases shipped, both gates passed. Brief surface added after, same day.**
 
 Meridian gains a fifth view: the reading surface for the newsletters library. Email continues unchanged as the broadcast edition; this pane is the owner's terminal. Same committed artifacts, two renderers.
 
@@ -465,5 +465,46 @@ mark is a single clean `upsert` keyed `<surface>:<itemKey>` exactly as Appendix 
 only `read_at`. No stray events, no duplicates, no second baseline.
 
 Nothing on this plan is outstanding. `ideas.json`, search, AI and the `.queue/` surfaces were always
-out of scope and get their own plans; the morning-brief surface is its own small one and is blocked
-on the newsletters side.
+out of scope and get their own plans. The morning-brief surface is its own small one — and it turned
+out not to be blocked at all; it shipped the same day, below.
+
+### 2026-08-26 — after the plan: the Brief surface, a sixth tab
+
+The pipeline commits `state/briefs/<DATE>.md`, one a morning, and nothing in Meridian read them. Now
+the pane does, and the tab sits first in the rail because a brief is the most perishable thing in
+the corpus.
+
+**Fetching.** `state/briefs/` joins `STATE_TIER` in `newslettersSync.ts`, and `briefDates` /
+`briefPath` in `newslettersRead.ts` are the path selectors beside `chartIds`, `canonDocIds` and
+`essaySlugs`. A brief is named for the day it covers, so the filename is the whole identity of the
+thing — no slug, no directory — and the date list is the tree, not a fetch. A device that has listed
+the repo but not pulled the markdown still knows it is a day behind.
+
+**Rendering.** `BriefPane` in `readSurfaces.tsx` is the essay pane's shape: a date list, then one
+document through `parseMarkdown` → `bodyBlocks` → `Markdown`. The file is markdown with YAML
+frontmatter, headings and market tables, all of which the parser already had. Checked against the
+real committed brief rather than a fixture: 18 KB parses to a title, 31 body blocks and no
+footnotes, with the H1 that repeats the frontmatter title dropped exactly once.
+
+**The source marks stay prose — the owner's call, and the fence's.** Briefs write their sources
+inside sentences rather than as footnote definitions or a field, and only one of the seven marks in
+the first brief is even an address (`raw/…md §"…"`); the rest are prose like
+`[source: FirstFT Asia 2026-08-25T22:02Z]`. Pulling an address out of running prose is
+pattern-matching over natural language, which this codebase does not do. So a mark on this surface
+is what it says. They become chips like every other surface only if the pipeline emits them
+structurally — real `[^n]` footnotes or a sidecar — and that is a change to the newsletters side,
+not a parser here.
+
+**Read-state.** Key is `brief:<date>`, so a brief joins the backlog like the tape and the charts.
+Unlike them it also counts in the instrument: the tape and the charts are digests of the entries
+below them and adding them would count one week's reading three times, while a brief sweeps threads
+that never land in `raw/` and carries the book and the market. An unread brief is a fourth thing
+owed, not a fourth count of three.
+
+**One thing to expect on the first open.** `syncNewsletters` stops at the head check when the
+newsletters repo has not moved, so a device that already synced will not fetch the new tier path
+until the next commit lands there. The tab lists the dates from the cached tree and says the file
+has not been synced yet. It self-heals on the pipeline's next commit, which is daily.
+
+422 tests in 21 files (416 before). Build clean, lint at its 6 pre-existing errors, `localStorage`
+still 0.

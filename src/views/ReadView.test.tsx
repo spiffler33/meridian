@@ -16,7 +16,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
-import { closeDb, putCachedFile } from '../lib/db';
+import { closeDb, putCachedFile, setMeta } from '../lib/db';
 import { resetSession } from '../lib/entities';
 import type { NewslettersView } from '../hooks/useNewsletters';
 import type { LibraryEntry } from '../lib/newslettersSync';
@@ -252,6 +252,18 @@ describe('the instrument', () => {
     expect(screen.getByText('Drifting')).toBeInTheDocument();
   });
 
+  it('counts an unread brief alongside the corpus', async () => {
+    // The tape and the charts are digests of the entries below them and stay
+    // out of the instrument. A brief is not: it sweeps threads that never
+    // land in raw/ and carries the book, so it is a fourth thing owed rather
+    // than a fourth count of three.
+    await setMeta('nlTree', [{ path: 'state/briefs/2026-08-25.md', sha: 'b1', size: 1 }]);
+    await seedBaseline('2026-08-16T00:00:00.000Z');
+    show('library');
+
+    expect(await screen.findByText(`${ENTRIES.length + 1} unread`)).toBeInTheDocument();
+  });
+
   it('leaves everything the baseline covers out of the backlog', async () => {
     await seedBaseline('2026-08-19T12:00:00.000Z');
     show('library');
@@ -334,10 +346,24 @@ describe('the tab rail ticks', () => {
     const library_ = await screen.findByRole('tab', { name: /Library/ });
     await waitFor(() => expect(library_.textContent).toBe(`Library${ENTRIES.length}`));
 
-    // Nothing is synced in this file, so the tape and the charts have no
-    // dated material at all — and a tab with no backlog carries no tick.
+    // Nothing is synced in this file, so the tape, the charts and the briefs
+    // have no dated material at all — and a tab with no backlog carries no
+    // tick.
     expect(screen.getByRole('tab', { name: /Canon/ }).textContent).toBe('Canon');
     expect(screen.getByRole('tab', { name: /Essays/ }).textContent).toBe('Essays');
     expect(screen.getByRole('tab', { name: /Tape/ }).textContent).toBe('Tape');
+    expect(screen.getByRole('tab', { name: /Brief/ }).textContent).toBe('Brief');
+  });
+
+  it('ticks the brief tab from the tree, with no brief file fetched at all', async () => {
+    // The dates are the filenames, so which briefs exist is a property of the
+    // tree. A device that has listed the repo but not yet pulled the markdown
+    // still knows it is a day behind.
+    await setMeta('nlTree', [{ path: 'state/briefs/2026-08-25.md', sha: 'b1', size: 1 }]);
+    await seedBaseline('2026-08-16T00:00:00.000Z');
+    show('library');
+
+    const brief = await screen.findByRole('tab', { name: /Brief/ });
+    await waitFor(() => expect(brief.textContent).toBe('Brief1'));
   });
 });

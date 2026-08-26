@@ -53,6 +53,7 @@ const TREE: TreeEntry[] = [
   file('raw/2026-08-21--lex-asia/figures.md', 'f2'),
   file('state/gists.md', 'g1'),
   file('state/tape.json', 't1'),
+  file('state/briefs/2026-08-25.md', 'b1'),
   file('state/charts/2026-08-08--power/chart.json', 'c1'),
   file('state/canon/lessons/marks-sea-change/day-01.json', 'n1'),
   file('wiki/essays/2026-07-07--bubble.md', 'w1'),
@@ -98,6 +99,7 @@ describe('the state tier', () => {
     expect(selectStateTier(TREE).map(entry => entry.path)).toEqual([
       'state/gists.md',
       'state/tape.json',
+      'state/briefs/2026-08-25.md',
       'state/charts/2026-08-08--power/chart.json',
       'state/canon/lessons/marks-sea-change/day-01.json',
       'wiki/essays/2026-07-07--bubble.md',
@@ -224,7 +226,7 @@ describe('syncing', () => {
 
     const result = await syncNewsletters(TOKEN);
 
-    expect(result).toEqual({ changed: true, fetched: 5, head: 'head-2' });
+    expect(result).toEqual({ changed: true, fetched: 6, head: 'head-2' });
     expect(await getMeta('nlHeadSha')).toBe('head-2');
     expect((await getCachedContent('state/gists.md'))?.text).toBe('body:g1');
   });
@@ -274,7 +276,7 @@ describe('syncing', () => {
 
     const result = await syncNewsletters(TOKEN);
 
-    expect(result.fetched).toBe(5);
+    expect(result.fetched).toBe(6);
     expect(await getMeta('nlHeadSha')).toBe('head-2');
   });
 

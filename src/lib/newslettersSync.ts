@@ -29,6 +29,7 @@ import { getBlob, getHeadSha, getTree, type TreeEntry } from './newsletters';
 const STATE_TIER = [
   'state/gists.md',
   'state/tape.json',
+  'state/briefs/',
   'state/charts/',
   'state/canon/',
   'wiki/essays/',

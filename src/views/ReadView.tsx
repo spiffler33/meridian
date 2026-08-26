@@ -16,10 +16,11 @@ import type { SurfaceRead } from '../components/readUi';
 import { useAsync } from '../hooks/useAsync';
 import { useNewsletters, type NewslettersView } from '../hooks/useNewsletters';
 import { useReadState } from '../hooks/useReadState';
-import { TAPE_PATH, cachedJson, cachedTree, chartIds } from '../lib/newslettersRead';
+import { TAPE_PATH, briefDates, cachedJson, cachedTree, chartIds } from '../lib/newslettersRead';
 import type { ReadableItem } from '../lib/readState';
 import { readItemKey } from '../services/data';
 import {
+  BriefPane,
   CanonPane,
   ChartPane,
   EssayPane,
@@ -36,6 +37,7 @@ interface ReadViewProps {
 }
 
 const TABS: { surface: ReadSurface; label: string }[] = [
+  { surface: 'brief', label: 'Brief' },
   { surface: 'tape', label: 'Tape' },
   { surface: 'chart', label: 'Chart' },
   { surface: 'canon', label: 'Canon' },
@@ -51,24 +53,32 @@ interface TapeWindow {
 /**
  * The dated material, keyed the way the journal keys it.
  *
- * Only these three surfaces can be behind: an entry, a weekly tape, a chart.
- * The canon is a course and the wiki is a reference — neither carries a date
- * and neither is a queue, so neither appears here and neither ever alarms.
+ * Only these four surfaces can be behind: an entry, a daily brief, a weekly
+ * tape, a chart. The canon is a course and the wiki is a reference — neither
+ * carries a date and neither is a queue, so neither appears here and neither
+ * ever alarms.
  *
  * Read from the same cache the panes read, so it costs no network and answers
  * in airplane mode.
  */
-async function loadDated(): Promise<{ tape: ReadableItem[]; chart: ReadableItem[] }> {
+async function loadDated(): Promise<{
+  brief: ReadableItem[];
+  tape: ReadableItem[];
+  chart: ReadableItem[];
+}> {
   const [tape, tree] = await Promise.all([cachedJson<TapeWindow>(TAPE_PATH), cachedTree()]);
+  const paths = tree.map(file => file.path);
 
   const key = tape?.window?.key ?? null;
   return {
+    // A brief is named for the day it covers, so the id is the date.
+    brief: briefDates(paths).map(date => ({ key: readItemKey('brief', date), date })),
     tape:
       key === null
         ? []
         : [{ key: readItemKey('tape', key), date: tape?.window?.end ?? null }],
     // A chart id leads with its date, which is the date of the chart.
-    chart: chartIds(tree.map(file => file.path)).map(id => ({
+    chart: chartIds(paths).map(id => ({
       key: readItemKey('chart', id),
       date: id.slice(0, 10),
     })),
@@ -204,15 +214,25 @@ export function ReadView({ surface, item, onSurfaceChange, onNavigate }: ReadVie
     date: row.date.length > 0 ? row.date : null,
   }));
 
-  // The wave reports the entries, which are the corpus. The tape and the
-  // charts are digests of those same entries, so adding them would count one
-  // week's reading three times; their own backlog is on their own tab.
-  const unread = read.unread(entries);
+  const entryUnread = read.unread(entries);
+  const briefUnread = read.unread(dated.value?.brief ?? []);
+
+  // The wave reports the entries, which are the corpus, plus the briefs. The
+  // tape and the charts are digests of those same entries, so adding them
+  // would count one week's reading three times; their own backlog is on their
+  // own tab. A brief is the one dated digest that is not made of the corpus
+  // below it — it sweeps threads that never land in raw/, and carries the book
+  // and the market — so an unread one is a thing genuinely still owed.
+  // Both are null together — a null is "no baseline yet", which is a property
+  // of the device and not of either list.
+  const unread =
+    entryUnread === null || briefUnread === null ? null : entryUnread + briefUnread;
 
   const ticks: Partial<Record<ReadSurface, number | null>> = {
+    brief: briefUnread,
     tape: read.unread(dated.value?.tape ?? []),
     chart: read.unread(dated.value?.chart ?? []),
-    library: unread,
+    library: entryUnread,
   };
 
   return (
@@ -243,6 +263,7 @@ export function ReadView({ surface, item, onSurfaceChange, onNavigate }: ReadVie
       </div>
 
       <div role="tabpanel">
+        {surface === 'brief' && <BriefPane item={item} onNavigate={onNavigate} read={read} />}
         {surface === 'tape' && <TapePane item={item} onNavigate={onNavigate} read={read} />}
         {surface === 'chart' && <ChartPane item={item} onNavigate={onNavigate} read={read} />}
         {surface === 'canon' && <CanonPane item={item} onNavigate={onNavigate} read={read} />}

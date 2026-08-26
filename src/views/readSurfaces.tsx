@@ -1,5 +1,5 @@
 /**
- * The four committed surfaces, plus the source reader they all point at.
+ * The five committed surfaces, plus the source reader they all point at.
  *
  * Every one of these renders what the pipeline already committed — the same
  * artifacts the email edition is built from, drawn for a screen the owner
@@ -49,6 +49,8 @@ import {
 import { bodyBlocks, inlineText, parseMarkdown } from '../lib/markdown';
 import {
   TAPE_PATH,
+  briefDates,
+  briefPath,
   cachedJson,
   cachedText,
   cachedTree,
@@ -124,6 +126,88 @@ function Unsynced({ what }: { what: string }) {
 function Trouble({ error }: { error: unknown }) {
   const { what, detail } = describeReadFailure(error);
   return <Failed what={what} detail={detail} />;
+}
+
+// ---------------------------------------------------------------------------
+// Brief
+// ---------------------------------------------------------------------------
+
+/**
+ * The morning brief — one markdown file a day, rendered whole.
+ *
+ * There is no renderer to diff against here: the pipeline commits the brief as
+ * prose and the prose is the edition. So the pane prints the document, and the
+ * only thing it adds is the date rail and the mark.
+ *
+ * The source marks the brief carries inside its sentences stay prose. They are
+ * written in running text rather than in footnote definitions or a field, and
+ * lifting an address out of a sentence is pattern-matching over language —
+ * which this codebase does not do. When the pipeline emits them structurally
+ * they become chips like everywhere else; until then a mark is what it says.
+ */
+export function BriefPane({ item, onNavigate, read }: SurfaceProps) {
+  const [date] = item;
+
+  const loadList = useCallback(async () => {
+    const dates = briefDates((await cachedTree()).map(file => file.path));
+    const texts = await Promise.all(dates.map(one => cachedText(briefPath(one))));
+    return dates.map((one, index) => ({
+      date: one,
+      title: texts[index] === null ? null : parseMarkdown(texts[index]).title,
+    }));
+  }, []);
+  const list = useAsync(loadList);
+
+  const loadBrief = useCallback(async () => {
+    if (date === undefined) return null;
+    const text = await cachedText(briefPath(date));
+    return text === null ? null : parseMarkdown(text);
+  }, [date]);
+  const brief = useAsync(loadBrief);
+
+  if (list.pending) return <Pending what="the briefs" />;
+  if (list.error) return <Trouble error={list.error} />;
+  if (!list.value || list.value.length === 0) return <Unsynced what="briefs" />;
+
+  if (date === undefined) {
+    return (
+      <>
+        {list.value.map(row => (
+          <ListRow
+            key={row.date}
+            onClick={() => onNavigate('brief', [row.date])}
+            label={row.date}
+            title={row.title ?? row.date}
+          />
+        ))}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <BackLink onClick={() => onNavigate('brief', [])}>briefs</BackLink>
+
+      {brief.pending && <Pending what="the brief" />}
+      {brief.error ? <Trouble error={brief.error} /> : null}
+      {!brief.pending && !brief.error && !brief.value && (
+        <Failed what="that brief has not been synced to this device" detail={briefPath(date)} />
+      )}
+
+      {brief.value && (
+        <Card>
+          <Kicker>brief</Kicker>
+          {brief.value.title && <Headline>{brief.value.title}</Headline>}
+          <Markdown blocks={bodyBlocks(brief.value)} />
+
+          <MarkRead
+            read={read.isRead(readItemKey('brief', date))}
+            onToggle={() => read.toggle(readItemKey('brief', date))}
+          />
+        </Card>
+      )}
+    </>
+  );
 }
 
 // ---------------------------------------------------------------------------

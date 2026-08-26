@@ -36,7 +36,7 @@ interface UseNavigationReturn extends NavigationState {
 }
 
 const VALID_VIEWS: ViewType[] = ['tower', 'habits', 'week', 'year', 'read', 'settings'];
-const READ_SURFACES: ReadSurface[] = ['tape', 'chart', 'canon', 'essay', 'library', 'raw'];
+const READ_SURFACES: ReadSurface[] = ['brief', 'tape', 'chart', 'canon', 'essay', 'library', 'raw'];
 const DEFAULT_READ: ReadRoute = { surface: 'tape', item: [] };
 
 /** A segment that is not valid percent-encoding is a segment, not a crash. */

@@ -17,7 +17,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 
 import { closeDb, getCachedContent, putCachedContent, setMeta } from '../lib/db';
 import { GitHubError } from '../lib/github';
-import { CanonPane, ChartPane, EssayPane, RawPane, TapePane } from './readSurfaces';
+import { BriefPane, CanonPane, ChartPane, EssayPane, RawPane, TapePane } from './readSurfaces';
 
 const mocks = vi.hoisted(() => ({ getBlob: vi.fn() }));
 
@@ -25,6 +25,8 @@ vi.mock('../lib/newsletters', () => ({ getBlob: mocks.getBlob }));
 
 const TREE = [
   { path: 'state/tape.json', sha: 'tape1', size: 1 },
+  { path: 'state/briefs/2026-08-24.md', sha: 'b1', size: 1 },
+  { path: 'state/briefs/2026-08-25.md', sha: 'b2', size: 1 },
   { path: 'state/charts/2026-08-09--rails/chart.json', sha: 'c2', size: 1 },
   { path: 'state/charts/2026-08-08--power/chart.json', sha: 'c1', size: 1 },
   { path: 'state/canon/lessons/marks-sea-change/syllabus.json', sha: 's1', size: 1 },
@@ -193,6 +195,39 @@ const DAY_TWO = {
   citations: ['sizing as speech'],
 };
 
+/**
+ * A morning brief, in the shape the pipeline commits it: frontmatter, a title
+ * heading that repeats it, prose, a market table, and source marks written
+ * inside the sentences rather than as footnote definitions.
+ */
+const BRIEF = [
+  '---',
+  'title: Brief · 2026-08-25 · Fiscal dominance, gold now in the book',
+  'date: 2026-08-25',
+  'window: 72h',
+  '---',
+  '',
+  '# Brief · 2026-08-25 · Fiscal dominance, gold now in the book',
+  '',
+  'Window: trailing 72h. Threads swept: 78.',
+  '',
+  '## 1. What landed',
+  '',
+  '- **Canada retaliates dollar-for-dollar.** Tariffs on $20bn of US goods effective Sept 8. [source: Economist WiB 2026-08-26 ed.; FirstFT Asia]',
+  '',
+  '| | Indices |',
+  '|---|---|',
+  '| Hang Seng | 25,511 |',
+].join('\n');
+
+const OLDER_BRIEF = [
+  '---',
+  'title: Brief · 2026-08-24 · The long end does the tightening',
+  '---',
+  '',
+  'Window: trailing 72h. Threads swept: 61.',
+].join('\n');
+
 const ESSAY = [
   '---',
   'title: The Profit Is the Wire',
@@ -250,6 +285,8 @@ beforeEach(async () => {
     'dd1'
   );
   await cache('state/canon/lessons/marks-sea-change/day-02.json', JSON.stringify(DAY_TWO), 'd2');
+  await cache('state/briefs/2026-08-24.md', OLDER_BRIEF, 'b1');
+  await cache('state/briefs/2026-08-25.md', BRIEF, 'b2');
   await cache('wiki/essays/2026-07-07--profit-is-the-wire.md', ESSAY, 'e1');
   await cache('state/gists.md', GISTS, 'g1');
   nav.mockClear();
@@ -514,6 +551,42 @@ describe('essays', () => {
   });
 });
 
+describe('briefs', () => {
+  it('lists newest first, then renders one whole', async () => {
+    const { rerender } = render(<BriefPane item={[]} onNavigate={nav} read={read} />);
+    const rows = await screen.findAllByRole('button');
+    expect(rows).toHaveLength(2);
+    expect(rows[0].textContent).toContain('Fiscal dominance');
+    expect(rows[1].textContent).toContain('The long end does the tightening');
+
+    rerender(<BriefPane item={['2026-08-25']} onNavigate={nav} read={read} />);
+    expect(await screen.findByText(/Threads swept: 78/)).toBeInTheDocument();
+    // The market snapshot is a table in the file and a table on the screen.
+    expect(screen.getByText('Hang Seng')).toBeInTheDocument();
+    // The title is printed once, not twice.
+    expect(screen.getAllByText(/Fiscal dominance/)).toHaveLength(1);
+  });
+
+  it('leaves a source mark in the sentence it was written in', async () => {
+    const { container } = render(<BriefPane item={['2026-08-25']} onNavigate={nav} read={read} />);
+    await screen.findByText(/Threads swept: 78/);
+
+    // The brief writes its marks in running prose rather than in footnote
+    // definitions or a field, so they stay prose: turning one into a chip
+    // means lifting an address out of a sentence, which this codebase does
+    // not do. When the pipeline emits them structurally, this changes.
+    expect(container.textContent).toContain(
+      '[source: Economist WiB 2026-08-26 ed.; FirstFT Asia]'
+    );
+  });
+
+  it('says a brief has not been synced rather than drawing nothing', async () => {
+    render(<BriefPane item={['2026-08-23']} onNavigate={nav} read={read} />);
+    expect(await screen.findByText(/that brief has not been synced/)).toBeInTheDocument();
+    expect(screen.getByText('state/briefs/2026-08-23.md')).toBeInTheDocument();
+  });
+});
+
 describe('citations, from every surface', () => {
   it('taps the tape’s evidence into the entry it quotes, at the span', async () => {
     render(<TapePane item={[]} onNavigate={nav}  read={read} />);
@@ -743,6 +816,14 @@ describe('marking read', () => {
 
     tap();
     expect(mark).toHaveBeenCalledWith('canon:marks-sea-change/2');
+  });
+
+  it('keys a brief by the day it covers', async () => {
+    render(<BriefPane item={['2026-08-25']} onNavigate={nav} read={read} />);
+    await screen.findByText('brief');
+
+    tap();
+    expect(mark).toHaveBeenCalledWith('brief:2026-08-25');
   });
 
   it('keys an essay by its slug', async () => {

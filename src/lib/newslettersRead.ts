@@ -23,6 +23,7 @@ export class ContentError extends Error {
   }
 }
 
+const BRIEFS_PREFIX = 'state/briefs/';
 const CHARTS_PREFIX = 'state/charts/';
 const CHART_FILE = 'chart.json';
 const CANON_PREFIX = 'state/canon/lessons/';
@@ -59,6 +60,28 @@ export async function cachedJson<T>(path: string): Promise<T | null> {
   } catch {
     throw new ContentError('this file is not readable json', path);
   }
+}
+
+/**
+ * `state/briefs/<date>.md` → the dates, newest first.
+ *
+ * One brief a morning, named for the day it covers, so the filename is the
+ * whole identity of the thing — no slug, no directory. A name that is not
+ * that shape is not a brief and is skipped rather than guessed at.
+ */
+export function briefDates(paths: readonly string[]): string[] {
+  const dates: string[] = [];
+  for (const path of paths) {
+    if (!path.startsWith(BRIEFS_PREFIX)) continue;
+    const name = path.slice(BRIEFS_PREFIX.length);
+    if (name.includes('/') || !name.endsWith(MARKDOWN_EXTENSION)) continue;
+    dates.push(name.slice(0, -MARKDOWN_EXTENSION.length));
+  }
+  return dates.sort(descending);
+}
+
+export function briefPath(date: string): string {
+  return `${BRIEFS_PREFIX}${date}${MARKDOWN_EXTENSION}`;
 }
 
 /** `state/charts/<date>--<slug>/chart.json` → the directory names, newest first. */
