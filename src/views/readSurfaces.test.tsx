@@ -28,6 +28,10 @@ const TREE = [
   { path: 'state/charts/2026-08-09--rails/chart.json', sha: 'c2', size: 1 },
   { path: 'state/charts/2026-08-08--power/chart.json', sha: 'c1', size: 1 },
   { path: 'state/canon/lessons/marks-sea-change/syllabus.json', sha: 's1', size: 1 },
+  // A course still being delivered: the syllabus declares four days, one has
+  // been written.
+  { path: 'state/canon/lessons/dalio-changing-world-order/syllabus.json', sha: 's2', size: 1 },
+  { path: 'state/canon/lessons/dalio-changing-world-order/day-01.json', sha: 'dd1', size: 1 },
   { path: 'state/canon/lessons/marks-sea-change/day-01.json', sha: 'd1', size: 1 },
   { path: 'state/canon/lessons/marks-sea-change/day-02.json', sha: 'd2', size: 1 },
   { path: 'wiki/essays/2026-07-07--profit-is-the-wire.md', sha: 'e1', size: 1 },
@@ -159,6 +163,25 @@ const SYLLABUS = {
   ],
 };
 
+const DALIO_SYLLABUS = {
+  doc_id: 'dalio-changing-world-order',
+  entry: 'raw/2020-01-01--dalio-changing-world-order',
+  days: [
+    { day: 1, title: 'A cycle comes back', covers: 'Chapter 1', idea: 'Orders are mortal.' },
+    { day: 2, title: 'The machine under everything', covers: 'Chapter 2', idea: 'Credit is not wealth.' },
+    { day: 3, title: 'The big cycle', covers: 'Chapter 3', idea: 'Empires rhyme.' },
+    { day: 4, title: 'Where we are', covers: 'Chapter 4', idea: 'Read the gauges.' },
+  ],
+};
+
+const DALIO_DAY_ONE = {
+  doc_id: 'dalio-changing-world-order',
+  entry: 'raw/2020-01-01--dalio-changing-world-order',
+  day: 1,
+  of: 4,
+  text: 'Day 1 of 4 · Orders are mortal, and this one is no exception.',
+};
+
 const DAY_TWO = {
   doc_id: 'marks-sea-change',
   entry: 'raw/2022-12-01--marks-sea-change',
@@ -216,6 +239,16 @@ beforeEach(async () => {
   await cache('state/tape.json', JSON.stringify(TAPE), 'tape1');
   await cache('state/charts/2026-08-09--rails/chart.json', JSON.stringify(CHART), 'c2');
   await cache('state/canon/lessons/marks-sea-change/syllabus.json', JSON.stringify(SYLLABUS), 's1');
+  await cache(
+    'state/canon/lessons/dalio-changing-world-order/syllabus.json',
+    JSON.stringify(DALIO_SYLLABUS),
+    's2'
+  );
+  await cache(
+    'state/canon/lessons/dalio-changing-world-order/day-01.json',
+    JSON.stringify(DALIO_DAY_ONE),
+    'dd1'
+  );
   await cache('state/canon/lessons/marks-sea-change/day-02.json', JSON.stringify(DAY_TWO), 'd2');
   await cache('wiki/essays/2026-07-07--profit-is-the-wire.md', ESSAY, 'e1');
   await cache('state/gists.md', GISTS, 'g1');
@@ -416,6 +449,47 @@ describe('canon', () => {
     expect(container.textContent).not.toContain('THIS MUST NOT RENDER');
     expect(screen.getByText('day 2/2')).toBeInTheDocument();
     expect(screen.getByText('§“sizing as speech”')).toBeInTheDocument();
+  });
+
+  it('says how much of a course has arrived, not how long it will be', async () => {
+    render(<CanonPane item={[]} onNavigate={nav} read={read} />);
+    await screen.findByText('marks-sea-change');
+
+    // Four declared, one written. The finished course just says its length.
+    expect(screen.getByText('1 of 4 days')).toBeInTheDocument();
+    expect(screen.getByText('2 days')).toBeInTheDocument();
+  });
+
+  it('opens the days that have arrived and leaves the rest as outline', async () => {
+    render(<CanonPane item={['dalio-changing-world-order']} onNavigate={nav} read={read} />);
+    await screen.findByText('A cycle comes back');
+
+    // Day one is a door.
+    fireEvent.click(screen.getByText('A cycle comes back'));
+    expect(nav).toHaveBeenCalledWith('canon', ['dalio-changing-world-order', '1']);
+
+    // The rest are the map. Visible, titled, and not openable — a course
+    // arrives a day at a time and that is the point of it.
+    nav.mockClear();
+    expect(screen.getAllByText(/not yet/)).toHaveLength(3);
+    fireEvent.click(screen.getByText('The big cycle'));
+    expect(nav).not.toHaveBeenCalled();
+  });
+
+  it('says a day has not arrived rather than blaming this device', async () => {
+    render(<CanonPane item={['dalio-changing-world-order', '3']} onNavigate={nav} read={read} />);
+
+    expect(await screen.findByText(/day 3 has not arrived yet/)).toBeInTheDocument();
+    expect(screen.getByText(/the course is at day 1 of 4/)).toBeInTheDocument();
+    expect(screen.queryByText(/has not been synced to this device/)).not.toBeInTheDocument();
+  });
+
+  it('will not walk forward past the last day that exists', async () => {
+    render(<CanonPane item={['dalio-changing-world-order', '1']} onNavigate={nav} read={read} />);
+
+    await screen.findByText(/Orders are mortal/);
+    // The syllabus knows about day four. Day two does not exist yet.
+    expect(screen.getByRole('button', { name: 'next →' })).toBeDisabled();
   });
 
   it('stops the ticker at both ends of the document', async () => {

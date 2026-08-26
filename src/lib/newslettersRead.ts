@@ -27,6 +27,8 @@ const CHARTS_PREFIX = 'state/charts/';
 const CHART_FILE = 'chart.json';
 const CANON_PREFIX = 'state/canon/lessons/';
 const SYLLABUS_FILE = 'syllabus.json';
+const DAY_PREFIX = 'day-';
+const DAY_EXTENSION = '.json';
 const ESSAYS_PREFIX = 'wiki/essays/';
 const MARKDOWN_EXTENSION = '.md';
 const RAW_PREFIX = 'raw/';
@@ -91,7 +93,33 @@ export function syllabusPath(doc: string): string {
 
 /** Days are `day-04.json`; the number is zero-padded to two on disk. */
 export function dayPath(doc: string, day: number): string {
-  return `${CANON_PREFIX}${doc}/day-${String(day).padStart(2, '0')}.json`;
+  return `${CANON_PREFIX}${doc}/${DAY_PREFIX}${String(day).padStart(2, '0')}${DAY_EXTENSION}`;
+}
+
+/**
+ * The days of one course that have actually been written, ascending.
+ *
+ * A syllabus declares the whole course on day one; the days themselves arrive
+ * one a morning, which is the point of the thing. So the syllabus says how
+ * long the course is and this says how much of it exists — and the difference
+ * between the two is a course still being delivered.
+ *
+ * Reading the number back out of the filename is the inverse of `dayPath`, on
+ * a name this repo's own pipeline writes. Anything that is not that shape is
+ * not a day and is skipped rather than guessed at.
+ */
+export function canonDayNumbers(paths: readonly string[], doc: string): number[] {
+  const prefix = `${CANON_PREFIX}${doc}/${DAY_PREFIX}`;
+  const days: number[] = [];
+  for (const path of paths) {
+    if (!path.startsWith(prefix) || !path.endsWith(DAY_EXTENSION)) continue;
+    const middle = path.slice(prefix.length, path.length - DAY_EXTENSION.length);
+    if (middle.length === 0 || middle.includes('/')) continue;
+    const day = Number(middle);
+    if (!Number.isInteger(day) || day <= 0) continue;
+    days.push(day);
+  }
+  return days.sort((a, b) => a - b);
 }
 
 export function essaySlugs(paths: readonly string[]): string[] {

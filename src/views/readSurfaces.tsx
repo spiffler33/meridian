@@ -52,6 +52,7 @@ import {
   cachedJson,
   cachedText,
   cachedTree,
+  canonDayNumbers,
   canonDocIds,
   chartIds,
   chartPath,
@@ -637,9 +638,17 @@ export function CanonPane({ item, onNavigate, read }: SurfaceProps) {
   const [doc, day] = item;
 
   const loadDocs = useCallback(async () => {
-    const ids = canonDocIds((await cachedTree()).map(file => file.path));
+    const paths = (await cachedTree()).map(file => file.path);
+    const ids = canonDocIds(paths);
     const syllabi = await Promise.all(ids.map(id => cachedJson<Syllabus>(syllabusPath(id))));
-    return ids.map((id, index) => ({ id, syllabus: syllabi[index] }));
+    // A syllabus declares the whole course on day one; the days arrive one a
+    // morning. `arrived` is how much of it exists, which is what decides what
+    // can be opened.
+    return ids.map((id, index) => ({
+      id,
+      syllabus: syllabi[index],
+      arrived: canonDayNumbers(paths, id),
+    }));
   }, []);
   const docs = useAsync(loadDocs);
 
@@ -660,35 +669,62 @@ export function CanonPane({ item, onNavigate, read }: SurfaceProps) {
   if (doc === undefined) {
     return (
       <>
-        {docs.value.map(entry => (
-          <ListRow
-            key={entry.id}
-            onClick={() => onNavigate('canon', [entry.id])}
-            label={`${entry.syllabus?.days?.length ?? 0} days`}
-            title={entry.id}
-            detail={entry.syllabus?.days?.[0]?.idea ?? null}
-          />
-        ))}
+        {docs.value.map(entry => {
+          const of = entry.syllabus?.days?.length ?? 0;
+          const here = entry.arrived.length;
+          return (
+            <ListRow
+              key={entry.id}
+              onClick={() => onNavigate('canon', [entry.id])}
+              // A course still being delivered says so, rather than claiming
+              // nine days when two have arrived.
+              label={here < of ? `${here} of ${of} days` : `${of} days`}
+              title={entry.id}
+              detail={entry.syllabus?.days?.[0]?.idea ?? null}
+            />
+          );
+        })}
       </>
     );
   }
 
-  const syllabus = docs.value.find(entry => entry.id === doc)?.syllabus ?? null;
+  const chosen = docs.value.find(entry => entry.id === doc) ?? null;
+  const syllabus = chosen?.syllabus ?? null;
+  const arrived = chosen?.arrived ?? [];
+  const latest = arrived.length > 0 ? arrived[arrived.length - 1] : 0;
 
   if (day === undefined) {
     return (
       <>
         <BackLink onClick={() => onNavigate('canon', [])}>canon</BackLink>
         {syllabus?.days?.length ? (
-          syllabus.days.map(entry => (
-            <ListRow
-              key={entry.day ?? entry.title}
-              onClick={() => onNavigate('canon', [doc, String(entry.day ?? 1)])}
-              label={`day ${entry.day ?? '?'}${entry.covers ? ` · ${entry.covers}` : ''}`}
-              title={entry.title ?? `day ${entry.day ?? '?'}`}
-              detail={entry.idea ?? null}
-            />
-          ))
+          syllabus.days.map(entry => {
+            const number = entry.day ?? 1;
+            const here = arrived.includes(number);
+            const label = `day ${entry.day ?? '?'}${entry.covers ? ` · ${entry.covers}` : ''}`;
+            // A course arrives a day at a time and that is the pleasure of it.
+            // The outline stays visible — it is the map — but a day that has
+            // not been written is not a door, and saying "not synced" when it
+            // was never sent would be a lie about this device.
+            return here ? (
+              <ListRow
+                key={number}
+                onClick={() => onNavigate('canon', [doc, String(number)])}
+                label={label}
+                title={entry.title ?? `day ${entry.day ?? '?'}`}
+                detail={entry.idea ?? null}
+              />
+            ) : (
+              <div key={number} className="border-b border-sp-hair px-[2px] py-[11px] opacity-45">
+                <div className="font-mono text-[10px] tracking-[0.06em] text-sp-faint">
+                  {label} · not yet
+                </div>
+                <div className="font-mono text-[12.5px] leading-[1.5] text-sp-muted">
+                  {entry.title ?? `day ${entry.day ?? '?'}`}
+                </div>
+              </div>
+            );
+          })
         ) : (
           <Failed what="this document has no syllabus on this device" detail={syllabusPath(doc)} />
         )}
@@ -711,7 +747,16 @@ export function CanonPane({ item, onNavigate, read }: SurfaceProps) {
       {lesson.pending && <Pending what="the lesson" />}
       {lesson.error ? <Trouble error={lesson.error} /> : null}
       {!lesson.pending && !lesson.error && !lesson.value && (
-        <Failed what="that day has not been synced to this device" detail={dayPath(doc, current)} />
+        latest > 0 && current > latest ? (
+          <Notice>
+            day {current} has not arrived yet — the course is at day {latest} of {of || '?'}
+          </Notice>
+        ) : (
+          <Failed
+            what="that day has not been synced to this device"
+            detail={dayPath(doc, current)}
+          />
+        )
       )}
 
       {lesson.value && (
@@ -759,8 +804,10 @@ export function CanonPane({ item, onNavigate, read }: SurfaceProps) {
             >
               ← previous
             </button>
+            {/* Forward only as far as the course has been delivered. The
+                syllabus knows about day nine; day nine does not exist yet. */}
             <button
-              disabled={of > 0 && current >= of}
+              disabled={latest > 0 ? current >= latest : of > 0 && current >= of}
               onClick={() => onNavigate('canon', [doc, String(current + 1)])}
               className="disabled:opacity-30"
             >
