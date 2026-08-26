@@ -1,4 +1,4 @@
-# PLAN — Reading pane (`Read` view) — **BUILT AND DEPLOYED 2026-08-26; GATES 4 & 5 UNRUN**
+# PLAN — Reading pane (`Read` view) — **COMPLETE 2026-08-26. All phases shipped, both gates passed.**
 
 Meridian gains a fifth view: the reading surface for the newsletters library. Email continues unchanged as the broadcast edition; this pane is the owner's terminal. Same committed artifacts, two renderers.
 
@@ -443,3 +443,27 @@ accepted knowingly, against the migration test, the error boundary and a green s
 **GATES 4 AND 5 REMAIN UNRUN.** Shipping is not passing them. Gate 4: the owner tapping citations on
 a real device. Gate 5: two devices — mark read on the phone, watch the laptop settle, confirm the
 journal shows clean `readItem` lines and exactly one baseline event.
+
+### 2026-08-26 — gates 4 and 5 passed. The plan is closed.
+
+**Gate 4 — the owner tapped source marks on the phone.** A mark opens the entry it names, lands on
+the sentence it quotes, and reads at phone size. Passed.
+
+**Gate 5 — read-state crossed devices.** Marked read on one device, it appeared on the other after a
+sync. Passed, and verified in `meridian-data` rather than taken on trust:
+
+```
+BASELINE EVENTS: 1
+   device 8ad02b8c → 2026-08-24T11:26:07.688Z
+READ EVENTS: 1
+   device d6b04007 upsert chart:2026-08-25--kalshi-vs-crypto-perps-volume 2026-08-26T04:40:18.801Z
+```
+
+Exactly one baseline across all three device journals, written once and never overwritten — which is
+the guard from phase 5 doing its job, since three separate origins have written to this journal. The
+mark is a single clean `upsert` keyed `<surface>:<itemKey>` exactly as Appendix D specifies, carrying
+only `read_at`. No stray events, no duplicates, no second baseline.
+
+Nothing on this plan is outstanding. `ideas.json`, search, AI and the `.queue/` surfaces were always
+out of scope and get their own plans; the morning-brief surface is its own small one and is blocked
+on the newsletters side.
