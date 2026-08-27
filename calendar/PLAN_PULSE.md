@@ -99,7 +99,8 @@ Already valuable with no intelligence in the loop — that is the point of the l
 
 Build:
 - **Entity #11 `pulse`** (Appendix A). Capture writes `{text}` only; envelope `ts` is the
-  timestamp; id is a generated ulid (a stream, not keyed state). Derived fields are
+  timestamp; id comes from the house generator `newId()` (a stream, not keyed state).
+  Derived fields are
   *documented now, written only in Phase 2*. Delete = tombstone via the normal path
   (long-press / kebab on a stream line). No edit in v1 — delete and retype keeps
   verbatim semantics trivial.
@@ -197,7 +198,14 @@ on their own. STOP. Plan complete.
 
 ## Appendix A — Entities
 
-**#11 `pulse`** — id: ulid. Envelope `ts` = capture time.
+**#11 `pulse`** — id: `newId()`, the same generator the other nine entities use
+(`crypto.randomUUID`, with the non-secure-context fallback already in `entities.ts`).
+Envelope `ts` = capture time.
+
+*Amended 2026-08-27, was "ulid".* A ulid's sortability is redundant here: the fold orders by
+`(ts, device, seq, id)` and `ts` is the capture time, so the envelope already puts a stream
+in order. Id is the final tiebreak and nothing else. A ulid would mean a new dependency or a
+hand-rolled one, for nothing.
 
 | field | written | by |
 |---|---|---|
