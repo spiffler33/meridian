@@ -234,8 +234,9 @@ the day's context, and marking one would spend the single accent on a whole-day 
 
 **`now` is read at render, and there is no ticker.** The strip refreshes when the app takes
 focus (the calendar sync sets state), which is when a phone is actually looked at. A
-`setInterval` re-render each minute would make the pip live while the app sits open —
-**not built; say the word.**
+`setInterval` re-render each minute would make the pip live while the app sits open.
+**Declined by the owner, 2026-08-27** — it only bites with the app left open on the laptop,
+and use is mostly phone, where focus already re-renders. Do not re-offer it.
 
 **The dot and the all-day chip live in `calendarUi.tsx`**, on the `readUi.tsx` precedent, so
 Tower and Week cannot drift apart. 7px, matching the library's unread dot; the lit dot keeps
