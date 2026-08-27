@@ -139,7 +139,9 @@ sentimentality. STOP. Plan complete.
 
 ## Appendix A — Data source
 
-Schema, window, timing, and security posture are owned by `calendar-data/README.md`.
+Schema, window, timing, and security posture are owned by `calendar-data/README.md`. That repo also
+owns `scripts/mirror.py` and `.github/workflows/mirror.yml`; the drafts that seeded them were deleted
+from this repo on 2026-08-27 so the two cannot drift.
 Meridian treats that README as the contract; parser changes follow schema changes there,
 never the reverse.
 
