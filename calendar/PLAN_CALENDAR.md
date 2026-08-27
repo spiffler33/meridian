@@ -9,7 +9,9 @@ mirror it, we do not rebuild it.
 
 - **One phase per run. Stop at every gate.** Owner reviews on device between phases and may
   amend this file. Phase 3 is optional and runs only if the owner asks for it by name.
-- Work lands on `local-first`. Never push `main` mid-phase.
+- Work lands on `local-first`. Fast-forward `main` and deploy whenever the owner wants to
+  check on the real device — that is the only place the read token and the real mirror are.
+  The one-way v2→v3 IndexedDB migration means any problem is fixed forward, never reverted.
 - Each phase ends: `vitest` green, `grep -rn "localStorage" src/` → 0, gate checklist met.
 - Conflicts with `CLAUDE.md` ⇒ stop and ask. `CLAUDE.md` wins on journal, sync, tokens.
 
