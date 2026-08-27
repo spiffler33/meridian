@@ -63,8 +63,8 @@ export function Layout({
     return () => clearInterval(interval);
   }, []);
 
-  // Show "back to today" when viewing past dates on habits/week views
-  const showTodayButton = (currentView === 'habits' || currentView === 'week') && !isToday(selectedDate);
+  // Show "back to today" when viewing a past date on the day view
+  const showTodayButton = currentView === 'habits' && !isToday(selectedDate);
 
   return (
     <div className="min-h-screen flex flex-col bg-bg text-text">
@@ -72,9 +72,22 @@ export function Layout({
       <header className="border-b border-border">
         <div className="max-w-content mx-auto px-4">
           <div className="flex items-center justify-between h-12">
-            <span className="text-lg text-text-secondary opacity-50">
+            {/* The mark is the way into settings. A tab called "settings"
+                sits in the rail claiming to be a place you go, when it is a
+                drawer you open twice a year — and the rail is for the places
+                the day actually runs through. */}
+            <button
+              onClick={() => onViewChange('settings')}
+              aria-label="Settings"
+              aria-current={currentView === 'settings' ? 'page' : undefined}
+              className={`text-lg transition-colors ${
+                currentView === 'settings'
+                  ? 'text-accent'
+                  : 'text-text-secondary opacity-50 hover:opacity-100'
+              }`}
+            >
               {MERIDIAN_SYMBOLS[symbolIndex]}
-            </span>
+            </button>
 
             <nav className="flex items-center">
               <NavItem
@@ -90,12 +103,6 @@ export function Layout({
                 onClick={() => onViewChange('habits')}
               />
               <NavItem
-                label="week"
-                shortcut="w"
-                isActive={currentView === 'week'}
-                onClick={() => onViewChange('week')}
-              />
-              <NavItem
                 label="year"
                 shortcut="y"
                 isActive={currentView === 'year'}
@@ -106,13 +113,6 @@ export function Layout({
                 shortcut="r"
                 isActive={currentView === 'read'}
                 onClick={() => onViewChange('read')}
-              />
-              <span className="w-px h-4 bg-border mx-2" />
-              <NavItem
-                label="settings"
-                shortcut=""
-                isActive={currentView === 'settings'}
-                onClick={() => onViewChange('settings')}
               />
             </nav>
           </div>

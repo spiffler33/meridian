@@ -12,7 +12,7 @@
 import { useEffect } from 'react';
 import type { ReadSurface } from '../types';
 import { SetpointWave } from '../components/SetpointWave';
-import type { SurfaceRead } from '../components/readUi';
+import { Backlog, type SurfaceRead } from '../components/readUi';
 import { useAsync } from '../hooks/useAsync';
 import { useNewsletters, type NewslettersView } from '../hooks/useNewsletters';
 import { useReadState } from '../hooks/useReadState';
@@ -36,13 +36,21 @@ interface ReadViewProps {
   onNavigate: (surface: ReadSurface, item: string[]) => void;
 }
 
+/**
+ * The rail is the reading day: what has arrived, in the order it is read.
+ *
+ * The Library is off it deliberately. It is the whole corpus — the place you
+ * go to find a thing you already know exists — and a shelf on the rail beside
+ * four queues invites browsing where the pane is meant to invite finishing.
+ * It stays one tap away at the foot, and every citation route into it is
+ * untouched.
+ */
 const TABS: { surface: ReadSurface; label: string }[] = [
   { surface: 'brief', label: 'Brief' },
   { surface: 'tape', label: 'Tape' },
   { surface: 'chart', label: 'Chart' },
   { surface: 'canon', label: 'Canon' },
   { surface: 'essay', label: 'Essays' },
-  { surface: 'library', label: 'Library' },
 ];
 
 /** Just enough of the tape to say which window it is and when it closed. */
@@ -137,55 +145,60 @@ function LibraryPane({
   read: SurfaceRead;
   onOpen: (slug: string) => void;
 }) {
+  const rows = view.rows.map(row => {
+    const key = readItemKey('raw', row.slug);
+    const isRead = read.isRead(key);
+    return {
+      item: { key, date: row.date.length > 0 ? row.date : null },
+      node: (
+        <div
+          key={row.slug}
+          className="flex items-center gap-3 border-b border-sp-hair px-[2px] py-[11px]"
+        >
+          <span
+            className={`h-[7px] w-[7px] flex-shrink-0 rounded-full ${
+              isRead ? 'border border-sp-hair' : 'bg-sp-amber'
+            }`}
+            style={isRead ? undefined : { boxShadow: '0 0 8px var(--sp-amber)' }}
+          />
+          <button onClick={() => onOpen(row.slug)} className="min-w-0 flex-1 text-left">
+            <div className="font-mono text-[10px] tracking-[0.06em] text-sp-faint">{row.date}</div>
+            {/* The slug is the title. The corpus keeps the real one inside
+                the entry's frontmatter, which is a fetch away; the reader
+                shows it the moment the entry opens. */}
+            <div
+              className={`truncate font-mono text-[12.5px] leading-[1.5] ${
+                isRead ? 'text-sp-muted' : 'text-sp-ink'
+              }`}
+            >
+              {row.name}
+            </div>
+            {row.gist && (
+              <div className="truncate font-read text-[13px] leading-[1.45] text-sp-muted">
+                {row.gist}
+              </div>
+            )}
+          </button>
+          <button
+            onClick={() => read.toggle(key)}
+            aria-label={isRead ? `Mark ${row.slug} unread` : `Mark ${row.slug} read`}
+            className={`h-5 w-5 flex-shrink-0 rounded-md border-[1.5px] ${
+              isRead ? 'border-sp-green bg-sp-green' : 'border-sp-faint hover:border-sp-muted'
+            }`}
+          >
+            {isRead && (
+              <span className="block text-center text-[12px] leading-4 text-sp-panel">✓</span>
+            )}
+          </button>
+        </div>
+      ),
+    };
+  });
+
   return (
     <>
       <LibraryState view={view} />
-      {view.rows.map(row => {
-        const key = readItemKey('raw', row.slug);
-        const isRead = read.isRead(key);
-        return (
-          <div
-            key={row.slug}
-            className="flex items-center gap-3 border-b border-sp-hair px-[2px] py-[11px]"
-          >
-            <span
-              className={`h-[7px] w-[7px] flex-shrink-0 rounded-full ${
-                isRead ? 'border border-sp-hair' : 'bg-sp-amber'
-              }`}
-              style={isRead ? undefined : { boxShadow: '0 0 8px var(--sp-amber)' }}
-            />
-            <button onClick={() => onOpen(row.slug)} className="min-w-0 flex-1 text-left">
-              <div className="font-mono text-[10px] tracking-[0.06em] text-sp-faint">{row.date}</div>
-              {/* The slug is the title. The corpus keeps the real one inside
-                  the entry's frontmatter, which is a fetch away; the reader
-                  shows it the moment the entry opens. */}
-              <div
-                className={`truncate font-mono text-[12.5px] leading-[1.5] ${
-                  isRead ? 'text-sp-muted' : 'text-sp-ink'
-                }`}
-              >
-                {row.name}
-              </div>
-              {row.gist && (
-                <div className="truncate font-read text-[13px] leading-[1.45] text-sp-muted">
-                  {row.gist}
-                </div>
-              )}
-            </button>
-            <button
-              onClick={() => read.toggle(key)}
-              aria-label={isRead ? `Mark ${row.slug} unread` : `Mark ${row.slug} read`}
-              className={`h-5 w-5 flex-shrink-0 rounded-md border-[1.5px] ${
-                isRead ? 'border-sp-green bg-sp-green' : 'border-sp-faint hover:border-sp-muted'
-              }`}
-            >
-              {isRead && (
-                <span className="block text-center text-[12px] leading-4 text-sp-panel">✓</span>
-              )}
-            </button>
-          </div>
-        );
-      })}
+      <Backlog read={read} rows={rows} />
     </>
   );
 }
@@ -232,7 +245,6 @@ export function ReadView({ surface, item, onSurfaceChange, onNavigate }: ReadVie
     brief: briefUnread,
     tape: read.unread(dated.value?.tape ?? []),
     chart: read.unread(dated.value?.chart ?? []),
-    library: entryUnread,
   };
 
   return (
@@ -272,6 +284,25 @@ export function ReadView({ surface, item, onSurfaceChange, onNavigate }: ReadVie
           <LibraryPane view={view} read={read} onOpen={slug => onNavigate('raw', [slug])} />
         )}
         {surface === 'raw' && <RawPane item={item} onNavigate={onNavigate} read={read} />}
+      </div>
+
+      {/* The way back to the whole corpus, at the foot rather than on the rail:
+          `#/read/library` is still an address, still where a citation's source
+          entry lives, and still carries its own count — it is just no longer
+          one of the day's queues. */}
+      <div className="mt-10 border-t border-sp-hair pt-3">
+        <button
+          onClick={() => onSurfaceChange('library')}
+          aria-current={surface === 'library' ? 'true' : undefined}
+          className={`font-mono text-[10.5px] tracking-[0.06em] ${
+            surface === 'library' ? 'text-sp-muted' : 'text-sp-faint hover:text-sp-muted'
+          }`}
+        >
+          library
+          {entryUnread !== null && entryUnread > 0 && (
+            <span className="ml-[6px] tabular-nums text-sp-amber">{entryUnread}</span>
+          )}
+        </button>
       </div>
     </div>
   );

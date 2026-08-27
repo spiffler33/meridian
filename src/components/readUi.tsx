@@ -1,3 +1,7 @@
+import { useState } from 'react';
+
+import type { ReadableItem } from '../lib/readState';
+
 /**
  * The reading pane's shared furniture.
  *
@@ -168,6 +172,8 @@ export function Failed({ what, detail }: { what: string; detail?: string | null 
 export interface SurfaceRead {
   isRead: (key: string) => boolean;
   toggle: (key: string) => void;
+  /** Whether this one has left the backlog, and can fold behind the reveal. */
+  spent: (item: ReadableItem) => boolean;
 }
 
 /** The foot of a surface item: what it is, and one tap to change it. */
@@ -189,7 +195,50 @@ export function MarkRead({ read, onToggle }: { read: boolean; onToggle: () => vo
 
 /** A horizontal strip of items — the charts by date, a document's days. */
 export function Rail({ children }: { children: React.ReactNode }) {
-  return <div className="mb-4 flex gap-2 overflow-x-auto pb-1">{children}</div>;
+  return <div className="mb-4 flex items-center gap-2 overflow-x-auto pb-1">{children}</div>;
+}
+
+/**
+ * One entry in a list that knows its own backlog: what to draw, and which
+ * readable item drawing it stands for. `keep` is for the row the surface is
+ * currently showing — a chart marked read while it is open stays on the rail,
+ * because folding the thing under the cursor away is a disappearing act.
+ */
+export interface BacklogRow {
+  item: ReadableItem;
+  node: React.ReactNode;
+  keep?: boolean;
+}
+
+/**
+ * A list that leads with what is still owed.
+ *
+ * Everything already read folds behind one muted line at the foot, because a
+ * queue that keeps showing what has been dealt with is a list of the past
+ * wearing the clothes of a list of the present. The whole corpus is still one
+ * tap away, and the tap is a look rather than a setting: it lives in this
+ * component and is gone the next time the surface is opened.
+ */
+export function Backlog({ read, rows }: { read: SurfaceRead; rows: readonly BacklogRow[] }) {
+  const [revealed, setRevealed] = useState(false);
+  const folds = (row: BacklogRow) => row.keep !== true && read.spent(row.item);
+  const done = rows.filter(folds);
+
+  return (
+    <>
+      {rows.filter(row => !folds(row)).map(row => row.node)}
+      {revealed ? done.map(row => row.node) : null}
+      {done.length > 0 && (
+        <button
+          onClick={() => setRevealed(shown => !shown)}
+          aria-expanded={revealed}
+          className="block whitespace-nowrap px-[2px] py-[10px] text-left font-mono text-[10.5px] text-sp-faint hover:text-sp-muted"
+        >
+          · {done.length} read
+        </button>
+      )}
+    </>
+  );
 }
 
 export function RailItem({

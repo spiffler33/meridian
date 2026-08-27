@@ -13,6 +13,8 @@ interface UseKeyboardShortcutsOptions {
   onGoToToday: () => void;
   onPreviousDay: () => void;
   onNextDay: () => void;
+  /** The week is a lens on the year now, so `w` opens it rather than a view. */
+  onOpenWeek: () => void;
 }
 
 export function useKeyboardShortcuts({
@@ -20,6 +22,7 @@ export function useKeyboardShortcuts({
   onGoToToday,
   onPreviousDay,
   onNextDay,
+  onOpenWeek,
 }: UseKeyboardShortcutsOptions) {
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
@@ -49,7 +52,7 @@ export function useKeyboardShortcuts({
           break;
         case 'w':
           event.preventDefault();
-          onViewChange('week');
+          onOpenWeek();
           break;
         case 'y':
           event.preventDefault();
@@ -77,7 +80,7 @@ export function useKeyboardShortcuts({
           break;
       }
     },
-    [onViewChange, onGoToToday, onPreviousDay, onNextDay]
+    [onViewChange, onGoToToday, onPreviousDay, onNextDay, onOpenWeek]
   );
 
   useEffect(() => {

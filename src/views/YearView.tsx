@@ -2,17 +2,31 @@
  * Year View
  *
  * Heatmap of habit completion. Terminal-style stats.
+ *
+ * The year is one of the two poles the app is lived at, so the week hangs off
+ * it as a lens rather than standing beside it as a place. Collapsed, it is one
+ * line of arithmetic; open, it is the whole week view, unchanged.
  */
 
 import { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../store/AppContext';
 import { useReadState } from '../hooks/useReadState';
-import { getYearCalendarGrid, formatShortDate, getMonthAbbr, isToday, isFuture, parseDate } from '../utils/dates';
+import { WeekView } from './WeekView';
+import { weekTotals } from '../utils/weekTotals';
+import type { CalendarMirror } from '../lib/calendar';
+import { getYearCalendarGrid, formatShortDate, getMonthAbbr, getWeekDates, getWeekNumber, isToday, isFuture, parseDate } from '../utils/dates';
 
 interface YearViewProps {
   selectedYear: number;
   onYearChange: (year: number) => void;
   onDateSelect: (date: string) => void;
+  mirror: CalendarMirror | null;
+  selectedDate: string;
+  /** Held above this view so `w` can open the lens from anywhere. */
+  weekOpen: boolean;
+  onWeekOpenChange: (open: boolean) => void;
+  onPreviousWeek: () => void;
+  onNextWeek: () => void;
 }
 
 function getHeatLevel(habitCount: number, totalHabits: number): number {
@@ -58,8 +72,18 @@ function DayCell({ date, habitCount, totalHabits, didRead, onClick }: DayCellPro
   );
 }
 
-export function YearView({ selectedYear, onYearChange, onDateSelect }: YearViewProps) {
-  const { state, getHabitCount, getYearTheme, setYearTheme, profile, updateProfile } = useApp();
+export function YearView({
+  selectedYear,
+  onYearChange,
+  onDateSelect,
+  mirror,
+  selectedDate,
+  weekOpen,
+  onWeekOpenChange,
+  onPreviousWeek,
+  onNextWeek,
+}: YearViewProps) {
+  const { state, getDailyData, getHabitCount, getYearTheme, setYearTheme, profile, updateProfile } = useApp();
   const [editingTheme, setEditingTheme] = useState(false);
   const [themeInput, setThemeInput] = useState(getYearTheme(selectedYear));
   const [editingContext, setEditingContext] = useState(false);
@@ -67,6 +91,11 @@ export function YearView({ selectedYear, onYearChange, onDateSelect }: YearViewP
 
   const habits = state.settings.habits;
   const weekStartsOn = state.settings.weekStartsOn;
+  const weekDates = useMemo(
+    () => getWeekDates(selectedDate, weekStartsOn),
+    [selectedDate, weekStartsOn]
+  );
+  const totals = weekTotals(weekDates, getDailyData);
   // Read-only: the baseline is the reading pane's to establish, never this
   // view's, so nothing here writes.
   const read = useReadState();
@@ -159,6 +188,32 @@ export function YearView({ selectedYear, onYearChange, onDateSelect }: YearViewP
 
   return (
     <div className="space-y-6">
+      {/* This week — the lens, closed by default */}
+      <section className="bg-bg-card rounded border border-border">
+        <button
+          onClick={() => onWeekOpenChange(!weekOpen)}
+          aria-expanded={weekOpen}
+          className="flex w-full items-baseline justify-between gap-3 px-4 py-3 text-left"
+        >
+          <span className="text-xs text-text-muted uppercase tracking-wide">this week</span>
+          <span className="text-xs text-text-secondary font-mono">
+            week {getWeekNumber(selectedDate)} · tasks {totals.completedMits}/{totals.totalMits} ·
+            notes {totals.daysWithNotes}/7
+          </span>
+        </button>
+        {weekOpen && (
+          <div className="border-t border-border p-4">
+            <WeekView
+              mirror={mirror}
+              selectedDate={selectedDate}
+              onDateSelect={onDateSelect}
+              onPreviousWeek={onPreviousWeek}
+              onNextWeek={onNextWeek}
+            />
+          </div>
+        )}
+      </section>
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">

@@ -307,7 +307,13 @@ const nav = vi.fn();
  * prop, so these render with nothing marked and a toggle that records the tap.
  */
 const mark = vi.fn();
-const read = { isRead: () => false, toggle: mark };
+const read = { isRead: () => false, toggle: mark, spent: () => false };
+
+/** The same, with some of the corpus already dealt with. */
+function reader(...spent: string[]) {
+  const done = new Set(spent);
+  return { isRead: (key: string) => done.has(key), toggle: mark, spent: (item: { key: string }) => done.has(item.key) };
+}
 
 describe('tape', () => {
   it('renders the window, the themes and the cards', async () => {
@@ -857,5 +863,86 @@ describe('marking read', () => {
     await screen.findByText('marks-sea-change');
 
     expect(screen.queryByRole('button', { name: 'mark read' })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * What the lists lead with.
+ *
+ * A reading surface is a queue, so it opens on what is still owed and folds
+ * the rest behind one line. Two things are load-bearing: the fold is a look
+ * and not a deletion — everything is one tap away — and material that has not
+ * arrived is never folded, because it was never read.
+ */
+describe('the fold', () => {
+  it('leads with the days still owed and counts the rest at the foot', async () => {
+    render(
+      <CanonPane
+        item={['marks-sea-change']}
+        onNavigate={nav}
+        read={reader('canon:marks-sea-change/1')}
+      />
+    );
+
+    await screen.findByText('day 2 · Sea Change');
+    expect(screen.queryByText('A cycle comes back')).toBeNull();
+    expect(screen.getByRole('button', { name: '· 1 read' })).toBeInTheDocument();
+  });
+
+  it('gives the folded ones back on one tap, and takes them again on the next', async () => {
+    render(
+      <CanonPane
+        item={['marks-sea-change']}
+        onNavigate={nav}
+        read={reader('canon:marks-sea-change/1')}
+      />
+    );
+    await screen.findByText('day 2 · Sea Change');
+
+    fireEvent.click(screen.getByRole('button', { name: '· 1 read' }));
+    expect(screen.getByText('A cycle comes back')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '· 1 read' }));
+    expect(screen.queryByText('A cycle comes back')).toBeNull();
+  });
+
+  it('never folds a day that has not arrived — it was not read, it was not written', async () => {
+    render(
+      <CanonPane
+        item={['dalio-changing-world-order']}
+        onNavigate={nav}
+        read={reader('canon:dalio-changing-world-order/1')}
+      />
+    );
+
+    await screen.findByText('· 1 read');
+    // The one written day folds. The outline stays: it is the map.
+    expect(screen.queryByText('A cycle comes back')).toBeNull();
+    expect(screen.getAllByText(/not yet/)).toHaveLength(3);
+  });
+
+  it('leaves an all-read list as its own count rather than a lie about an empty corpus', async () => {
+    render(
+      <EssayPane
+        item={[]}
+        onNavigate={nav}
+        read={reader('essay:2026-07-07--profit-is-the-wire')}
+      />
+    );
+
+    expect(await screen.findByRole('button', { name: '· 1 read' })).toBeInTheDocument();
+    expect(screen.queryByText('The Profit Is the Wire')).toBeNull();
+  });
+
+  it('opens the chart rail on the first one not yet read', async () => {
+    render(<ChartPane item={[]} onNavigate={nav} read={reader('chart:2026-08-09--rails')} />);
+
+    // Two charts exist. The newer is read, so the rail opens on the older one
+    // and keeps the read one available behind the fold.
+    expect(await screen.findByRole('button', { name: '2026-08-08' })).toHaveAttribute(
+      'aria-current',
+      'true'
+    );
+    expect(screen.getByRole('button', { name: '· 1 read' })).toBeInTheDocument();
   });
 });

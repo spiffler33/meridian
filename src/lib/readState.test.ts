@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { baselineDay, countUnread, isUnread, readDaysOf } from './readState';
+import { baselineDay, countUnread, isSpent, isUnread, readDaysOf } from './readState';
 
 const AFTER = { key: 'raw:2026-08-21--lex', date: '2026-08-21' };
 const BEFORE = { key: 'raw:2026-07-02--old', date: '2026-07-02' };
@@ -85,5 +85,35 @@ describe('the days something was read on', () => {
     expect(readDaysOf([{ read_at: '' }, { read_at: '2026-08-24T09:00:00.000Z' }])).toEqual(
       new Set(['2026-08-24'])
     );
+  });
+});
+
+describe('what has been spent, and can therefore fold away', () => {
+  const day = '2026-08-16';
+
+  it('folds anything the owner marked', () => {
+    expect(isSpent(AFTER, day, new Set([AFTER.key]))).toBe(true);
+  });
+
+  it('folds dated material the baseline already covers', () => {
+    expect(isSpent(BEFORE, day, NONE)).toBe(true);
+  });
+
+  it('keeps dated material the baseline does not cover', () => {
+    expect(isSpent(AFTER, day, NONE)).toBe(false);
+  });
+
+  it('keeps undated material until the owner says otherwise', () => {
+    // This is where it parts company with `isUnread`: an essay is never
+    // unread, but a list of essays that folded every row on day one would
+    // open empty and read as broken.
+    expect(isUnread(UNDATED, day, NONE)).toBe(false);
+    expect(isSpent(UNDATED, day, NONE)).toBe(false);
+    expect(isSpent(UNDATED, day, new Set([UNDATED.key]))).toBe(true);
+  });
+
+  it('folds nothing on a device with no baseline yet, beyond its own marks', () => {
+    expect(isSpent(BEFORE, null, NONE)).toBe(false);
+    expect(isSpent(BEFORE, null, new Set([BEFORE.key]))).toBe(true);
   });
 });

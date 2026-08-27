@@ -81,3 +81,24 @@ export function readDaysOf(rows: readonly { read_at: string }[]): Set<string> {
   }
   return days;
 }
+
+/**
+ * Whether an item has left the backlog, and can therefore fold away.
+ *
+ * Not the complement of `isUnread`, on purpose. Undated material — a canon
+ * day, an essay — is never *unread*, because it is a reference rather than a
+ * queue and must never alarm; but it is only *spent* once the owner says so.
+ * A list that folded every undated row on day one would open empty and read
+ * as broken. So: marked is spent, and dated material the baseline already
+ * covers is spent. Everything else stays on screen.
+ */
+export function isSpent(
+  item: ReadableItem,
+  day: string | null,
+  marked: ReadonlySet<string>
+): boolean {
+  if (marked.has(item.key)) return true;
+  if (day === null) return false;
+  if (item.date === null || item.date.length === 0) return false;
+  return item.date < day;
+}

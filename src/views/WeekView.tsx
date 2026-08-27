@@ -2,6 +2,9 @@
  * Week View
  *
  * 7-day overview. Factual stats per day.
+ *
+ * Not a place any more: the week is a lens the Year view opens, so this
+ * renders inside that section rather than under a tab of its own.
  */
 
 import { useMemo } from 'react';
@@ -11,6 +14,7 @@ import { getWeekDates, formatShortDate, getDayOfWeek, isToday, getWeekNumber, ge
 import { AllDayChip, Dot } from '../components/calendarUi';
 import { deviceTimeZone, eventsForDays, timeLabel } from '../lib/calendar';
 import type { CalendarEvent, CalendarMirror } from '../lib/calendar';
+import { weekTotals } from '../utils/weekTotals';
 
 /**
  * How many events a day card shows before it stops counting them out. Past
@@ -164,22 +168,7 @@ export function WeekView({
   }, [habits, getHabitStreak, selectedDate]);
 
   // Stats
-  let totalMits = 0;
-  let completedMits = 0;
-  let daysWithNotes = 0;
-
-  weekDates.forEach(date => {
-    const dayData = getDailyData(date);
-    const dayMits = dayData.mit.work.length + dayData.mit.self.length + dayData.mit.family.length;
-    const dayCompletedMits =
-      dayData.mit.work.filter(i => i.completed).length +
-      dayData.mit.self.filter(i => i.completed).length +
-      dayData.mit.family.filter(i => i.completed).length;
-
-    totalMits += dayMits;
-    completedMits += dayCompletedMits;
-    if (dayData.reflection.length > 0) daysWithNotes++;
-  });
+  const { totalMits, completedMits, daysWithNotes } = weekTotals(weekDates, getDailyData);
 
   return (
     <div className="space-y-6">

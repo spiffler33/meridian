@@ -227,9 +227,37 @@ describe('the tab rail', () => {
       <ReadView surface="tape" item={[]} onSurfaceChange={onSurfaceChange} onNavigate={navigate} />
     );
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Library' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Canon' }));
+
+    expect(onSurfaceChange).toHaveBeenCalledWith('canon');
+  });
+
+  it('keeps the library off the rail', () => {
+    show('tape');
+    expect(screen.queryByRole('tab', { name: /Library/ })).toBeNull();
+  });
+});
+
+describe('the way back to the library', () => {
+  it('reaches it from the foot of any surface', () => {
+    const onSurfaceChange = vi.fn();
+    render(
+      <ReadView surface="tape" item={[]} onSurfaceChange={onSurfaceChange} onNavigate={navigate} />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /^library/ }));
 
     expect(onSurfaceChange).toHaveBeenCalledWith('library');
+  });
+
+  it('renders the library when the route names it, rail or no rail', () => {
+    show('library');
+    expect(screen.getByText('lex-asia-insurers')).toBeInTheDocument();
+  });
+
+  it('still lands a citation on the source entry it names', () => {
+    show('raw', ['2026-08-21--lex-asia-insurers']);
+    expect(screen.queryByText('no entry named in this address')).toBeNull();
   });
 });
 
@@ -316,6 +344,9 @@ describe('the instrument', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /^Mark .* read$/ })[0]);
     expect(await screen.findByText(`${ENTRIES.length - 1} unread`)).toBeInTheDocument();
 
+    // A marked row folds behind the reveal, which is the point of the list —
+    // so getting at it again means opening the fold first.
+    fireEvent.click(screen.getByRole('button', { name: '· 1 read' }));
     fireEvent.click(screen.getByRole('button', { name: /^Mark .* unread$/ }));
     expect(await screen.findByText(`${ENTRIES.length} unread`)).toBeInTheDocument();
   });
@@ -343,8 +374,9 @@ describe('the tab rail ticks', () => {
     await seedBaseline('2026-08-16T00:00:00.000Z');
     show('library');
 
-    const library_ = await screen.findByRole('tab', { name: /Library/ });
-    await waitFor(() => expect(library_.textContent).toBe(`Library${ENTRIES.length}`));
+    // The library's own count moved to the foot with it.
+    const library_ = await screen.findByRole('button', { name: /^library/ });
+    await waitFor(() => expect(library_.textContent).toBe(`library${ENTRIES.length}`));
 
     // Nothing is synced in this file, so the tape, the charts and the briefs
     // have no dated material at all — and a tab with no backlog carries no

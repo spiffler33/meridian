@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Markdown } from '../components/Markdown';
 import {
   BackLink,
+  Backlog,
   Card,
   Cite,
   Failed,
@@ -171,16 +172,20 @@ export function BriefPane({ item, onNavigate, read }: SurfaceProps) {
 
   if (date === undefined) {
     return (
-      <>
-        {list.value.map(row => (
-          <ListRow
-            key={row.date}
-            onClick={() => onNavigate('brief', [row.date])}
-            label={row.date}
-            title={row.title ?? row.date}
-          />
-        ))}
-      </>
+      <Backlog
+        read={read}
+        rows={list.value.map(row => ({
+          item: { key: readItemKey('brief', row.date), date: row.date },
+          node: (
+            <ListRow
+              key={row.date}
+              onClick={() => onNavigate('brief', [row.date])}
+              label={row.date}
+              title={row.title ?? row.date}
+            />
+          ),
+        }))}
+      />
     );
   }
 
@@ -554,7 +559,15 @@ export function ChartPane({ item, onNavigate, read }: SurfaceProps) {
   const loadIds = useCallback(async () => chartIds((await cachedTree()).map(file => file.path)), []);
   const ids = useAsync(loadIds);
 
-  const chosen = item[0] ?? ids.value?.[0] ?? null;
+  // The rail leads with what has not been read, so the default chart is the
+  // first unread one rather than the first one — otherwise a device opening
+  // Chart lands on something already dealt with while its backlog sits behind
+  // the reveal.
+  const chosen =
+    item[0] ??
+    ids.value?.find(id => !read.spent({ key: readItemKey('chart', id), date: id.slice(0, 10) })) ??
+    ids.value?.[0] ??
+    null;
   const load = useCallback(
     () => (chosen === null ? Promise.resolve(null) : cachedJson<ChartFile>(chartPath(chosen))),
     [chosen]
@@ -578,15 +591,22 @@ export function ChartPane({ item, onNavigate, read }: SurfaceProps) {
   return (
     <>
       <Rail>
-        {ids.value.map(id => (
-          <RailItem
-            key={id}
-            active={id === chosen}
-            onClick={() => onNavigate('chart', [id])}
-          >
-            {id.slice(0, 10)}
-          </RailItem>
-        ))}
+        <Backlog
+          read={read}
+          rows={ids.value.map(id => ({
+            item: { key: readItemKey('chart', id), date: id.slice(0, 10) },
+            keep: id === chosen,
+            node: (
+              <RailItem
+                key={id}
+                active={id === chosen}
+                onClick={() => onNavigate('chart', [id])}
+              >
+                {id.slice(0, 10)}
+              </RailItem>
+            ),
+          }))}
+        />
       </Rail>
 
       {chart.pending && <Pending what="the chart" />}
@@ -782,33 +802,43 @@ export function CanonPane({ item, onNavigate, read }: SurfaceProps) {
       <>
         <BackLink onClick={() => onNavigate('canon', [])}>canon</BackLink>
         {syllabus?.days?.length ? (
-          syllabus.days.map(entry => {
-            const number = entry.day ?? 1;
-            const here = arrived.includes(number);
-            const label = `day ${entry.day ?? '?'}${entry.covers ? ` · ${entry.covers}` : ''}`;
-            // A course arrives a day at a time and that is the pleasure of it.
-            // The outline stays visible — it is the map — but a day that has
-            // not been written is not a door, and saying "not synced" when it
-            // was never sent would be a lie about this device.
-            return here ? (
-              <ListRow
-                key={number}
-                onClick={() => onNavigate('canon', [doc, String(number)])}
-                label={label}
-                title={entry.title ?? `day ${entry.day ?? '?'}`}
-                detail={entry.idea ?? null}
-              />
-            ) : (
-              <div key={number} className="border-b border-sp-hair px-[2px] py-[11px] opacity-45">
-                <div className="font-mono text-[10px] tracking-[0.06em] text-sp-faint">
-                  {label} · not yet
-                </div>
-                <div className="font-mono text-[12.5px] leading-[1.5] text-sp-muted">
-                  {entry.title ?? `day ${entry.day ?? '?'}`}
-                </div>
-              </div>
-            );
-          })
+          <Backlog
+            read={read}
+            rows={syllabus.days.map(entry => {
+              const number = entry.day ?? 1;
+              const here = arrived.includes(number);
+              const label = `day ${entry.day ?? '?'}${entry.covers ? ` · ${entry.covers}` : ''}`;
+              // A course arrives a day at a time and that is the pleasure of it.
+              // The outline stays visible — it is the map — but a day that has
+              // not been written is not a door, and saying "not synced" when it
+              // was never sent would be a lie about this device.
+              return {
+                // A day carries no date of its own, so only the owner's own
+                // mark can fold it. A day that has not arrived never folds:
+                // it is the part of the map still to be walked.
+                item: { key: readItemKey('canon', `${doc}/${number}`), date: null },
+                keep: !here,
+                node: here ? (
+                  <ListRow
+                    key={number}
+                    onClick={() => onNavigate('canon', [doc, String(number)])}
+                    label={label}
+                    title={entry.title ?? `day ${entry.day ?? '?'}`}
+                    detail={entry.idea ?? null}
+                  />
+                ) : (
+                  <div key={number} className="border-b border-sp-hair px-[2px] py-[11px] opacity-45">
+                    <div className="font-mono text-[10px] tracking-[0.06em] text-sp-faint">
+                      {label} · not yet
+                    </div>
+                    <div className="font-mono text-[12.5px] leading-[1.5] text-sp-muted">
+                      {entry.title ?? `day ${entry.day ?? '?'}`}
+                    </div>
+                  </div>
+                ),
+              };
+            })}
+          />
         ) : (
           <Failed what="this document has no syllabus on this device" detail={syllabusPath(doc)} />
         )}
@@ -956,16 +986,22 @@ export function EssayPane({ item, onNavigate, read }: SurfaceProps) {
 
   if (slug === undefined) {
     return (
-      <>
-        {list.value.entries.map(entry => (
-          <ListRow
-            key={entry.slug}
-            onClick={() => onNavigate('essay', [entry.slug])}
-            label={entry.slug.slice(0, 10)}
-            title={entry.title ?? entry.slug}
-          />
-        ))}
-      </>
+      <Backlog
+        read={read}
+        rows={list.value.entries.map(entry => ({
+          // An essay carries no date the corpus agrees on, so the mark is the
+          // only thing that folds it.
+          item: { key: readItemKey('essay', entry.slug), date: null },
+          node: (
+            <ListRow
+              key={entry.slug}
+              onClick={() => onNavigate('essay', [entry.slug])}
+              label={entry.slug.slice(0, 10)}
+              title={entry.title ?? entry.slug}
+            />
+          ),
+        }))}
+      />
     );
   }
 

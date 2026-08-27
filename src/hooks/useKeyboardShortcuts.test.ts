@@ -1,9 +1,12 @@
 /**
- * useKeyboardShortcuts, the Read key.
+ * useKeyboardShortcuts: the Read key, and the Week key that is no longer one.
  *
  * R joins the view keys. The one thing worth holding down is that it stays a
  * view key and not a stray letter: typing the word "read" into a task field
  * must not throw the owner out of the field and into the pane.
+ *
+ * W is the odd one now. The week stopped being a view, so the key has to reach
+ * the lens rather than ask the router for a view that no longer exists.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -13,22 +16,24 @@ import { useKeyboardShortcuts } from './useKeyboardShortcuts';
 
 function mount() {
   const onViewChange = vi.fn();
+  const onOpenWeek = vi.fn();
   renderHook(() =>
     useKeyboardShortcuts({
       onViewChange,
       onGoToToday: vi.fn(),
       onPreviousDay: vi.fn(),
       onNextDay: vi.fn(),
+      onOpenWeek,
     })
   );
-  return onViewChange;
+  return { onViewChange, onOpenWeek };
 }
 
 afterEach(cleanup);
 
 describe('the read key', () => {
   it('opens the read view', () => {
-    const onViewChange = mount();
+    const { onViewChange } = mount();
 
     fireEvent.keyDown(window, { key: 'r' });
 
@@ -36,7 +41,7 @@ describe('the read key', () => {
   });
 
   it('answers to a shifted key too', () => {
-    const onViewChange = mount();
+    const { onViewChange } = mount();
 
     fireEvent.keyDown(window, { key: 'R' });
 
@@ -44,7 +49,7 @@ describe('the read key', () => {
   });
 
   it('stays out of the way while the owner is typing', () => {
-    const onViewChange = mount();
+    const { onViewChange } = mount();
     const input = document.createElement('input');
     document.body.appendChild(input);
 
@@ -55,10 +60,32 @@ describe('the read key', () => {
   });
 
   it('leaves the browser its own ctrl-R', () => {
-    const onViewChange = mount();
+    const { onViewChange } = mount();
 
     fireEvent.keyDown(window, { key: 'r', metaKey: true });
 
     expect(onViewChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('the week key', () => {
+  it('opens the lens rather than a view of its own', () => {
+    const { onViewChange, onOpenWeek } = mount();
+
+    fireEvent.keyDown(window, { key: 'w' });
+
+    expect(onOpenWeek).toHaveBeenCalled();
+    expect(onViewChange).not.toHaveBeenCalled();
+  });
+
+  it('stays out of the way while the owner is typing', () => {
+    const { onOpenWeek } = mount();
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+
+    fireEvent.keyDown(input, { key: 'w' });
+
+    expect(onOpenWeek).not.toHaveBeenCalled();
+    input.remove();
   });
 });

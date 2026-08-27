@@ -5,6 +5,8 @@
  * Terminal meets journal - clean, fast, keyboard-first.
  */
 
+import { useCallback, useState } from 'react';
+
 import { AppProvider } from './store/AppContext';
 import { ThemeProvider } from './store/ThemeContext';
 import { Layout } from './components/Layout';
@@ -14,7 +16,6 @@ import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useCalendar } from './hooks/useCalendar';
 import TowerView from './views/TowerView';
 import { HabitsView } from './views/HabitsView';
-import { WeekView } from './views/WeekView';
 import { YearView } from './views/YearView';
 import { ReadView } from './views/ReadView';
 import { SettingsView } from './views/SettingsView';
@@ -28,12 +29,22 @@ function AppContent() {
   // hooks would mean two cache reads and two copies of the same state.
   const calendar = useCalendar();
 
+  // Whether the week lens on the Year view is open. Held here rather than in
+  // the view because `w` opens it from anywhere, and deliberately out of the
+  // hash: it is a look at the year, not an address.
+  const [weekOpen, setWeekOpen] = useState(false);
+  const openWeek = useCallback(() => {
+    setWeekOpen(true);
+    nav.setView('year');
+  }, [nav]);
+
   // Keyboard shortcuts
   useKeyboardShortcuts({
     onViewChange: nav.setView,
     onGoToToday: nav.goToToday,
     onPreviousDay: nav.goToPreviousDay,
     onNextDay: nav.goToNextDay,
+    onOpenWeek: openWeek,
   });
 
   const handleHabitsDateSelect = (date: string) => {
@@ -54,22 +65,18 @@ function AppContent() {
             onDateSelect={nav.setSelectedDate}
           />
         );
-      case 'week':
-        return (
-          <WeekView
-            mirror={calendar.mirror}
-            selectedDate={nav.selectedDate}
-            onDateSelect={handleHabitsDateSelect}
-            onPreviousWeek={nav.goToPreviousWeek}
-            onNextWeek={nav.goToNextWeek}
-          />
-        );
       case 'year':
         return (
           <YearView
             selectedYear={nav.selectedYear}
             onYearChange={nav.setSelectedYear}
             onDateSelect={handleHabitsDateSelect}
+            mirror={calendar.mirror}
+            selectedDate={nav.selectedDate}
+            weekOpen={weekOpen}
+            onWeekOpenChange={setWeekOpen}
+            onPreviousWeek={nav.goToPreviousWeek}
+            onNextWeek={nav.goToNextWeek}
           />
         );
       case 'read':

@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { baselineDay, countUnread, readDaysOf, type ReadableItem } from '../lib/readState';
+import { baselineDay, countUnread, isSpent, readDaysOf, type ReadableItem } from '../lib/readState';
 import { scheduleFlush } from '../lib/sync';
 import {
   ensureReadingBaseline,
@@ -27,6 +27,8 @@ export interface ReadState {
   toggle: (key: string) => void;
   /** How many of these are unread, or null before a baseline exists. */
   unread: (items: readonly ReadableItem[]) => number | null;
+  /** Whether this one has left the backlog, and can fold behind the reveal. */
+  spent: (item: ReadableItem) => boolean;
   /** The days something was marked read on. What the year heatmap asks for. */
   days: Set<string>;
 }
@@ -140,6 +142,7 @@ export function useReadState(synced = false): ReadState {
     (items: readonly ReadableItem[]) => countUnread(items, day, marked),
     [day, marked]
   );
+  const spent = useCallback((item: ReadableItem) => isSpent(item, day, marked), [day, marked]);
 
-  return { isRead, toggle, unread, days };
+  return { isRead, toggle, unread, spent, days };
 }
