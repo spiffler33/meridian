@@ -1,5 +1,6 @@
 /**
- * useKeyboardShortcuts: the Read key, and the Week key that is no longer one.
+ * useKeyboardShortcuts: the Read key, the Week key that is no longer one, and
+ * the Capture key.
  *
  * R joins the view keys. The one thing worth holding down is that it stays a
  * view key and not a stray letter: typing the word "read" into a task field
@@ -7,6 +8,11 @@
  *
  * W is the odd one now. The week stopped being a view, so the key has to reach
  * the lens rather than ask the router for a view that no longer exists.
+ *
+ * P is not a view key either — it asks the app to put the cursor in the
+ * capture box, wherever the owner is. The hook's own job is only to fire the
+ * callback and to stay out of the way while a field already has focus, the
+ * same guard every other key gets.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -17,6 +23,7 @@ import { useKeyboardShortcuts } from './useKeyboardShortcuts';
 function mount() {
   const onViewChange = vi.fn();
   const onOpenWeek = vi.fn();
+  const onCapture = vi.fn();
   renderHook(() =>
     useKeyboardShortcuts({
       onViewChange,
@@ -24,9 +31,10 @@ function mount() {
       onPreviousDay: vi.fn(),
       onNextDay: vi.fn(),
       onOpenWeek,
+      onCapture,
     })
   );
-  return { onViewChange, onOpenWeek };
+  return { onViewChange, onOpenWeek, onCapture };
 }
 
 afterEach(cleanup);
@@ -65,6 +73,27 @@ describe('the read key', () => {
     fireEvent.keyDown(window, { key: 'r', metaKey: true });
 
     expect(onViewChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('the capture key', () => {
+  it('asks for the capture box', () => {
+    const { onCapture } = mount();
+
+    fireEvent.keyDown(window, { key: 'p' });
+
+    expect(onCapture).toHaveBeenCalled();
+  });
+
+  it('stays out of the way while the owner is typing', () => {
+    const { onCapture } = mount();
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+
+    fireEvent.keyDown(input, { key: 'p' });
+
+    expect(onCapture).not.toHaveBeenCalled();
+    input.remove();
   });
 });
 

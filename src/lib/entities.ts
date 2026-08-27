@@ -34,10 +34,11 @@ import type {
 // ============================================================================
 
 /**
- * Nine entities the ported tables became, plus one the app grew on its own.
+ * Nine entities the ported tables became, plus two the app grew on its own.
  *
  * `readItem` never existed in Postgres. It is the reading pane's record of
  * what has been read, and it is the first entity with no export behind it.
+ * `pulse` is the second: one captured utterance, timestamped.
  * Journal `entity` values.
  *
  * Adding one is safe to deploy to a single device at a time. An older build
@@ -59,6 +60,7 @@ export const ENTITY = {
   pack: 'pack',
   packSession: 'packSession',
   readItem: 'readItem',
+  pulse: 'pulse',
 } as const;
 
 // ============================================================================
@@ -186,6 +188,29 @@ export type PackSessionRow = {
 export type ReadItemRow = {
   id: string;
   read_at: string;
+};
+
+/**
+ * One captured utterance. Verbatim, timestamped, and never edited.
+ *
+ * `at` is a field rather than the event envelope's `ts`, which the plan's
+ * letter names as the timestamp. It cannot be: `fold` returns fields and
+ * throws the envelope away, so a stream reading its own `ts` would have no
+ * clock to render and no instant for a span to start at. `at` is written once
+ * at capture, alongside `text`, and is what every reader means by "when" —
+ * the envelope still orders the fold, as it does for every other entity.
+ *
+ * Documented, not yet written — the coder fills them in phase 2, as an upsert
+ * that must never carry `text`: `signal`, `domain`, `activity`, `people[]`,
+ * `span {start, end?, approx?}`, `links {habitId?, towerId?, eventId?}`. They
+ * are absent from this row type until something writes them; a field nothing
+ * can produce is a field nothing should have to check for.
+ */
+export type PulseRow = {
+  id: string;
+  text: string;
+  /** ISO instant of capture. */
+  at: string;
 };
 
 // ============================================================================
@@ -373,6 +398,10 @@ function toPackSessionRow(id: string, record: Record_): PackSessionRow {
 
 function toReadItemRow(id: string, record: Record_): ReadItemRow {
   return { id, read_at: str(record, 'read_at', EPOCH_FLOOR) };
+}
+
+function toPulseRow(id: string, record: Record_): PulseRow {
+  return { id, text: str(record, 'text', ''), at: str(record, 'at', EPOCH_FLOOR) };
 }
 
 // ============================================================================
@@ -754,6 +783,10 @@ export function readPackSessionRows(): PackSessionRow[] {
 
 export function readReadItemRows(): ReadItemRow[] {
   return rowsOf(ENTITY.readItem, toReadItemRow);
+}
+
+export function readPulseRows(): PulseRow[] {
+  return rowsOf(ENTITY.pulse, toPulseRow);
 }
 
 /**

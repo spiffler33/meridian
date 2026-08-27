@@ -5,17 +5,26 @@
  * Core loop: Open -> See 1-3 items -> Act or Hold -> Trust the system
  */
 
-import { useState, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApp } from '../store/AppContext';
 import { TwoMinuteTimer } from '../components/TwoMinuteTimer';
 import { parseTowerInput, toTowerItemInput } from '../services/ai';
 import { DayShape } from '../components/DayShape';
-import { deviceTimeZone } from '../lib/calendar';
+import { deviceTimeZone, timeLabel } from '../lib/calendar';
+import { usePulses } from '../hooks/usePulses';
 import { getToday } from '../utils/dates';
 import type { CalendarMirror } from '../lib/calendar';
+import type { PulseRow } from '../lib/entities';
 import type { TowerItem } from '../types';
 
-export default function TowerView({ mirror }: { mirror: CalendarMirror | null }) {
+interface TowerViewProps {
+  mirror: CalendarMirror | null;
+  /** The owner pressed `p`. Focus the capture box, then say it was handled. */
+  focusCapture: boolean;
+  onFocusHandled: () => void;
+}
+
+export default function TowerView({ mirror, focusCapture, onFocusHandled }: TowerViewProps) {
   const {
     state,
     addTowerItem,
@@ -23,6 +32,10 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
     updateTowerItemById,
     deleteTowerItemById,
   } = useApp();
+
+  const today = getToday();
+  const timeZone = deviceTimeZone();
+  const pulses = usePulses(today, timeZone);
 
   const [captureText, setCaptureText] = useState('');
   const [timerItemId, setTimerItemId] = useState<string | null>(null);
@@ -110,15 +123,27 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-medium text-text">
-          tower
-        </h1>
+      {/*
+        The capture box holds the header region, and the view's own title is
+        gone from it: the rail already says `tower` and marks it as the place
+        you are, so the h1 was saying it twice. What the top of the day is for
+        is writing a line down.
+      */}
+      {/* One unit: the stream reads as what the box has already taken, so it
+          sits closer to the box than the day's other sections do to it. */}
+      <div className="space-y-3">
+        <PulseCapture
+          onCapture={pulses.capture}
+          focusCapture={focusCapture}
+          onFocusHandled={onFocusHandled}
+        />
+
+        {/* Newest first — the last thing said sits next to the box. */}
+        <PulseStream pulses={pulses.today} timeZone={timeZone} onDelete={pulses.remove} />
       </div>
 
       {/* What the day already has in it, before anything is chosen for it. */}
-      <DayShape mirror={mirror} date={getToday()} timeZone={deviceTimeZone()} now={Date.now()} />
+      <DayShape mirror={mirror} date={today} timeZone={timeZone} now={Date.now()} />
 
       {/* NOW Section - Hero Item */}
       <section>
@@ -464,6 +489,127 @@ function SomedaySection({ items, onReactivate, onDelete }: SomedaySectionProps) 
         </ul>
       )}
     </section>
+  );
+}
+
+/**
+ * The capture box.
+ *
+ * One field and nothing else — no pickers, no button, no confirmation. Enter
+ * saves and the field clears; an empty Enter does nothing. The text goes back
+ * into the field if the write failed, because the alternative is a sentence
+ * the owner said and the app quietly lost.
+ *
+ * `focus:outline-none` on the input is paid for by the rule underneath it,
+ * which takes the accent while the box has focus: the affordance moves, it
+ * does not disappear.
+ */
+function PulseCapture({
+  onCapture,
+  focusCapture,
+  onFocusHandled,
+}: {
+  onCapture: (text: string) => Promise<boolean>;
+  focusCapture: boolean;
+  onFocusHandled: () => void;
+}) {
+  const [draft, setDraft] = useState('');
+  const box = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!focusCapture) return;
+    box.current?.focus();
+    onFocusHandled();
+  }, [focusCapture, onFocusHandled]);
+
+  const submit = useCallback(async () => {
+    const text = draft;
+    if (text.trim().length === 0) return;
+    // Cleared first: the box is empty the instant the owner hits Enter, and
+    // the next thought can start being typed into it while this one is
+    // reaching IndexedDB.
+    setDraft('');
+    const saved = await onCapture(text);
+    if (!saved) setDraft(previous => (previous.length === 0 ? text : previous));
+  }, [draft, onCapture]);
+
+  return (
+    <div className="flex items-center border-b border-border pb-2 transition-colors focus-within:border-accent">
+      <input
+        ref={box}
+        type="text"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            void submit();
+          }
+        }}
+        placeholder="what's happening…"
+        aria-label="capture a pulse"
+        className="w-full bg-transparent font-read text-[14.5px] text-text placeholder:text-text-muted focus:outline-none"
+      />
+    </div>
+  );
+}
+
+/**
+ * Today's stream.
+ *
+ * A ledger, not a feed: mono clock, the line as it was said, and nothing else
+ * on it. Nothing is shown when nothing has been captured — the box's own
+ * placeholder is the only instruction an empty day needs.
+ *
+ * There is no edit. Delete is two taps behind a kebab, which is what keeps a
+ * pocket from erasing a line, and which works with a finger — a hover-only
+ * control is invisible on the device this app mostly runs on.
+ */
+function PulseStream({
+  pulses,
+  timeZone,
+  onDelete,
+}: {
+  pulses: readonly PulseRow[];
+  timeZone: string;
+  onDelete: (id: string) => void;
+}) {
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  if (pulses.length === 0) return null;
+
+  return (
+    <ul className="space-y-2">
+      {pulses.map((pulse) => (
+        <li key={pulse.id} className="flex items-baseline gap-3">
+          <time className="font-mono text-xs tabular-nums text-text-muted">
+            {timeLabel(pulse.at, timeZone)}
+          </time>
+          <span className="flex-1 font-read text-[14.5px] leading-[1.6] text-text">
+            {pulse.text}
+          </span>
+          {openId === pulse.id && (
+            <button
+              onClick={() => {
+                setOpenId(null);
+                onDelete(pulse.id);
+              }}
+              className="text-xs text-error hover:underline"
+            >
+              delete
+            </button>
+          )}
+          <button
+            onClick={() => setOpenId(openId === pulse.id ? null : pulse.id)}
+            aria-label={`actions for the pulse at ${timeLabel(pulse.at, timeZone)}`}
+            aria-expanded={openId === pulse.id}
+            className="font-mono text-xs text-text-muted transition-colors hover:text-text"
+          >
+            ···
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }
 

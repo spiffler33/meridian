@@ -529,4 +529,24 @@ describe('journal fold engine', () => {
       'raw:2026-08-21--lex-asia': { read_at: '2026-08-24T09:00:00.000Z' },
     });
   });
+
+  it('criterion 19 — the same compatibility guarantee, restated for pulse: an older build folds it quietly too', () => {
+    // pulse is the entity this rollout actually ships. Criterion 18 pins the
+    // general property with readItem as its example; this pins it again for
+    // the specific entity a single-device deploy has to be safe for.
+    const known = upsert({ id: 'e-1', ts: 100, entity: 'habit', entityId: 'h1', fields: { title: 'Run' } });
+    const unknown = upsert({
+      id: 'e-2',
+      ts: 200,
+      entity: 'pulse',
+      entityId: 'p1',
+      fields: { text: 'wrote the plan', at: '2026-08-27T09:00:00.000Z' },
+    });
+
+    const { state, warnings } = fold([known, unknown]);
+
+    expect(warnings).toEqual([]);
+    expect(state.habit).toEqual({ h1: { title: 'Run' } });
+    expect(state.pulse).toEqual({ p1: { text: 'wrote the plan', at: '2026-08-27T09:00:00.000Z' } });
+  });
 });

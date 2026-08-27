@@ -94,6 +94,9 @@ lens feel right, or is Week missed? STOP.
 
 ## Phase 1 — `pulse` entity, capture box, Today stream (raw only, zero AI)
 
+**STATUS: built 2026-08-27, on `local-first`. Not deployed — Gate 1 needs three real days on
+the phone, so it needs a `main` fast-forward, which is spiff's call.**
+
 **Goal:** interstitial journaling ships. Timestamped verbatim lines, instant, offline.
 Already valuable with no intelligence in the loop — that is the point of the layering.
 
@@ -210,6 +213,7 @@ hand-rolled one, for nothing.
 | field | written | by |
 |---|---|---|
 | `text` | at capture, immutable | owner |
+| `at` | at capture, immutable | owner — ISO instant. *Added 2026-08-27, see the run log.* |
 | `signal` | enrichment | coder — `block · event · state · plan · task · claim · note` |
 | `domain` | enrichment | coder — from vocab domains |
 | `activity` | enrichment | coder — short label |
@@ -321,3 +325,57 @@ week-lens feel right, or is Week missed?
 `ulid` → `newId()` (`entities.ts`), at spiff's instruction. The fold orders by
 `(ts, device, seq, id)` and a pulse's `ts` is its capture time, so the envelope already puts
 the stream in order; `id` is the final tiebreak and nothing else. Appendix A amended in place.
+
+### 2026-08-27 — Phase 1: the pulse entity, the capture box, the Today stream
+
+Green: `vitest` 522 passed / 28 files (was 510 / 26) · `tsc -b` clean · `npm run build` clean ·
+`grep -rn "localStorage" src/` → 0 · lint 6 errors, all pre-existing (unchanged count).
+
+New: `src/lib/pulse.ts`, `src/hooks/usePulses.ts`, `src/lib/pulse.test.ts`,
+`src/views/TowerView.test.tsx`. Journal gains criterion 19 — the single-device-deploy guarantee,
+restated for `pulse` rather than inherited from `readItem`'s example.
+
+**The envelope `ts` could not be the timestamp, so `at` is a field.** The phase says capture
+writes `{text}` only and that the envelope's `ts` is the pulse's instant. It cannot be: `fold`
+returns `entity → entityId → field → value` and throws the envelope away, so a stream reading its
+own `ts` would have no clock to render and Phase 3 no instant for a span to start at. The
+alternatives were changing `FoldedState` to carry envelope metadata — the event contract, for
+every entity, to serve one — or writing the instant as a field, which is what all ten existing
+entities already do (`created_at`, `read_at`). So capture writes two fields, `text` and `at`, both
+once and never again. The envelope still orders the fold. Appendix A amended in place.
+
+**The `tower` h1 is gone; the capture box holds that header region.** "Pinned at the top of
+TodayView in the cleared header region" had nowhere else to mean: Phase 0 never touched
+TowerView, and the rail already says `tower` and marks it as where you are, so the h1 was saying
+it twice. The box is now the first thing on the view and the stream sits directly under it, the
+two grouped tighter than the day's other sections. Taps to a writable surface on open: zero.
+
+**Two capture boxes live on Tower this phase, and that is the plan's own shape.** The pulse box
+at the top, the tower bar still fixed at the bottom with its own placeholder. Phase 2 is what
+converges them — one parser, two mouths — and the phase explicitly keeps the tower input's
+behaviour exactly. Worth a look at the gate anyway: two boxes on one screen is the kind of thing
+that reads fine in a plan and badly in a hand.
+
+**Delete is a kebab, not a long-press.** The phase offers either. A hover-revealed control — the
+idiom the Someday list uses — is simply invisible on the device this app mostly runs on, and a
+long-press fights text selection. So: a quiet `···` per line, which reveals `delete` beside it.
+Two taps, two separate hit targets, nothing that changes meaning under the finger.
+
+**Colour comes from the app's tokens, not the `sp-*` set.** Fence 8 says setpoint tokens, and the
+mono clock, the reading face and the hairline are all per the fence. The palette is not: Tower is
+not the reading surface, `[data-surface="read"]` is what remaps the app's tokens to setpoint
+values, and reaching for `sp-*` directly on Tower would drag the pane's palette onto the app's
+chrome and leave a seam. Nothing is hardcoded — every colour is a token, which is what the fence
+is protecting.
+
+**A hazard Phase 2 inherits, recorded now.** An enrichment upsert that lands *after* a delete
+resurrects the pulse carrying only what was written after the tombstone — so `text` falls back to
+`''` and the stream shows an empty line. Nothing can produce it today: there is no edit path and
+capture rejects an empty line. Phase 2's coder writes upserts against pulse ids from a queue that
+can drain late, which is exactly the race. Pinned in `pulse.test.ts` as behaviour, not yet as a
+guard.
+
+**GATE 1 is unrun**, and needs the phone: three real days of use. Its own questions are capture
+friction and newest-first. One more for it, unasked by the phase: the stream has no cap, so a
+heavy day pushes Now and the day shape a long way down a view whose job is to surface what needs
+attention. The `· n more` fold from Phase 0 is the house answer if it bites.

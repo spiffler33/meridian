@@ -26,6 +26,7 @@ import {
   readPackRows,
   readPackSessionRows,
   readItemKey,
+  readPulseRows,
   readProfile,
   readProfiles,
   readReadItemRows,
@@ -44,6 +45,7 @@ import type {
   Habit,
   HabitCompletion,
   Profile,
+  PulseRow,
   ReadItemRow,
   Task,
   TowerItemRow,
@@ -602,6 +604,64 @@ export async function ensureReadingBaseline(): Promise<string | null> {
   const now = nowIso();
   await updateProfile({ reading_baseline_at: now });
   return now;
+}
+
+// ============================================================================
+// Pulse
+// ============================================================================
+
+/** Every pulse ever captured. The day filter is the caller's — see lib/pulse. */
+export async function getPulses(): Promise<PulseRow[]> {
+  await hydrate();
+  return readPulseRows();
+}
+
+/**
+ * Capture one pulse.
+ *
+ * Two fields, both written once and never again: the text as the owner typed
+ * it, and the instant. Nothing else — the coder's derived fields arrive in
+ * phase 2 as a separate upsert that must not carry `text`, which is what makes
+ * field-level last-writer-wins unable to clobber a verbatim line.
+ *
+ * The text is stored with surrounding whitespace removed and nothing else
+ * touched. A trailing space is a keyboard artefact rather than an utterance;
+ * the fence is on rewriting meaning, and there is none in it.
+ *
+ * No network stands between this and a saved line: `commit` writes the outbox
+ * and rebuilds state, and the push happens later, or tomorrow, or never
+ * without the line being lost.
+ */
+export async function createPulse(text: string): Promise<PulseRow> {
+  await hydrate();
+
+  const entityId = newId();
+  await commit([
+    {
+      entity: ENTITY.pulse,
+      entityId,
+      type: 'upsert',
+      fields: { text: text.trim(), at: nowIso() },
+    },
+  ]);
+
+  return required(
+    readPulseRows().find((row) => row.id === entityId),
+    'create pulse'
+  );
+}
+
+/**
+ * Delete one pulse.
+ *
+ * A tombstone, like every other delete here: the line is gone on every device
+ * that folds it, and the journal still holds what was said. There is no edit —
+ * delete and retype is the whole edit story, which keeps "verbatim" a property
+ * of the record rather than a promise about a code path.
+ */
+export async function deletePulse(id: string): Promise<void> {
+  await hydrate();
+  await commit([{ entity: ENTITY.pulse, entityId: id, type: 'delete' }]);
 }
 
 // ============================================================================
