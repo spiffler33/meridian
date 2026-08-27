@@ -24,8 +24,9 @@ function AppContent() {
 
   // Mounted here rather than in a view: the calendar mirror is what the day is
   // planned against, so it refreshes when the app opens and on every focus,
-  // whichever pane happens to be showing. Nothing renders it yet.
-  useCalendar();
+  // whichever pane happens to be showing. One instance, passed down — two
+  // hooks would mean two cache reads and two copies of the same state.
+  const calendar = useCalendar();
 
   // Keyboard shortcuts
   useKeyboardShortcuts({
@@ -43,7 +44,7 @@ function AppContent() {
   const renderView = () => {
     switch (nav.view) {
       case 'tower':
-        return <TowerView />;
+        return <TowerView mirror={calendar.mirror} />;
       case 'habits':
         return (
           <HabitsView
@@ -56,6 +57,7 @@ function AppContent() {
       case 'week':
         return (
           <WeekView
+            mirror={calendar.mirror}
             selectedDate={nav.selectedDate}
             onDateSelect={handleHabitsDateSelect}
             onPreviousWeek={nav.goToPreviousWeek}

@@ -20,11 +20,13 @@ import { describe, expect, it } from 'vitest';
 import {
   STALE_AFTER_MS,
   dayKey,
+  dayShape,
   daysTouched,
   eventsForDay,
   eventsForDays,
   isMirrorStale,
   parseCalendar,
+  timeLabel,
   type CalendarEvent,
 } from './calendar';
 
@@ -321,5 +323,73 @@ describe('staleness', () => {
 
   it('claims nothing about a mirror that has never been read', () => {
     expect(isMirrorStale(null, midday)).toBe(false);
+  });
+});
+
+describe('the clock label', () => {
+  it('is the local 24-hour time, in whatever zone the device is in', () => {
+    expect(timeLabel('2026-08-27T01:30:00Z', SGT)).toBe('09:30');
+    expect(timeLabel('2026-08-27T01:30:00Z', LA)).toBe('18:30');
+  });
+
+  it('renders midnight as 00:00, never 24:00', () => {
+    expect(timeLabel('2026-08-26T16:00:00Z', SGT)).toBe('00:00');
+  });
+
+  it('is empty rather than a crash for a time that will not parse', () => {
+    expect(timeLabel('sometime', SGT)).toBe('');
+  });
+});
+
+describe('marking the day', () => {
+  // 09:30-10:00, 14:00-15:00 SGT, plus an all-day.
+  const standup = timed('standup', '2026-08-27T01:30:00Z', '2026-08-27T02:00:00Z');
+  const call = timed('call', '2026-08-27T06:00:00Z', '2026-08-27T07:00:00Z');
+  const trip = allDay('trip', '2026-08-27', '2026-08-28');
+  const day = [trip, standup, call];
+
+  const at = (iso: string) => Date.parse(iso);
+
+  it('marks the first event next before the day starts', () => {
+    const rows = dayShape(day, at('2026-08-27T00:00:00Z'));
+
+    expect(rows.filter(row => row.past)).toEqual([]);
+    expect(rows.find(row => row.next)?.event.id).toBe('standup');
+  });
+
+  it('marks the event you are sitting in, not the one after it', () => {
+    const rows = dayShape(day, at('2026-08-27T01:45:00Z'));
+
+    expect(rows.find(row => row.next)?.event.id).toBe('standup');
+    expect(rows.filter(row => row.past)).toEqual([]);
+  });
+
+  it('moves on the moment an event ends', () => {
+    const before = dayShape(day, at('2026-08-27T01:59:59Z'));
+    const after = dayShape(day, at('2026-08-27T02:00:00Z'));
+
+    expect(before.find(row => row.next)?.event.id).toBe('standup');
+    expect(after.find(row => row.next)?.event.id).toBe('call');
+    expect(after.filter(row => row.past).map(row => row.event.id)).toEqual(['standup']);
+  });
+
+  it('marks nothing next once the day is over', () => {
+    const rows = dayShape(day, at('2026-08-27T23:00:00Z'));
+
+    expect(rows.find(row => row.next)).toBeUndefined();
+    expect(rows.filter(row => row.past).map(row => row.event.id)).toEqual(['standup', 'call']);
+  });
+
+  it('never marks an all-day event past or next', () => {
+    const rows = dayShape(day, at('2026-08-27T23:00:00Z'));
+    const row = rows.find(entry => entry.event.id === 'trip');
+
+    expect(row).toMatchObject({ past: false, next: false });
+  });
+
+  it('keeps the order it was given', () => {
+    const rows = dayShape(day, at('2026-08-27T00:00:00Z'));
+
+    expect(rows.map(row => row.event.id)).toEqual(['trip', 'standup', 'call']);
   });
 });

@@ -211,3 +211,38 @@ meeting is on both days and one ending exactly at midnight is only on the first.
 when the day is first looked at. Its result is unused until Phase 2.
 
 **Not built, deliberately:** nothing renders in Today or Week yet — that is Phase 2.
+
+### 2026-08-27 — Phase 2: the strip on Tower, lanes in Week
+
+Green: `vitest` 488 passed / 25 files · `tsc -b` clean · `npm run build` clean ·
+`grep -rn "localStorage" src/` → 0 · lint 6 errors, all pre-existing.
+
+New: `src/components/DayShape.tsx`, `src/components/calendarUi.tsx`,
+`src/components/DayShape.test.tsx`, `src/views/WeekView.test.tsx`, plus `timeLabel`,
+`dayShape` and `deviceTimeZone` in `calendar.ts`.
+
+**The strip went on TowerView, not a "TodayView" — there is no TodayView.** The nav is
+tower · habits · week · year · read · settings. MITs still exist in the data model
+(`dailyData.mit.work/self/family`, counted by WeekView) but nothing renders them for editing
+any more; TowerView replaced that surface and is what the app opens to. So the strip sits
+directly above **Now**, which is where the day's commitments actually get chosen. `DayShape`
+takes all its inputs as props, so moving it to HabitsView is one line if this is wrong.
+
+**"Next" means the first timed event that has not finished**, so a meeting you are sitting in
+is the one lit, not the one after it. All-day events are never lit and never muted — they are
+the day's context, and marking one would spend the single accent on a whole-day fact.
+
+**`now` is read at render, and there is no ticker.** The strip refreshes when the app takes
+focus (the calendar sync sets state), which is when a phone is actually looked at. A
+`setInterval` re-render each minute would make the pip live while the app sits open —
+**not built; say the word.**
+
+**The dot and the all-day chip live in `calendarUi.tsx`**, on the `readUi.tsx` precedent, so
+Tower and Week cannot drift apart. 7px, matching the library's unread dot; the lit dot keeps
+its calendar colour and adds that dot's glow.
+
+WeekView caps a lane at 5 and shows `+n`. Muting there is per **day**, not per event: a day
+that is over recedes whole.
+
+**Not built, deliberately:** no event detail, no tap-through, no re-styling of the day cards
+beyond the lane the plan asked for.

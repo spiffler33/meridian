@@ -9,9 +9,13 @@ import { useState, useCallback } from 'react';
 import { useApp } from '../store/AppContext';
 import { TwoMinuteTimer } from '../components/TwoMinuteTimer';
 import { parseTowerInput, toTowerItemInput } from '../services/ai';
+import { DayShape } from '../components/DayShape';
+import { deviceTimeZone } from '../lib/calendar';
+import { getToday } from '../utils/dates';
+import type { CalendarMirror } from '../lib/calendar';
 import type { TowerItem } from '../types';
 
-export default function TowerView() {
+export default function TowerView({ mirror }: { mirror: CalendarMirror | null }) {
   const {
     state,
     addTowerItem,
@@ -112,6 +116,9 @@ export default function TowerView() {
           tower
         </h1>
       </div>
+
+      {/* What the day already has in it, before anything is chosen for it. */}
+      <DayShape mirror={mirror} date={getToday()} timeZone={deviceTimeZone()} now={Date.now()} />
 
       {/* NOW Section - Hero Item */}
       <section>

@@ -295,3 +295,68 @@ export function isMirrorStale(generatedAt: number | null, now: number): boolean 
   if (sgtHour < MIRROR_ACTIVE_FROM_HOUR) return false;
   return now - generatedAt > STALE_AFTER_MS;
 }
+
+/**
+ * An event's clock time in the device's zone, as `HH:MM`.
+ *
+ * 24-hour, and `hourCycle: 'h23'` rather than `hour12: false` — the latter
+ * renders midnight as 24:00 in several locales, so a day would open with an
+ * hour that does not exist. Read off parts for the same reason `dayKey` is:
+ * no locale may reorder or re-separate it.
+ */
+export function timeLabel(instant: string, timeZone: string): string {
+  const at = Date.parse(instant);
+  if (!Number.isFinite(at)) return '';
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).formatToParts(new Date(at));
+  const find = (type: string) => parts.find(part => part.type === type)?.value ?? '';
+  return `${find('hour')}:${find('minute')}`;
+}
+
+export interface DayRow {
+  event: CalendarEvent;
+  /** Over already. Only a day containing `now` has any of these. */
+  past: boolean;
+  /** The one to look at: happening now, or the next one to start. */
+  next: boolean;
+}
+
+/**
+ * A day's events marked for rendering: what is behind you, and what is next.
+ *
+ * "Next" is the first timed event that has not finished — so a meeting you are
+ * sitting in is the one marked, not the one after it. That is the honest
+ * answer to "what am I in the middle of", and it is what the strip is for.
+ *
+ * All-day events are never marked. They are the day's context, not the next
+ * thing to do, and marking one would spend the single accent on a whole-day
+ * fact that is already at the top of the list.
+ *
+ * The order in is the order out: `eventsForDay` already sorted it.
+ */
+export function dayShape(events: readonly CalendarEvent[], now: number): DayRow[] {
+  const rows = events.map(event => ({
+    event,
+    // An event that ended exactly now is over. The alternative keeps a
+    // finished meeting lit for the length of one render.
+    past: !event.allDay && Date.parse(event.end) <= now,
+    next: false,
+  }));
+  const upNext = rows.find(row => !row.event.allDay && !row.past);
+  if (upNext) upNext.next = true;
+  return rows;
+}
+
+/**
+ * The zone this device is in, which is the only zone events are rendered in.
+ *
+ * Falls back to UTC rather than throwing: a device that cannot name its own
+ * timezone should show the day slightly wrong, not show nothing.
+ */
+export function deviceTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+}

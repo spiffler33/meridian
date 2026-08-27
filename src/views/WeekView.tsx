@@ -7,9 +7,19 @@
 import { useMemo } from 'react';
 import { useApp } from '../store/AppContext';
 import { AiInsight } from '../components/AiInsight';
-import { getWeekDates, formatShortDate, getDayOfWeek, isToday, getWeekNumber } from '../utils/dates';
+import { getWeekDates, formatShortDate, getDayOfWeek, isToday, getWeekNumber, getToday } from '../utils/dates';
+import { AllDayChip, Dot } from '../components/calendarUi';
+import { deviceTimeZone, eventsForDays, timeLabel } from '../lib/calendar';
+import type { CalendarEvent, CalendarMirror } from '../lib/calendar';
+
+/**
+ * How many events a day card shows before it stops counting them out. Past
+ * five the card stops being a glance and starts being a list.
+ */
+const LANE_CAP = 5;
 
 interface WeekViewProps {
+  mirror: CalendarMirror | null;
   selectedDate: string;
   onDateSelect: (date: string) => void;
   onPreviousWeek: () => void;
@@ -18,6 +28,8 @@ interface WeekViewProps {
 
 interface DayCardProps {
   date: string;
+  events: CalendarEvent[];
+  timeZone: string;
   mitCount: { total: number; completed: number };
   habitCount: { total: number; completed: number };
   hasReflection: boolean;
@@ -25,8 +37,22 @@ interface DayCardProps {
   onClick: () => void;
 }
 
-function DayCard({ date, mitCount, habitCount, hasReflection, isSelected, onClick }: DayCardProps) {
+function DayCard({
+  date,
+  events,
+  timeZone,
+  mitCount,
+  habitCount,
+  hasReflection,
+  isSelected,
+  onClick,
+}: DayCardProps) {
   const today = isToday(date);
+  // A day that is over is context, not a plan. The whole lane recedes rather
+  // than each row arguing for itself.
+  const past = date < getToday();
+  const shown = events.slice(0, LANE_CAP);
+  const hidden = events.length - shown.length;
 
   return (
     <button
@@ -65,16 +91,68 @@ function DayCard({ date, mitCount, habitCount, hasReflection, isSelected, onClic
           </span>
         </div>
       </div>
+
+      {shown.length > 0 && (
+        <div className="mt-2 space-y-1 border-t border-sp-hair pt-2">
+          {shown.map(event =>
+            event.allDay ? (
+              <div key={event.id} className="flex">
+                <AllDayChip event={event} faded={past} />
+              </div>
+            ) : (
+              <div key={event.id} className="flex items-baseline gap-1.5">
+                <span className="translate-y-[-2px]">
+                  <Dot calendar={event.calendar} />
+                </span>
+                <span
+                  className={`flex-shrink-0 font-mono text-[10.5px] tabular-nums ${
+                    past ? 'text-sp-faint' : 'text-sp-muted'
+                  }`}
+                >
+                  {timeLabel(event.start, timeZone)}
+                </span>
+                <span
+                  className={`truncate font-mono text-[10.5px] ${
+                    past ? 'text-sp-faint' : 'text-sp-muted'
+                  }`}
+                >
+                  {event.title}
+                </span>
+              </div>
+            )
+          )}
+          {hidden > 0 && (
+            <div className="font-mono text-[10.5px] text-sp-faint">+{hidden}</div>
+          )}
+        </div>
+      )}
     </button>
   );
 }
 
-export function WeekView({ selectedDate, onDateSelect, onPreviousWeek, onNextWeek }: WeekViewProps) {
+export function WeekView({
+  mirror,
+  selectedDate,
+  onDateSelect,
+  onPreviousWeek,
+  onNextWeek,
+}: WeekViewProps) {
   const { state, getDailyData, getHabitCount, getHabitStreak } = useApp();
-  const weekDates = getWeekDates(selectedDate, state.settings.weekStartsOn);
+  // Memoised because the event buckets below key off it: a fresh array every
+  // render would rebuild them every render.
+  const weekDates = useMemo(
+    () => getWeekDates(selectedDate, state.settings.weekStartsOn),
+    [selectedDate, state.settings.weekStartsOn]
+  );
   const weekNumber = getWeekNumber(selectedDate);
   const habits = state.settings.habits;
   const selectedDayData = getDailyData(selectedDate);
+  const timeZone = deviceTimeZone();
+  // One pass over the mirror for the whole week, rather than one per card.
+  const eventsByDay = useMemo(
+    () => eventsForDays(mirror, weekDates, timeZone),
+    [mirror, weekDates, timeZone]
+  );
 
   // Calculate streaks for all habits (for AI insight)
   const habitStreaks = useMemo(() => {
@@ -155,6 +233,8 @@ export function WeekView({ selectedDate, onDateSelect, onPreviousWeek, onNextWee
             <DayCard
               key={date}
               date={date}
+              events={eventsByDay.get(date) ?? []}
+              timeZone={timeZone}
               mitCount={{ total: dayMits, completed: dayCompletedMits }}
               habitCount={{ total: habits.length, completed: dayHabitCount }}
               hasReflection={dayData.reflection.length > 0}
