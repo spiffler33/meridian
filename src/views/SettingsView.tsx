@@ -14,6 +14,7 @@ import type { AiTone } from '../services/claude';
 import { createHabit, updateHabit as updateHabitInDb, deleteHabit as deleteHabitInDb } from '../services/data';
 import { clearToken, getDeviceId, getToken, requestPersistence, setMeta, setToken } from '../lib/db';
 import { NewslettersSettings } from '../components/NewslettersSettings';
+import { CalendarSettings } from '../components/CalendarSettings';
 import { GITHUB_OWNER, GITHUB_REPO, isJournalDeviceId, listJournal, verifyAccess } from '../lib/github';
 
 interface HabitEditorProps {
@@ -605,6 +606,8 @@ export function SettingsView() {
 
       {/* Newsletters, the reading pane's source repo */}
       <NewslettersSettings />
+
+      <CalendarSettings />
 
       {/* Storage */}
       <section className="bg-bg-card rounded border border-border p-4">

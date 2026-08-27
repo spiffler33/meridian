@@ -159,3 +159,53 @@ the calendar back. Singapore timezone.*
 
 Determinism note: temperature default; the day-cache makes reruns deliberate rather than
 slot-machine.
+
+---
+
+## Run log
+
+### 2026-08-27 — Phase 1: multi-repo transport + calendar data layer
+
+Green: `vitest` 462 passed / 23 files · `tsc -b` clean · `npm run build` clean ·
+`grep -rn "localStorage" src/` → 0 · lint 6 errors, all pre-existing.
+
+New: `src/lib/gitread.ts`, `src/lib/calendar.ts`, `src/lib/calendarSync.ts`,
+`src/hooks/useCalendar.ts`, `src/components/CalendarSettings.tsx`, and tests for each.
+Gone: `src/lib/newsletters.ts` (became `gitread.ts`).
+
+**The namespace lives in `db.ts`, not in its callers.** `getCachedContent(repo, path)` /
+`putCachedContent(repo, record)` / `cachedContentShas(repo)` take the repo and deal in plain
+repo paths; the `<repo>:<path>` key is added and stripped inside. Callers cannot forget to
+apply it, and `ContentCacheRecord.path` still means what it says.
+
+**The v2→v3 rename is a delete and a put, not `cursor.update()`.** The record's `path` field
+*is* the store's keyPath, and updating a record to a value whose key path evaluates to a
+different key is a `DataError` that aborts the whole upgrade transaction. Found by the
+migration test, which is the only reason it was not found on a device.
+
+**`nlHeadSha` / `nlTree` / `nlTreeFetchedAt` are deleted by the upgrade**, as the plan said —
+not renamed. Cost is one tree fetch on the first open after updating.
+
+**One token, and the meta key keeps its old name.** `newslettersToken` now serves both mirrors
+(fence 4). Renaming it to something repo-neutral would have been tidier and would have made
+every device re-enter the PAT for nothing.
+
+**`eventsForWeek(weekStart, tz)` shipped as `eventsForDays(mirror, dates, tz)`.** The week view
+already computes its seven dates with `getWeekDates(date, weekStartsOn)`, which is where the
+Monday/Sunday convention lives; a selector that took a week start would have had to duplicate
+that convention and could then disagree with the view above it. It buckets in one pass and
+returns every date asked for, empty ones included, so Phase 2 can render without existence
+checks. **Amend this if you want the original signature back.**
+
+**Staleness is arithmetic on the epoch, not an `Intl` timezone lookup** — Singapore has had no
+DST since 1935, so SGT is `+08:00` forever, and `isMirrorStale` is quiet before 06:00 SGT
+because the action is not scheduled then. 90 min = two missed runs.
+
+**All-day events never pass through a timezone.** Their dates are literal in every zone and the
+end date is exclusive. Timed events appear on every local day they touch, so a 23:00–01:00
+meeting is on both days and one ending exactly at midnight is only on the first.
+
+`useCalendar()` is mounted in `AppContent`, not in a view: the mirror must already be current
+when the day is first looked at. Its result is unused until Phase 2.
+
+**Not built, deliberately:** nothing renders in Today or Week yet — that is Phase 2.

@@ -11,6 +11,7 @@ import { Layout } from './components/Layout';
 import { ViewBoundary } from './components/ViewBoundary';
 import { useNavigation } from './hooks/useNavigation';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useCalendar } from './hooks/useCalendar';
 import TowerView from './views/TowerView';
 import { HabitsView } from './views/HabitsView';
 import { WeekView } from './views/WeekView';
@@ -20,6 +21,11 @@ import { SettingsView } from './views/SettingsView';
 
 function AppContent() {
   const nav = useNavigation();
+
+  // Mounted here rather than in a view: the calendar mirror is what the day is
+  // planned against, so it refreshes when the app opens and on every focus,
+  // whichever pane happens to be showing. Nothing renders it yet.
+  useCalendar();
 
   // Keyboard shortcuts
   useKeyboardShortcuts({
