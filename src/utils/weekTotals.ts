@@ -9,7 +9,7 @@
 
 import type { DailyData } from '../types';
 
-export interface WeekTotals {
+interface WeekTotals {
   totalMits: number;
   completedMits: number;
   daysWithNotes: number;

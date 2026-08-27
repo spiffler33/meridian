@@ -82,11 +82,11 @@ describe('a view that throws while rendering', () => {
     expect(screen.getByText('the tower view stopped working')).toBeInTheDocument();
 
     rerender(
-      <ViewBoundary key="week" view="week">
-        <div>the week view</div>
+      <ViewBoundary key="read" view="read">
+        <div>the read view</div>
       </ViewBoundary>
     );
-    expect(screen.getByText('the week view')).toBeInTheDocument();
+    expect(screen.getByText('the read view')).toBeInTheDocument();
     expect(screen.queryByText('the tower view stopped working')).not.toBeInTheDocument();
   });
 

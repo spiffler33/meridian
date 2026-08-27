@@ -271,3 +271,53 @@ per-type Settings toggle, all off by default; `vocabProposal` has no auto option
    `OPEN_BLOCK_CAP`, a named constant — tune at Gate 3.
 4. `state` / `note` / `plan` pulses never close a block and never carry duration into
    the ledger; `plan` spans (travel dates) are excluded from Spent.
+
+---
+
+## Run log
+
+### 2026-08-27 — Phase 0: reading v1.1 + IA restructure
+
+Green: `vitest` 510 passed / 26 files · `tsc -b` clean · `npm run build` clean ·
+`grep -rn "localStorage" src/` → 0 · lint 6 errors, all pre-existing (unchanged count).
+
+Deployed straight to `main` at spiff's instruction — the read PAT and the real mirrors exist
+only on `meridian.spiffler.xyz`, so a localhost review proves nothing.
+
+New: `src/utils/weekTotals.ts`, `src/components/Layout.test.tsx`.
+Gone: `'week'` from `ViewType`; the Library and Settings tabs from their rails.
+
+**The fold rule is `isSpent`, and it is deliberately not `!isUnread`.** Undated material — an
+essay, a canon day — is never *unread*, because a reference must never alarm; but it is only
+*spent* once the owner marks it. Reusing `isUnread` would have folded every essay and every
+canon day on day one, and the lists would have opened empty and read as broken. Two extra
+cases carry the same idea: a canon day that has **not arrived** never folds (it was not read,
+it was not written), and the chart the rail is currently showing never folds out from under
+the reader. Both are `keep` on the `Backlog` row.
+
+**The reveal is a look, not a setting.** State lives in the `Backlog` component and dies with
+it, per the plan. Nothing is persisted and nothing is journalled.
+
+**The week became a lens without becoming a prop drill.** `weekOpen` is held in `App` rather
+than in `YearView`, because `w` has to open it from anywhere; it is deliberately kept out of
+the hash — it is a look at the year, not an address. `weekTotals` moved to `src/utils/` rather
+than being exported from `WeekView.tsx`: exporting a function beside a component adds a
+seventh `react-refresh/only-export-components` lint error, and the pre-existing count of six
+is a documented verification baseline.
+
+**Two departures from the letter of the phase, both for Gate 0 to rule on.** The phase says
+"Library leaves the tab rail. Rail becomes Tape · Chart · Canon · Essays" — an end state with
+no Brief in it, while the instruction names only the Library. **Brief was kept**: nothing in
+the phase says where briefs would go instead, and removing a surface with no route-preservation
+clause is the destructive reading. Its list folds like the others. Likewise **Habits kept its
+tab and its `h`** — "T/R/Y are the primaries" reads as naming the poles, not as a removal
+order, and only Week is listed as leaving.
+
+**GATE 0 is unrun.** It is spiff's, on the phone: does Read feel cleaner, and does Year-with-a-
+week-lens feel right, or is Week missed?
+
+### 2026-08-27 — amendment: pulse ids
+
+`ulid` → `newId()` (`entities.ts`), at spiff's instruction. The fold orders by
+`(ts, device, seq, id)` and a pulse's `ts` is its capture time, so the envelope already puts
+the stream in order; `id` is the final tiebreak and nothing else. Appendix A amended in place.
