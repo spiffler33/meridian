@@ -64,9 +64,10 @@ Tests: parser (good, malformed, all-day exclusivity, tz), key-namespace migratio
 selector day/week edges (midnight-crossing event, week boundary Sunday/Monday per existing
 week convention), staleness threshold function.
 
-**GATE 1:** Settings shows the mirror synced with a believable count; airplane-mode open
-still serves cached events; journal untouched (`meridian-data` log shows zero new lines
-from this phase). STOP.
+**GATE 1 — PASSED on device, 2026-08-27.** Settings read `136 events · db · home · personal ·
+2026-08-20 → 2026-10-26`, matching the mirror's own commit exactly; still 136 in airplane mode;
+`verify access` returned "read access confirmed"; the last `meridian-data` commit predated the
+deploy by two hours, so the journal took nothing from this phase.
 
 ---
 
@@ -93,9 +94,13 @@ Build:
 Tests: strip ordering (all-day → timed), next-up selection at boundary times, week lane
 cap/+n, muting rules, stale-note rendering.
 
-**GATE 2 — the real test happens at 07:00 with coffee:** set tomorrow's MITs against the
-strip on the phone. Does the day's shape change what you pick? If it doesn't, Phase 3 has
-nothing to synthesize — say so before proceeding. STOP.
+**GATE 2 — UNRUN as of 2026-08-27. The real test happens at 07:00 with coffee:** pick the day's
+work against the strip on the phone. Does the day's shape change what you pick? If it doesn't,
+Phase 3 has nothing to synthesize — say so before proceeding. STOP.
+
+Read this as "set the day's commitments", not literally MITs: `dailyData.mit.*` still exists in the
+data model and WeekView still counts it, but no view renders it for editing any more. TowerView
+replaced that surface, which is why the strip sits there.
 
 ---
 
