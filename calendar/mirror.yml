@@ -1,0 +1,54 @@
+# Place at: .github/workflows/mirror.yml
+name: mirror
+
+on:
+  schedule:
+    - cron: "*/30 22-23,0-16 * * *"   # every 30 min, 06:00–00:30 SGT (cron is UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install --quiet icalendar recurring-ical-events requests
+
+      - name: Mirror calendars
+        env:
+          ICS_HOME: ${{ secrets.ICS_HOME }}
+          ICS_PERSONAL: ${{ secrets.ICS_PERSONAL }}
+          ICS_DB: ${{ secrets.ICS_DB }}
+          # Add one line per additional ICS_* secret — secrets cannot be enumerated.
+          PRIVATE_CALS: ""              # e.g. "db" → titles replaced by calendar name
+        run: python scripts/mirror.py
+
+      - name: Commit if changed (heartbeat if idle 21d)
+        run: |
+          git config user.name  "calendar-mirror"
+          git config user.email "actions@users.noreply.github.com"
+          git add events.json
+          if ! git diff --cached --quiet; then
+            git commit -m "mirror: $(date -u +%FT%TZ)"
+            git push
+          elif [ $(( $(date +%s) - $(git log -1 --format=%ct) )) -gt 1814400 ]; then
+            mkdir -p meta
+            date -u +%FT%TZ > meta/heartbeat
+            git add meta/heartbeat
+            git commit -m "heartbeat"
+            git push
+          else
+            echo "no changes"
+          fi

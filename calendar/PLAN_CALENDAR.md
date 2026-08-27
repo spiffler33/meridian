@@ -1,0 +1,161 @@
+# PLAN — Calendar in meridian (mirror-read, three phases)
+
+Meridian gains the day's real shape: events from `spiffler33/calendar-data`, a private repo
+written only by its own scheduled Action (see that repo's README). Meridian reads it exactly
+like it reads newsletters. Google Calendar remains the editing and alerting surface — we
+mirror it, we do not rebuild it.
+
+## How to execute this plan
+
+- **One phase per run. Stop at every gate.** Owner reviews on device between phases and may
+  amend this file. Phase 3 is optional and runs only if the owner asks for it by name.
+- Work lands on `local-first`. Never push `main` mid-phase.
+- Each phase ends: `vitest` green, `grep -rn "localStorage" src/` → 0, gate checklist met.
+- Conflicts with `CLAUDE.md` ⇒ stop and ask. `CLAUDE.md` wins on journal, sync, tokens.
+
+## Hard fences (all phases)
+
+1. **The app never writes to `calendar-data`.** The Action is the only writer.
+2. **Events are a mirror, never journal.** They live in `contentCache` only. The journal is
+   for state the owner authors; mirrored third-party data in an append-only-forever log is
+   bloat with someone else's source of truth. No `event` entity exists. Ever, in this plan.
+3. Transport stays **trees + blobs** (reading-pane fence 2 applies unchanged).
+4. One read token serves both mirrors: the existing read-only fine-grained PAT, extended on
+   github.com to select `calendar-data`. Same `meta` key; same never-log/never-URL rules.
+5. **No Google OAuth in this plan.** If live freshness or write-actions are ever wanted,
+   that is a new plan with a new trust model — not a phase here.
+6. Title hygiene for the work calendar is enforced **at source** (owner discipline +
+   `PRIVATE_CALS` in the mirror). Meridian renders what arrives; it does not redact.
+7. Staleness is surfaced honestly: `generated_at` older than 90 min during 06:00–24:00 SGT
+   shows an amber "mirror stale since HH:MM" note wherever events render. Silent staleness
+   is a bug (same doctrine as backup status).
+8. Design: setpoint tokens; calendar is an **instrument** — mono type, calendar-dot accents
+   per Appendix B. No decorative timeline art.
+
+---
+
+## Phase 1 — Multi-repo transport + calendar data layer
+
+**Goal:** the reading pane's transport generalizes to N repos; `events.json` parses; Settings
+tells the truth about the mirror. Nothing renders in Today/Week yet.
+
+Build:
+- Generalize `src/lib/newsletters.ts` → `src/lib/gitread.ts`: same five calls
+  (`verifyReadAccess`, `getHeadSha`, `getTree`, `getBlob`, sync-diff), parameterized by
+  `{owner, repo}`. Newsletters call sites migrate; behaviour identical.
+- **`contentCache` keys gain a repo namespace: `<repo>:<path>`.** IndexedDB `meridian`
+  **v2 → v3**: `onupgradeneeded` rewrites existing bare keys to `newsletters:<path>`
+  in place and touches nothing else. Migration test proves v2 data (both stores' content)
+  survives byte-identical apart from keys.
+- Per-repo meta: `gitread:<repo>:headSha` (+ fetchedAt). Old `nlHeadSha` is dropped, not
+  migrated — cost is one extra tree fetch on first run, which is fine.
+- `src/lib/calendar.ts`: parse `events.json` per the schema in `calendar-data`'s README.
+  Malformed file ⇒ typed error surfaced in Settings, never a throw into render. Selectors
+  (pure, tested): `eventsForDay(date, tz)`, `eventsForWeek(weekStart, tz)` — UTC→device-tz
+  conversion, all-day handling (**end date exclusive**), sort all-day first then by start.
+- Sync-on-open/focus: calendar-data joins the same head-sha-first flow; `events.json` is
+  state-tier (fetched when changed, small).
+- Settings: "Calendar mirror" block — last `generated_at`, event count, staleness state,
+  verify against the shared read PAT.
+
+Tests: parser (good, malformed, all-day exclusivity, tz), key-namespace migration v2→v3,
+selector day/week edges (midnight-crossing event, week boundary Sunday/Monday per existing
+week convention), staleness threshold function.
+
+**GATE 1:** Settings shows the mirror synced with a believable count; airplane-mode open
+still serves cached events; journal untouched (`meridian-data` log shows zero new lines
+from this phase). STOP.
+
+---
+
+## Phase 2 — Render: Today gets its day-shape, Week gets its lanes
+
+**Goal:** the owner sets MITs against the actual day. Read-only, instrument-styled.
+
+Build:
+- **TodayView — "Day shape" strip** above/beside MITs:
+  - All-day chips first (mono, hairline border, calendar dot).
+  - Timed events in order: `HH:MM–HH:MM` mono · title · calendar dot (Appendix B colors).
+  - Past events muted (`--faint`); the **next-up** event carries the amber pip treatment
+    (borrowed from setpoint's focus pip — one accent, not a light show).
+  - Location renders only if present, muted, truncated to one line.
+  - Empty day: "no events mirrored today" — a statement, not an alarm. Stale mirror: the
+    fence-7 amber note as a strip footer.
+- **WeekView:** under each day's existing content, a stacked mini-list — up to 5 events
+  (`HH:MM title`, mono 12px) then `+n`. All-day chips inline. Same dots, same muting for
+  past days.
+- No event detail view, no tap-through in this phase — titles are the payload; Google is
+  one swipe away for depth. (Keeps scope honest; revisit only if the gate demands it.)
+- Fixtures for both views incl. midnight-crossing and all-day multi-day spans.
+
+Tests: strip ordering (all-day → timed), next-up selection at boundary times, week lane
+cap/+n, muting rules, stale-note rendering.
+
+**GATE 2 — the real test happens at 07:00 with coffee:** set tomorrow's MITs against the
+strip on the phone. Does the day's shape change what you pick? If it doesn't, Phase 3 has
+nothing to synthesize — say so before proceeding. STOP.
+
+---
+
+## Phase 3 (OPTIONAL, owner-invoked) — "Shape my day": the first assistant seam
+
+**Goal:** the first sanctioned piece of the AI layer. One button on TodayView that turns
+commitments + intentions + inputs into a grounded note. Advises, never acts.
+
+Build:
+- Button "Shape my day" on TodayView (and nowhere else). On tap, one client-side call via
+  the existing `claude.ts` plumbing (`claudeApiKey`, direct-browser header, existing error
+  handling). **Never auto-runs.**
+- Input assembly (a pure, testable function — the prompt sees a derived slice, never raw
+  stores): today's events `{start, end, title, calendar}` · today's MITs `{text, status}` ·
+  habits due today `{name, done}` · Read unread count (single integer). **Nothing else.**
+  No journal history, no reflections, no reading content, no tokens, no location beyond
+  what an event title carries.
+- Contract in Appendix C: 4–6 sentences, plain text, names the actual free gaps by time,
+  slots the MITs, flags at most one conflict/risk. No headers, no bullets, no praise, no
+  generic advice. `max_tokens` 400. Model `claude-sonnet-4-6`.
+- Cache the note for the day in `meta` (`dayShape:<date>`); repeat taps are free; a
+  "regenerate" affordance bypasses the cache.
+- Offline / no key / API error ⇒ the button explains itself in one line; the strip still
+  stands alone. The feature degrades to absence, never to breakage.
+- **At this gate the owner decides the fate of the daily insight** (fortune cookie): keep,
+  or deprecate in favour of this. Record the decision in this file.
+
+Tests: input-assembly slice (proves the allowlist — build a fixture state and assert the
+assembled payload contains nothing outside it), day-cache keying, error/offline states.
+
+**GATE 3:** a week of real mornings. The note must have changed a decision at least once —
+otherwise it's the horoscope with a calendar, and it should be turned off without
+sentimentality. STOP. Plan complete.
+
+---
+
+## Appendix A — Data source
+
+Schema, window, timing, and security posture are owned by `calendar-data/README.md`.
+Meridian treats that README as the contract; parser changes follow schema changes there,
+never the reverse.
+
+## Appendix B — Calendar accents
+
+| calendar | dot |
+|---|---|
+| `home` | `--green` |
+| `personal` | `--ice` |
+| `db` | `--amber` |
+| anything else | `--muted` |
+
+Dots are 7px, matching the Library unread dot geometry. The dot is the only per-calendar
+color; titles stay `--ink`/`--muted` — the strip is an instrument, not a rainbow.
+
+## Appendix C — "Shape my day" prompt contract (sketch, finalize in-phase)
+
+System intent: *You are the day-shape note inside a personal cockpit. Input is JSON:
+events, MITs, habits due, unread count. Write 4–6 plain sentences. Name the real free
+gaps by clock time and say which MIT goes where and why it fits that gap. If commitments
+collide with an MIT or the day is overpacked, say so once, plainly. If the day is light,
+say what that's good for. No headers, no lists, no motivation, no praise, no restating
+the calendar back. Singapore timezone.*
+
+Determinism note: temperature default; the day-cache makes reruns deliberate rather than
+slot-machine.
