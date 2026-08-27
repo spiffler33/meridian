@@ -10,7 +10,7 @@
 
 import { getCachedContent, getMeta, putCachedContent } from './db';
 import { GitHubError } from './github';
-import { getBlob, type TreeEntry } from './newsletters';
+import { NEWSLETTERS, getBlob, type TreeEntry } from './gitread';
 
 /** A file that is missing, unreadable, or not what it claimed to be — named. */
 export class ContentError extends Error {
@@ -38,12 +38,12 @@ const FIGURES_FILE = 'figures.md';
 export const TAPE_PATH = 'state/tape.json';
 
 export async function cachedTree(): Promise<TreeEntry[]> {
-  const tree = await getMeta<unknown>('nlTree');
+  const tree = await getMeta<unknown>('gitread:newsletters:tree');
   return Array.isArray(tree) ? (tree as TreeEntry[]) : [];
 }
 
 export async function cachedText(path: string): Promise<string | null> {
-  const record = await getCachedContent(path);
+  const record = await getCachedContent('newsletters', path);
   return record?.text ?? null;
 }
 
@@ -181,7 +181,7 @@ export interface SourceEntry {
 }
 
 async function readOrFetch(entry: TreeEntry): Promise<string> {
-  const cached = await getCachedContent(entry.path);
+  const cached = await getCachedContent('newsletters', entry.path);
   if (cached && cached.sha === entry.sha) return cached.text;
 
   const token = await getMeta<string>('newslettersToken');
@@ -189,10 +189,15 @@ async function readOrFetch(entry: TreeEntry): Promise<string> {
     throw new ContentError('this file has not been downloaded to this device', entry.path);
   }
 
-  const text = await getBlob(token, entry.sha);
+  const text = await getBlob(token, NEWSLETTERS, entry.sha);
   // Cached on the way past: the second open of an entry is offline-capable,
   // and that is the whole reason a reader is worth having on a phone.
-  await putCachedContent({ path: entry.path, text, sha: entry.sha, fetchedAt: Date.now() });
+  await putCachedContent('newsletters', {
+    path: entry.path,
+    text,
+    sha: entry.sha,
+    fetchedAt: Date.now(),
+  });
   return text;
 }
 

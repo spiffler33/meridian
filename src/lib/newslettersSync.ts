@@ -1,7 +1,7 @@
 /**
  * Newsletters sync and the selectors it runs on.
  *
- * The transport in newsletters.ts knows GitHub; this knows what to ask it for
+ * The transport in gitread.ts knows GitHub; this knows what to ask it for
  * and where the answers go. It is deliberately outside the meridian-data
  * queue: a different repo, a different token, no shared lock. A read of the
  * library can never block or be blocked by a backup of the journal.
@@ -16,7 +16,14 @@
  */
 
 import { getCachedContent, getMeta, putCachedContent, cachedContentShas, setMeta } from './db';
-import { getBlob, getHeadSha, getTree, type TreeEntry } from './newsletters';
+import {
+  NEWSLETTERS,
+  getBlob,
+  getHeadSha,
+  getTree,
+  selectStale,
+  type TreeEntry,
+} from './gitread';
 
 /**
  * Fetched on every sync: everything the pane renders from. Tens of files, and
@@ -71,20 +78,6 @@ export function selectStateTier(tree: readonly TreeEntry[]): TreeEntry[] {
     if (basename(entry.path) === PLACEHOLDER_NAME) return false;
     return STATE_TIER.some(prefix => entry.path === prefix || entry.path.startsWith(prefix));
   });
-}
-
-/**
- * What is wanted and is not already held at that exact sha.
- *
- * The comparison is against what the cache actually holds rather than against
- * the last tree we saw: a sync that dies half way through leaves the files it
- * managed to fetch cached, and the next one picks up only what is missing.
- */
-export function selectStale(
-  wanted: readonly TreeEntry[],
-  cached: ReadonlyMap<string, string>
-): TreeEntry[] {
-  return wanted.filter(entry => cached.get(entry.path) !== entry.sha);
 }
 
 /**
@@ -158,9 +151,9 @@ function cachedTree(value: unknown): TreeEntry[] {
  * the pane paints first, every time, including on an airplane-mode cold open.
  */
 export async function loadLibrary(): Promise<LibraryEntry[]> {
-  const tree = cachedTree(await getMeta<unknown>('nlTree'));
+  const tree = cachedTree(await getMeta<unknown>('gitread:newsletters:tree'));
   if (tree.length === 0) return [];
-  const gists = await getCachedContent(GISTS_PATH);
+  const gists = await getCachedContent('newsletters', GISTS_PATH);
   return buildLibrary(tree, gists?.text ?? '');
 }
 
@@ -187,9 +180,9 @@ export function syncNewsletters(token: string): Promise<SyncResult> {
 }
 
 async function runSync(token: string): Promise<SyncResult> {
-  const head = await getHeadSha(token);
-  const knownHead = await getMeta<unknown>('nlHeadSha');
-  const tree = cachedTree(await getMeta<unknown>('nlTree'));
+  const head = await getHeadSha(token, NEWSLETTERS);
+  const knownHead = await getMeta<unknown>('gitread:newsletters:headSha');
+  const tree = cachedTree(await getMeta<unknown>('gitread:newsletters:tree'));
 
   // The cheapest possible answer: the repo has not moved, and the tree we have
   // still describes it. Nothing further is read.
@@ -197,20 +190,25 @@ async function runSync(token: string): Promise<SyncResult> {
     return { changed: false, fetched: 0, head };
   }
 
-  const fresh = await getTree(token, head);
-  await setMeta('nlTree', fresh);
+  const fresh = await getTree(token, NEWSLETTERS, head);
+  await setMeta('gitread:newsletters:tree', fresh);
 
-  const stale = selectStale(selectStateTier(fresh), await cachedContentShas());
+  const stale = selectStale(selectStateTier(fresh), await cachedContentShas('newsletters'));
   for (const entry of stale) {
-    const text = await getBlob(token, entry.sha);
-    await putCachedContent({ path: entry.path, text, sha: entry.sha, fetchedAt: Date.now() });
+    const text = await getBlob(token, NEWSLETTERS, entry.sha);
+    await putCachedContent('newsletters', {
+      path: entry.path,
+      text,
+      sha: entry.sha,
+      fetchedAt: Date.now(),
+    });
   }
 
   // Recorded last, and only together. A head stored before its files had
   // landed would tell the next open that everything was already here, and the
   // missing files would never be fetched again.
-  await setMeta('nlTreeFetchedAt', Date.now());
-  await setMeta('nlHeadSha', head);
+  await setMeta('gitread:newsletters:fetchedAt', Date.now());
+  await setMeta('gitread:newsletters:headSha', head);
 
   return { changed: true, fetched: stale.length, head };
 }

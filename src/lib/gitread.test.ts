@@ -1,5 +1,5 @@
 /**
- * The newsletters read transport.
+ * The mirror read transport.
  *
  * Four things carry real risk here and are what this covers: that a read grant
  * is proved by a read and that a rate limit never reads as a bad token; that a
@@ -16,17 +16,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { GitHubError } from './github';
 import {
-  NEWSLETTERS_BRANCH,
-  NEWSLETTERS_OWNER,
-  NEWSLETTERS_REPO,
+  NEWSLETTERS,
   getBlob,
   getHeadSha,
   getTree,
+  selectStale,
   verifyReadAccess,
-} from './newsletters';
+} from './gitread';
 
 const TOKEN = 'test-token-not-a-real-pat';
-const REPO_BASE = `https://api.github.com/repos/${NEWSLETTERS_OWNER}/${NEWSLETTERS_REPO}`;
+const REPO_BASE = `https://api.github.com/repos/${NEWSLETTERS.owner}/${NEWSLETTERS.repo}`;
 
 interface Call {
   method: string;
@@ -68,22 +67,22 @@ afterEach(() => {
 
 describe('verifying read access', () => {
   it('is proved by a read that returns the repo', async () => {
-    serve([{ body: { full_name: `${NEWSLETTERS_OWNER}/${NEWSLETTERS_REPO}` } }]);
+    serve([{ body: { full_name: `${NEWSLETTERS.owner}/${NEWSLETTERS.repo}` } }]);
 
-    await expect(verifyReadAccess(TOKEN)).resolves.toEqual({ ok: true });
+    await expect(verifyReadAccess(TOKEN, NEWSLETTERS)).resolves.toEqual({ ok: true });
     expect(calls).toEqual([{ method: 'GET', url: REPO_BASE }]);
   });
 
   it('reads a private repo it cannot see (404) as no access', async () => {
     serve([{ status: 404 }]);
-    const result = await verifyReadAccess(TOKEN);
+    const result = await verifyReadAccess(TOKEN, NEWSLETTERS);
     expect(result.ok).toBe(false);
     expect(result.reason).toContain('cannot read that repo');
   });
 
   it('reads a refusal (403) as no access', async () => {
     serve([{ status: 403 }]);
-    const result = await verifyReadAccess(TOKEN);
+    const result = await verifyReadAccess(TOKEN, NEWSLETTERS);
     expect(result.ok).toBe(false);
     expect(result.reason).toContain('cannot read that repo');
   });
@@ -91,7 +90,7 @@ describe('verifying read access', () => {
   it('never blames the token for a rate limit', async () => {
     serve([{ status: 403, headers: { 'x-ratelimit-remaining': '0' } }]);
 
-    const result = await verifyReadAccess(TOKEN);
+    const result = await verifyReadAccess(TOKEN, NEWSLETTERS);
 
     expect(result.ok).toBe(false);
     expect(result.reason).toContain('the token is fine');
@@ -100,7 +99,7 @@ describe('verifying read access', () => {
   it('says it could not check rather than claiming no access, when offline', async () => {
     vi.stubGlobal('fetch', () => Promise.reject(new TypeError('failed to fetch')));
 
-    const result = await verifyReadAccess(TOKEN);
+    const result = await verifyReadAccess(TOKEN, NEWSLETTERS);
 
     expect(result.ok).toBe(false);
     expect(result.reason).toContain('could not reach github');
@@ -111,13 +110,13 @@ describe('the head check', () => {
   it('asks the default branch for its commit', async () => {
     serve([{ body: { commit: { sha: 'abc123' } } }]);
 
-    await expect(getHeadSha(TOKEN)).resolves.toBe('abc123');
-    expect(calls[0].url).toBe(`${REPO_BASE}/branches/${NEWSLETTERS_BRANCH}`);
+    await expect(getHeadSha(TOKEN, NEWSLETTERS)).resolves.toBe('abc123');
+    expect(calls[0].url).toBe(`${REPO_BASE}/branches/${NEWSLETTERS.branch}`);
   });
 
   it('refuses a body with no sha in it rather than returning an empty one', async () => {
     serve([{ body: { commit: {} } }]);
-    await expect(getHeadSha(TOKEN)).rejects.toBeInstanceOf(GitHubError);
+    await expect(getHeadSha(TOKEN, NEWSLETTERS)).rejects.toBeInstanceOf(GitHubError);
   });
 });
 
@@ -137,7 +136,7 @@ describe('the tree', () => {
       },
     ]);
 
-    await expect(getTree(TOKEN, 'head')).resolves.toEqual([
+    await expect(getTree(TOKEN, NEWSLETTERS, 'head')).resolves.toEqual([
       { path: 'state/gists.md', sha: 'g1', size: 120 },
       { path: 'state/tape.json', sha: 't1', size: 24 },
     ]);
@@ -146,7 +145,7 @@ describe('the tree', () => {
   it('refuses a truncated tree, and says why in a sentence the owner can read', async () => {
     serve([{ body: { truncated: true, tree: [] } }]);
 
-    await expect(getTree(TOKEN, 'head')).rejects.toThrow(/missing entries/);
+    await expect(getTree(TOKEN, NEWSLETTERS, 'head')).rejects.toThrow(/missing files/);
   });
 });
 
@@ -155,7 +154,7 @@ describe('blobs', () => {
     const prose = 'term premium — Zürich, ¥100bn, “the long end” … 🜚';
     serve([{ body: { encoding: 'base64', content: encode(prose) } }]);
 
-    await expect(getBlob(TOKEN, 'sha')).resolves.toBe(prose);
+    await expect(getBlob(TOKEN, NEWSLETTERS, 'sha')).resolves.toBe(prose);
   });
 
   it('accepts the wrapped base64 the API actually sends', async () => {
@@ -163,12 +162,12 @@ describe('blobs', () => {
     const wrapped = encode(prose).replace(/(.{8})/g, '$1\n');
     serve([{ body: { encoding: 'base64', content: wrapped } }]);
 
-    await expect(getBlob(TOKEN, 'sha')).resolves.toBe(prose);
+    await expect(getBlob(TOKEN, NEWSLETTERS, 'sha')).resolves.toBe(prose);
   });
 
   it('refuses a body it cannot decode rather than returning something wrong', async () => {
     serve([{ body: { encoding: 'none', content: '' } }]);
-    await expect(getBlob(TOKEN, 'sha')).rejects.toThrow(/cannot decode/);
+    await expect(getBlob(TOKEN, NEWSLETTERS, 'sha')).rejects.toThrow(/cannot decode/);
   });
 });
 
@@ -176,21 +175,21 @@ describe('retrying', () => {
   it('retries a 5xx and takes the answer when it arrives', async () => {
     serve([{ status: 500 }, { status: 502 }, { body: { commit: { sha: 'late' } } }]);
 
-    await expect(getHeadSha(TOKEN)).resolves.toBe('late');
+    await expect(getHeadSha(TOKEN, NEWSLETTERS)).resolves.toBe('late');
     expect(calls).toHaveLength(3);
   });
 
   it('gives up after three attempts rather than hammering', async () => {
     serve([{ status: 500 }]);
 
-    await expect(getHeadSha(TOKEN)).rejects.toBeInstanceOf(GitHubError);
+    await expect(getHeadSha(TOKEN, NEWSLETTERS)).rejects.toBeInstanceOf(GitHubError);
     expect(calls).toHaveLength(3);
   });
 
   it('does not retry an answer', async () => {
     serve([{ status: 404 }]);
 
-    await expect(getHeadSha(TOKEN)).rejects.toBeInstanceOf(GitHubError);
+    await expect(getHeadSha(TOKEN, NEWSLETTERS)).rejects.toBeInstanceOf(GitHubError);
     expect(calls).toHaveLength(1);
   });
 
@@ -201,7 +200,7 @@ describe('retrying', () => {
       return Promise.reject(new TypeError('failed to fetch'));
     });
 
-    await expect(getHeadSha(TOKEN)).rejects.toMatchObject({ kind: 'network' });
+    await expect(getHeadSha(TOKEN, NEWSLETTERS)).rejects.toMatchObject({ kind: 'network' });
     expect(attempts).toBe(1);
   });
 });
@@ -215,11 +214,38 @@ describe('the read-only fence', () => {
       { body: {} },
     ]);
 
-    await getHeadSha(TOKEN);
-    await getTree(TOKEN, 'h');
-    await getBlob(TOKEN, 's');
-    await verifyReadAccess(TOKEN);
+    await getHeadSha(TOKEN, NEWSLETTERS);
+    await getTree(TOKEN, NEWSLETTERS, 'h');
+    await getBlob(TOKEN, NEWSLETTERS, 's');
+    await verifyReadAccess(TOKEN, NEWSLETTERS);
 
     expect(calls.every(call => call.method === 'GET')).toBe(true);
+  });
+});
+
+describe('the sha diff', () => {
+  const file = (path: string, sha: string) => ({ path, sha, size: 1 });
+  const wanted = [file('state/gists.md', 'g2'), file('state/tape.json', 't1')];
+
+  it('takes what is missing and what has moved, and nothing else', () => {
+    const cached = new Map([
+      ['state/gists.md', 'g1'],
+      ['state/tape.json', 't1'],
+    ]);
+
+    expect(selectStale(wanted, cached).map(entry => entry.path)).toEqual(['state/gists.md']);
+  });
+
+  it('takes everything when nothing is cached', () => {
+    expect(selectStale(wanted, new Map())).toHaveLength(2);
+  });
+
+  it('takes nothing when every sha already matches', () => {
+    const cached = new Map([
+      ['state/gists.md', 'g2'],
+      ['state/tape.json', 't1'],
+    ]);
+
+    expect(selectStale(wanted, cached)).toEqual([]);
   });
 });

@@ -257,7 +257,7 @@ describe('the instrument', () => {
     // out of the instrument. A brief is not: it sweeps threads that never
     // land in raw/ and carries the book, so it is a fourth thing owed rather
     // than a fourth count of three.
-    await setMeta('nlTree', [{ path: 'state/briefs/2026-08-25.md', sha: 'b1', size: 1 }]);
+    await setMeta('gitread:newsletters:tree', [{ path: 'state/briefs/2026-08-25.md', sha: 'b1', size: 1 }]);
     await seedBaseline('2026-08-16T00:00:00.000Z');
     show('library');
 
@@ -359,7 +359,7 @@ describe('the tab rail ticks', () => {
     // The dates are the filenames, so which briefs exist is a property of the
     // tree. A device that has listed the repo but not yet pulled the markdown
     // still knows it is a day behind.
-    await setMeta('nlTree', [{ path: 'state/briefs/2026-08-25.md', sha: 'b1', size: 1 }]);
+    await setMeta('gitread:newsletters:tree', [{ path: 'state/briefs/2026-08-25.md', sha: 'b1', size: 1 }]);
     await seedBaseline('2026-08-16T00:00:00.000Z');
     show('library');
 

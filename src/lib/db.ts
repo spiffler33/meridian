@@ -9,15 +9,27 @@
  * promise-wrapping below is the whole of it.
  */
 
+import type { GitReadRepo } from './gitread'
+
 const DB_NAME = 'meridian'
-/** v2 adds `contentCache` for the read-only newsletters repo. Nothing else moved. */
-const DB_VERSION = 2
+/**
+ * v2 added `contentCache` for the read-only newsletters repo. v3 namespaces
+ * that store's keys by repo, because a second mirror now shares it.
+ */
+const DB_VERSION = 3
 
 const STATE = 'state'
 const JOURNAL_CACHE = 'journalCache'
 const OUTBOX = 'outbox'
 const META = 'meta'
 const CONTENT_CACHE = 'contentCache'
+
+/**
+ * Separates the repo from the path inside a `contentCache` key. A colon cannot
+ * appear in a git path, so the split is unambiguous — a machine-defined format,
+ * not a guess about the text.
+ */
+const CACHE_NAMESPACE_SEPARATOR = ':'
 
 const BY_SEQ = 'bySeq'
 const STATE_KEY = 'current'
@@ -49,22 +61,24 @@ export type MetaKey =
    */
   | 'claudeApiKey'
   /**
-   * The newsletters PAT. Read-only, a different repo and a different grant
-   * from `token`, and kept apart from it for that reason: clearing one must
-   * not silently disarm the other.
+   * The read-only PAT for the mirror repos. A different grant from `token`,
+   * and kept apart from it for that reason: clearing one must not silently
+   * disarm the other. One token now selects both mirrors; the name predates
+   * the second and is kept so no device has to re-enter the PAT.
    */
   | 'newslettersToken'
-  /** Head commit of the newsletters repo as of the last completed sync. */
-  | 'nlHeadSha'
-  /** When that sync completed, epoch ms. */
-  | 'nlTreeFetchedAt'
   /**
-   * The newsletters tree as of that sync, trimmed to path/sha/size. Cached
-   * because the library has to list itself with no network at all, and the
-   * entry list is the tree's to give — gists.md alone cannot say which
-   * entries exist.
+   * Per-mirror sync bookkeeping, one set per repo in `GitReadRepo`.
+   *
+   * `headSha` is the commit the last completed sync saw — the whole freshness
+   * check. `fetchedAt` is when that sync completed, epoch ms. `tree` is that
+   * commit's tree trimmed to path/sha/size, cached because a mirror has to
+   * describe itself with no network at all and the file list is the tree's to
+   * give.
    */
-  | 'nlTree'
+  | `gitread:${GitReadRepo}:headSha`
+  | `gitread:${GitReadRepo}:fetchedAt`
+  | `gitread:${GitReadRepo}:tree`
 
 /** A cached journal file as fetched from the data repo. */
 export type JournalCacheRecord = {
@@ -75,8 +89,12 @@ export type JournalCacheRecord = {
 }
 
 /**
- * A cached file from the newsletters repo. `sha` is the blob sha the content
- * came from, which is what the next sync diffs against — never a commit sha.
+ * A cached file from a mirror repo. `sha` is the blob sha the content came
+ * from, which is what the next sync diffs against — never a commit sha.
+ *
+ * `path` is the plain repo path in and out. The repo namespace belongs to the
+ * key alone and is added and stripped by the accessors below, so no caller
+ * has to remember to apply it — and none can forget.
  */
 export type ContentCacheRecord = {
   path: string
@@ -150,12 +168,52 @@ function invalidate(dead: IDBDatabase): void {
   dbPromise = null
 }
 
+/**
+ * v2 → v3: every `contentCache` key gains its repo namespace.
+ *
+ * A v2 database only ever held newsletters files, so every bare key is one of
+ * those.
+ *
+ * The record's `path` field *is* the key (the store's keyPath), which is why
+ * this is a delete and a put rather than `cursor.update()`: updating a record
+ * to a value whose key path evaluates to a different key is a DataError, and
+ * it aborts the whole upgrade transaction.
+ *
+ * A cursor rather than getAll/putAll because this runs inside the upgrade the
+ * app is blocked on: the records stream past one at a time rather than the
+ * whole corpus being materialised at once on a phone. Putting a record back
+ * under a name that sorts after the cursor means the cursor can reach it
+ * again — `isNamespaced` is what makes that a no-op rather than a double
+ * prefix.
+ */
+function upgradeContentCacheKeys(tx: IDBTransaction, oldVersion: number): void {
+  if (oldVersion === 0 || oldVersion >= 3) return
+  const store = tx.objectStore(CONTENT_CACHE)
+  const req = store.openCursor()
+  req.onsuccess = () => {
+    const cursor = req.result
+    if (!cursor) return
+    const record = cursor.value as ContentCacheRecord
+    if (record && typeof record.path === 'string' && !isNamespaced(record.path)) {
+      cursor.delete()
+      store.put({ ...record, path: cacheKey('newsletters', record.path) })
+    }
+    cursor.continue()
+  }
+
+  // The v2 sync scalars are dropped rather than renamed. What they buy is one
+  // tree fetch, on one open, and carrying a key the type no longer admits is
+  // how a stale tree gets read back years later by a typo.
+  const meta = tx.objectStore(META)
+  for (const key of ['nlHeadSha', 'nlTree', 'nlTreeFetchedAt']) meta.delete(key)
+}
+
 /** Opens (and creates on first run) the database. Idempotent; caches the handle. */
 export function openDb(): Promise<IDBDatabase> {
   if (!dbPromise) {
     const opening = new Promise<IDBDatabase>((resolve, reject) => {
       const req = indexedDB.open(DB_NAME, DB_VERSION)
-      req.onupgradeneeded = () => {
+      req.onupgradeneeded = (event) => {
         const db = req.result
         if (!db.objectStoreNames.contains(STATE)) {
           db.createObjectStore(STATE)
@@ -176,6 +234,10 @@ export function openDb(): Promise<IDBDatabase> {
         if (!db.objectStoreNames.contains(CONTENT_CACHE)) {
           db.createObjectStore(CONTENT_CACHE, { keyPath: 'path' })
         }
+        // v3. Keys in the content cache gain a repo namespace. Only that: the
+        // text and the sha of every cached file are rewritten byte for byte,
+        // under the key they will be read by from here on.
+        if (req.transaction) upgradeContentCacheKeys(req.transaction, event.oldVersion)
       }
       // Another tab is holding an older version open. Without this the promise
       // never settles and the app freezes with nothing to show for it.
@@ -526,29 +588,64 @@ export function allCachedFiles(): Promise<JournalCacheRecord[]> {
   return read<JournalCacheRecord[]>(JOURNAL_CACHE, (s) => s.getAll())
 }
 
-// --- newsletters content cache ---------------------------------------------
+// --- mirror content cache --------------------------------------------------
 
-export function getCachedContent(path: string): Promise<ContentCacheRecord | undefined> {
-  return read<ContentCacheRecord | undefined>(CONTENT_CACHE, (s) => s.get(path))
+/**
+ * The key one mirror's file is stored under: `<repo>:<path>`.
+ *
+ * Two mirrors share one store, and `events.json` is a plausible path in either
+ * of them. Without the namespace the second repo to sync would overwrite the
+ * first's file and then diff its own sha against it forever.
+ */
+function cacheKey(repo: GitReadRepo, path: string): string {
+  return `${repo}${CACHE_NAMESPACE_SEPARATOR}${path}`
 }
 
-export function putCachedContent(record: ContentCacheRecord): Promise<void> {
+/** Whether a stored key already carries a namespace. Only the upgrade asks. */
+function isNamespaced(key: string): boolean {
+  const cut = key.indexOf(CACHE_NAMESPACE_SEPARATOR)
+  if (cut === -1) return false
+  const head = key.slice(0, cut)
+  return head === 'newsletters' || head === 'calendar-data'
+}
+
+/** Strips the namespace a key was written with, restoring the repo path. */
+function cachePath(repo: GitReadRepo, key: string): string {
+  const prefix = cacheKey(repo, '')
+  return key.startsWith(prefix) ? key.slice(prefix.length) : key
+}
+
+export async function getCachedContent(
+  repo: GitReadRepo,
+  path: string
+): Promise<ContentCacheRecord | undefined> {
+  const record = await read<ContentCacheRecord | undefined>(CONTENT_CACHE, (s) =>
+    s.get(cacheKey(repo, path))
+  )
+  return record ? { ...record, path } : undefined
+}
+
+export function putCachedContent(
+  repo: GitReadRepo,
+  record: ContentCacheRecord
+): Promise<void> {
   return write(CONTENT_CACHE, (s) => {
-    s.put(record)
+    s.put({ ...record, path: cacheKey(repo, record.path) })
   })
 }
 
 /**
- * Every cached path and the sha it holds, and nothing else.
+ * One mirror's cached paths and the shas they hold, and nothing else.
  *
  * A cursor rather than `getAll` on purpose: the answer this is asked for is a
  * few kilobytes of shas, while the store it reads can hold megabytes of prose
  * once raw entries have been opened. `getAll` would materialise all of it at
  * once to throw the text away.
  */
-export async function cachedContentShas(): Promise<Map<string, string>> {
+export async function cachedContentShas(repo: GitReadRepo): Promise<Map<string, string>> {
   const tx = await beginTx(CONTENT_CACHE, 'readonly')
-  const req = tx.objectStore(CONTENT_CACHE).openCursor()
+  const prefix = cacheKey(repo, '')
+  const req = tx.objectStore(CONTENT_CACHE).openCursor(IDBKeyRange.bound(prefix, `${prefix}\uffff`))
   const shas = new Map<string, string>()
   return new Promise((resolve, reject) => {
     req.onsuccess = () => {
@@ -559,7 +656,7 @@ export async function cachedContentShas(): Promise<Map<string, string>> {
       }
       const record = cursor.value as ContentCacheRecord
       if (record && typeof record.path === 'string' && typeof record.sha === 'string') {
-        shas.set(record.path, record.sha)
+        shas.set(cachePath(repo, record.path), record.sha)
       }
       cursor.continue()
     }

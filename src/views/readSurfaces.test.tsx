@@ -21,7 +21,10 @@ import { BriefPane, CanonPane, ChartPane, EssayPane, RawPane, TapePane } from '.
 
 const mocks = vi.hoisted(() => ({ getBlob: vi.fn() }));
 
-vi.mock('../lib/newsletters', () => ({ getBlob: mocks.getBlob }));
+vi.mock('../lib/gitread', async importOriginal => ({
+  ...(await importOriginal<typeof import('../lib/gitread')>()),
+  getBlob: mocks.getBlob,
+}));
 
 const TREE = [
   { path: 'state/tape.json', sha: 'tape1', size: 1 },
@@ -253,7 +256,7 @@ const ENTRY = [
 const FIGURES = ['# Figures — 2026-08-21--lex-asia', '', '## page-0001.png', '', '**Type:** branding'].join('\n');
 
 async function cache(path: string, text: string, sha: string): Promise<void> {
-  await putCachedContent({ path, text, sha, fetchedAt: 1 });
+  await putCachedContent('newsletters', { path, text, sha, fetchedAt: 1 });
 }
 
 async function resetDb(): Promise<void> {
@@ -269,7 +272,7 @@ async function resetDb(): Promise<void> {
 beforeEach(async () => {
   await resetDb();
   mocks.getBlob.mockReset();
-  await setMeta('nlTree', TREE);
+  await setMeta('gitread:newsletters:tree', TREE);
   await setMeta('newslettersToken', 'test-token-not-a-real-pat');
   await cache('state/tape.json', JSON.stringify(TAPE), 'tape1');
   await cache('state/charts/2026-08-09--rails/chart.json', JSON.stringify(CHART), 'c2');
@@ -732,7 +735,7 @@ describe('where a citation lands', () => {
 
 describe('the source reader', () => {
   it('fetches an entry the first time it is opened, and caches it', async () => {
-    mocks.getBlob.mockImplementation((_token: string, sha: string) =>
+    mocks.getBlob.mockImplementation((_token: string, _source: unknown, sha: string) =>
       Promise.resolve(sha === 'r1' ? ENTRY : FIGURES)
     );
 
@@ -741,7 +744,9 @@ describe('the source reader', () => {
     expect(await screen.findByText('Asia’s rising riches protect insurers')).toBeInTheDocument();
     expect(mocks.getBlob).toHaveBeenCalledTimes(2);
     await waitFor(async () =>
-      expect(await getCachedContent('raw/2026-08-21--lex-asia/2026-08-21--lex-asia.md')).toBeDefined()
+      expect(
+        await getCachedContent('newsletters', 'raw/2026-08-21--lex-asia/2026-08-21--lex-asia.md')
+      ).toBeDefined()
     );
   });
 

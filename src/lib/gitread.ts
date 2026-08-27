@@ -1,5 +1,5 @@
 /**
- * Read-only transport for the newsletters repo.
+ * Read-only transport for the mirror repos.
  *
  * Pure transport, on github.ts's terms: no IndexedDB, no React, no app state,
  * and the token is always a parameter. It shares that file's request plumbing
@@ -16,6 +16,12 @@
  * API stops returning content at 1 MB (`encoding: "none"`, see CLAUDE.md
  * limitation 2); `git/blobs` carries to 100 MB. One transport for every file
  * in the repo, with no size-dependent special case to forget about.
+ *
+ * Every call takes the repo it is reading. There are two — the newsletters
+ * corpus and the calendar mirror — and they differ in nothing but their name:
+ * same owner, same read grant, same one-request freshness check. The repo name
+ * is also the cache namespace (see db.ts), so it is a closed union rather than
+ * a string: a typo cannot invent a third mirror that silently caches nowhere.
  */
 
 import {
@@ -29,9 +35,26 @@ import {
   type AccessResult,
 } from './github';
 
-export const NEWSLETTERS_OWNER = 'spiffler33';
-export const NEWSLETTERS_REPO = 'newsletters';
-export const NEWSLETTERS_BRANCH = 'main';
+/** The mirrors. Also the `contentCache` key namespaces — see db.ts. */
+export type GitReadRepo = 'newsletters' | 'calendar-data';
+
+export interface RepoSource {
+  owner: string;
+  repo: GitReadRepo;
+  branch: string;
+}
+
+export const NEWSLETTERS: RepoSource = {
+  owner: 'spiffler33',
+  repo: 'newsletters',
+  branch: 'main',
+};
+
+export const CALENDAR_DATA: RepoSource = {
+  owner: 'spiffler33',
+  repo: 'calendar-data',
+  branch: 'main',
+};
 
 /** Total attempts for a read that keeps hitting a 5xx. */
 const MAX_ATTEMPTS = 3;
@@ -53,7 +76,9 @@ export interface TreeEntry {
   size: number;
 }
 
-const repoBase = `/repos/${NEWSLETTERS_OWNER}/${NEWSLETTERS_REPO}`;
+function repoBase(source: RepoSource): string {
+  return `/repos/${source.owner}/${source.repo}`;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -102,13 +127,20 @@ function unusable(action: string): GitHubError {
  *
  * A rate limit is neither. It never reports as a bad token — the owner must
  * not be sent off to reissue a PAT that was fine all along.
+ *
+ * One token serves both mirrors, so this is asked per repo: the grant can
+ * select one and not the other, and "the token works" is not an answer about
+ * the repo that is actually failing.
  */
-export async function verifyReadAccess(token: string): Promise<AccessResult> {
+export async function verifyReadAccess(
+  token: string,
+  source: RepoSource
+): Promise<AccessResult> {
   try {
-    const response = await call(token, repoBase);
+    const response = await call(token, repoBase(source));
     if (response.ok) return { ok: true };
 
-    const error = failure(response, 'GET', 'checking newsletters access');
+    const error = failure(response, 'GET', `checking ${source.repo} access`);
     if (error.kind === 'ratelimit') return { ok: false, reason: RATE_LIMITED_REASON };
     // 404 is what a private repo says to a token that cannot see it, and it is
     // the same answer as a repo that does not exist. Either way: no access.
@@ -130,9 +162,9 @@ export async function verifyReadAccess(token: string): Promise<AccessResult> {
  * One request per open. Unchanged head means nothing in the repo has moved,
  * and the sync is over without a tree read or a single blob.
  */
-export async function getHeadSha(token: string): Promise<string> {
-  const action = 'reading the newsletters head';
-  const response = await get(token, `${repoBase}/branches/${NEWSLETTERS_BRANCH}`, action);
+export async function getHeadSha(token: string, source: RepoSource): Promise<string> {
+  const action = `reading the ${source.repo} head`;
+  const response = await get(token, `${repoBase(source)}/branches/${source.branch}`, action);
   const body = (await readJson(response, action)) as { commit?: { sha?: unknown } };
   const sha = body.commit?.sha;
   if (typeof sha !== 'string' || sha.length === 0) throw unusable(action);
@@ -146,18 +178,22 @@ export async function getHeadSha(token: string): Promise<string> {
  * syncing part of the repo would show a library with holes in it and no
  * indication that anything was missing.
  */
-export async function getTree(token: string, sha: string): Promise<TreeEntry[]> {
-  const action = 'reading the newsletters tree';
+export async function getTree(
+  token: string,
+  source: RepoSource,
+  sha: string
+): Promise<TreeEntry[]> {
+  const action = `reading the ${source.repo} tree`;
   const response = await get(
     token,
-    `${repoBase}/git/trees/${encodeURIComponent(sha)}?recursive=1`,
+    `${repoBase(source)}/git/trees/${encodeURIComponent(sha)}?recursive=1`,
     action
   );
   const body = (await readJson(response, action)) as { tree?: unknown; truncated?: unknown };
 
   if (body.truncated === true) {
     throw new GitHubError(
-      'the newsletters tree came back truncated — the library would be missing entries',
+      `the ${source.repo} tree came back truncated — the mirror would be missing files`,
       UNUSABLE_RESPONSE_STATUS,
       'http'
     );
@@ -189,9 +225,17 @@ export async function getTree(token: string, sha: string): Promise<TreeEntry[]> 
  * would arrive as mojibake, quietly, with nothing to indicate a decode ever
  * went wrong.
  */
-export async function getBlob(token: string, sha: string): Promise<string> {
-  const action = 'reading a newsletters file';
-  const response = await get(token, `${repoBase}/git/blobs/${encodeURIComponent(sha)}`, action);
+export async function getBlob(
+  token: string,
+  source: RepoSource,
+  sha: string
+): Promise<string> {
+  const action = `reading a ${source.repo} file`;
+  const response = await get(
+    token,
+    `${repoBase(source)}/git/blobs/${encodeURIComponent(sha)}`,
+    action
+  );
   const body = (await readJson(response, action)) as { content?: unknown; encoding?: unknown };
 
   if (body.encoding !== 'base64' || typeof body.content !== 'string') {
@@ -202,4 +246,18 @@ export async function getBlob(token: string, sha: string): Promise<string> {
     );
   }
   return fromBase64(body.content);
+}
+
+/**
+ * What is wanted and is not already held at that exact sha.
+ *
+ * The comparison is against what the cache actually holds rather than against
+ * the last tree we saw: a sync that dies half way through leaves the files it
+ * managed to fetch cached, and the next one picks up only what is missing.
+ */
+export function selectStale(
+  wanted: readonly TreeEntry[],
+  cached: ReadonlyMap<string, string>
+): TreeEntry[] {
+  return wanted.filter(entry => cached.get(entry.path) !== entry.sha);
 }

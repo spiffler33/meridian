@@ -13,11 +13,7 @@
 import { useEffect, useState } from 'react';
 
 import { deleteMeta, getMeta, setMeta } from '../lib/db';
-import {
-  NEWSLETTERS_OWNER,
-  NEWSLETTERS_REPO,
-  verifyReadAccess,
-} from '../lib/newsletters';
+import { NEWSLETTERS, verifyReadAccess } from '../lib/gitread';
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;
@@ -54,7 +50,7 @@ export function NewslettersSettings() {
     // Only ever whether one is stored. The token itself never reaches state.
     void Promise.all([
       getMeta<string>('newslettersToken').then(Boolean),
-      getMeta<number>('nlTreeFetchedAt'),
+      getMeta<number>('gitread:newsletters:fetchedAt'),
     ]).then(
       ([hasToken, at]) => {
         if (!live) return;
@@ -110,7 +106,7 @@ export function NewslettersSettings() {
         setFailed(true);
         return;
       }
-      const result = await verifyReadAccess(token);
+      const result = await verifyReadAccess(token, NEWSLETTERS);
       setMessage(result.ok ? 'read access confirmed' : result.reason ?? 'access could not be confirmed');
       setFailed(!result.ok);
     } catch {
@@ -166,7 +162,7 @@ export function NewslettersSettings() {
         )}
         <div className="text-xs text-text-muted">{syncedLine(syncedAt)}</div>
         <div className="text-xs text-text-muted">
-          a second fine-grained token, for {NEWSLETTERS_OWNER}/{NEWSLETTERS_REPO} with contents
+          a second fine-grained token, for {NEWSLETTERS.owner}/{NEWSLETTERS.repo} with contents
           read only. the reading pane never writes to that repo. it stays on this device and is
           never shown again once saved.
         </div>

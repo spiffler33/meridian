@@ -17,13 +17,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { closeDb, getCachedContent, getMeta, putCachedContent, setMeta } from './db';
 import { GitHubError } from './github';
-import type { TreeEntry } from './newsletters';
+import type { TreeEntry } from './gitread';
 import {
   buildLibrary,
   loadLibrary,
   parseGists,
   selectEntrySlugs,
-  selectStale,
   selectStateTier,
   syncNewsletters,
 } from './newslettersSync';
@@ -34,7 +33,10 @@ const mocks = vi.hoisted(() => ({
   getBlob: vi.fn(),
 }));
 
-vi.mock('./newsletters', () => ({
+// The three network calls, and nothing else: `selectStale` and the repo
+// descriptor are real, because the sync's job is to feed them correctly.
+vi.mock('./gitread', async importOriginal => ({
+  ...(await importOriginal<typeof import('./gitread')>()),
   getHeadSha: mocks.getHeadSha,
   getTree: mocks.getTree,
   getBlob: mocks.getBlob,
@@ -87,7 +89,7 @@ beforeEach(async () => {
   mocks.getHeadSha.mockReset();
   mocks.getTree.mockReset();
   mocks.getBlob.mockReset();
-  mocks.getBlob.mockImplementation((_token: string, sha: string) => Promise.resolve(`body:${sha}`));
+  mocks.getBlob.mockImplementation((_token: string, _source: unknown, sha: string) => Promise.resolve(`body:${sha}`));
 });
 
 afterEach(async () => {
@@ -114,32 +116,6 @@ describe('the state tier', () => {
   it('does not spend a request on an empty-directory marker', () => {
     const paths = selectStateTier(TREE).map(entry => entry.path);
     expect(paths).not.toContain('wiki/essays/.gitkeep');
-  });
-});
-
-describe('the sha diff', () => {
-  const wanted = [file('state/gists.md', 'g2'), file('state/tape.json', 't1')];
-
-  it('takes what is missing and what has moved, and nothing else', () => {
-    const cached = new Map([
-      ['state/gists.md', 'g1'],
-      ['state/tape.json', 't1'],
-    ]);
-
-    expect(selectStale(wanted, cached).map(entry => entry.path)).toEqual(['state/gists.md']);
-  });
-
-  it('takes everything when nothing is cached', () => {
-    expect(selectStale(wanted, new Map())).toHaveLength(2);
-  });
-
-  it('takes nothing when every sha already matches', () => {
-    const cached = new Map([
-      ['state/gists.md', 'g2'],
-      ['state/tape.json', 't1'],
-    ]);
-
-    expect(selectStale(wanted, cached)).toEqual([]);
   });
 });
 
@@ -200,15 +176,15 @@ describe('the library', () => {
   });
 
   it('survives a cached tree that is not a tree', async () => {
-    await setMeta('nlTree', 'not a tree at all');
+    await setMeta('gitread:newsletters:tree', 'not a tree at all');
     await expect(loadLibrary()).resolves.toEqual([]);
   });
 });
 
 describe('syncing', () => {
   it('stops at the head when nothing has moved', async () => {
-    await setMeta('nlHeadSha', 'head-1');
-    await setMeta('nlTree', TREE);
+    await setMeta('gitread:newsletters:headSha', 'head-1');
+    await setMeta('gitread:newsletters:tree', TREE);
     mocks.getHeadSha.mockResolvedValue('head-1');
 
     await expect(syncNewsletters(TOKEN)).resolves.toEqual({
@@ -227,8 +203,8 @@ describe('syncing', () => {
     const result = await syncNewsletters(TOKEN);
 
     expect(result).toEqual({ changed: true, fetched: 6, head: 'head-2' });
-    expect(await getMeta('nlHeadSha')).toBe('head-2');
-    expect((await getCachedContent('state/gists.md'))?.text).toBe('body:g1');
+    expect(await getMeta('gitread:newsletters:headSha')).toBe('head-2');
+    expect((await getCachedContent('newsletters', 'state/gists.md'))?.text).toBe('body:g1');
   });
 
   it('fetches only what moved on the next sync', async () => {
@@ -251,7 +227,7 @@ describe('syncing', () => {
   it('does not record a head whose files it never finished fetching', async () => {
     mocks.getHeadSha.mockResolvedValue('head-2');
     mocks.getTree.mockResolvedValue(TREE);
-    mocks.getBlob.mockImplementation((_token: string, sha: string) =>
+    mocks.getBlob.mockImplementation((_token: string, _source: unknown, sha: string) =>
       sha === 'c1'
         ? Promise.reject(new GitHubError('nope', 500, 'http'))
         : Promise.resolve(`body:${sha}`)
@@ -259,10 +235,10 @@ describe('syncing', () => {
 
     await expect(syncNewsletters(TOKEN)).rejects.toBeInstanceOf(GitHubError);
 
-    expect(await getMeta('nlHeadSha')).toBeUndefined();
-    expect(await getMeta('nlTreeFetchedAt')).toBeUndefined();
+    expect(await getMeta('gitread:newsletters:headSha')).toBeUndefined();
+    expect(await getMeta('gitread:newsletters:fetchedAt')).toBeUndefined();
     // What did land is kept: the next sync picks up only what is missing.
-    expect((await getCachedContent('state/gists.md'))?.text).toBe('body:g1');
+    expect((await getCachedContent('newsletters', 'state/gists.md'))?.text).toBe('body:g1');
   });
 
   it('resumes from where the failed sync stopped', async () => {
@@ -272,12 +248,12 @@ describe('syncing', () => {
     await expect(syncNewsletters(TOKEN)).rejects.toBeInstanceOf(GitHubError);
 
     mocks.getBlob.mockClear();
-    mocks.getBlob.mockImplementation((_token: string, sha: string) => Promise.resolve(`body:${sha}`));
+    mocks.getBlob.mockImplementation((_token: string, _source: unknown, sha: string) => Promise.resolve(`body:${sha}`));
 
     const result = await syncNewsletters(TOKEN);
 
     expect(result.fetched).toBe(6);
-    expect(await getMeta('nlHeadSha')).toBe('head-2');
+    expect(await getMeta('gitread:newsletters:headSha')).toBe('head-2');
   });
 
   it('runs one sync at a time, however many ask for it', async () => {
@@ -291,8 +267,8 @@ describe('syncing', () => {
   });
 
   it('serves the library from cache with no network at all', async () => {
-    await setMeta('nlTree', TREE);
-    await putCachedContent({ path: 'state/gists.md', text: GISTS, sha: 'g1', fetchedAt: 1 });
+    await setMeta('gitread:newsletters:tree', TREE);
+    await putCachedContent('newsletters', { path: 'state/gists.md', text: GISTS, sha: 'g1', fetchedAt: 1 });
 
     const rows = await loadLibrary();
 

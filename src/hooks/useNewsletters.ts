@@ -82,7 +82,7 @@ export function useNewsletters(): NewslettersView {
       if (!live.current) return;
       if (result.changed) setRows(await loadLibrary());
       if (!live.current) return;
-      setLastSyncedAt((await getMeta<number>('nlTreeFetchedAt')) ?? null);
+      setLastSyncedAt((await getMeta<number>('gitread:newsletters:fetchedAt')) ?? null);
       setError(null);
     } catch (failure) {
       if (live.current) setError(describe(failure));
@@ -96,7 +96,7 @@ export function useNewsletters(): NewslettersView {
       try {
         const [cached, at] = await Promise.all([
           loadLibrary(),
-          getMeta<number>('nlTreeFetchedAt'),
+          getMeta<number>('gitread:newsletters:fetchedAt'),
         ]);
         if (!live.current) return;
         setRows(cached);
