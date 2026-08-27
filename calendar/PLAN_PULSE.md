@@ -94,8 +94,8 @@ lens feel right, or is Week missed? STOP.
 
 ## Phase 1 — `pulse` entity, capture box, Today stream (raw only, zero AI)
 
-**STATUS: built 2026-08-27, on `local-first`. Not deployed — Gate 1 needs three real days on
-the phone, so it needs a `main` fast-forward, which is spiff's call.**
+**STATUS: built and deployed 2026-08-27, at spiff's instruction. Gate 1 is unrun — it is spiff's,
+on the phone, and it takes three real days of capture.**
 
 **Goal:** interstitial journaling ships. Timestamped verbatim lines, instant, offline.
 Already valuable with no intelligence in the loop — that is the point of the layering.
@@ -374,6 +374,9 @@ resurrects the pulse carrying only what was written after the tombstone — so `
 capture rejects an empty line. Phase 2's coder writes upserts against pulse ids from a queue that
 can drain late, which is exactly the race. Pinned in `pulse.test.ts` as behaviour, not yet as a
 guard.
+
+**Deployed to `main` on spiff's word, same day as the build** — the phone is the only place the
+gate can run, and Meridian's PATs are per-origin, so localhost proves nothing.
 
 **GATE 1 is unrun**, and needs the phone: three real days of use. Its own questions are capture
 friction and newest-first. One more for it, unasked by the phase: the stream has no cap, so a
