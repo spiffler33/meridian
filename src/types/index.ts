@@ -68,7 +68,7 @@ export interface AppState {
 }
 
 // View types for navigation
-export type ViewType = 'tower' | 'habits' | 'year' | 'read' | 'settings';
+export type ViewType = 'tower' | 'pulse' | 'habits' | 'year' | 'read' | 'settings';
 
 // Surfaces inside the Read view. `raw` is a reader rather than a tab: it has
 // no place on the rail, but it is a route from day one because citations land

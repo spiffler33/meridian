@@ -1,5 +1,5 @@
 /**
- * The Today stream's window onto the pulses.
+ * The Pulse page's window onto the pulses.
  *
  * Capture is the whole point, so capture is what this optimises for: the write
  * goes to the outbox and the line renders, with no network anywhere in the
@@ -22,7 +22,7 @@ import { scheduleFlush } from '../lib/sync';
 import { createPulse, deletePulse, getPulses } from '../services/data';
 
 export interface Pulses {
-  /** The day's pulses, newest first. */
+  /** The day's pulses, oldest first — the page reads downward into the box. */
   today: PulseRow[];
   /** Capture one. Resolves false when nothing was saved, so the box can keep the text. */
   capture: (text: string) => Promise<boolean>;

@@ -63,4 +63,12 @@ describe('the rail', () => {
     expect(screen.queryByRole('button', { name: 'week' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'settings' })).toBeNull();
   });
+
+  it('offers pulse, and clicking it opens it', () => {
+    const onViewChange = show();
+
+    fireEvent.click(screen.getByRole('button', { name: 'pulse' }));
+
+    expect(onViewChange).toHaveBeenCalledWith('pulse');
+  });
 });

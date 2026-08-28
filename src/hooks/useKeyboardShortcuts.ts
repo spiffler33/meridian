@@ -15,8 +15,6 @@ interface UseKeyboardShortcutsOptions {
   onNextDay: () => void;
   /** The week is a lens on the year now, so `w` opens it rather than a view. */
   onOpenWeek: () => void;
-  /** `p` goes to Today and puts the cursor in the capture box. */
-  onCapture: () => void;
 }
 
 export function useKeyboardShortcuts({
@@ -25,7 +23,6 @@ export function useKeyboardShortcuts({
   onPreviousDay,
   onNextDay,
   onOpenWeek,
-  onCapture,
 }: UseKeyboardShortcutsOptions) {
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
@@ -67,7 +64,7 @@ export function useKeyboardShortcuts({
           break;
         case 'p':
           event.preventDefault();
-          onCapture();
+          onViewChange('pulse');
           break;
         case 's':
           event.preventDefault();
@@ -87,7 +84,7 @@ export function useKeyboardShortcuts({
           break;
       }
     },
-    [onViewChange, onGoToToday, onPreviousDay, onNextDay, onOpenWeek, onCapture]
+    [onViewChange, onGoToToday, onPreviousDay, onNextDay, onOpenWeek]
   );
 
   useEffect(() => {

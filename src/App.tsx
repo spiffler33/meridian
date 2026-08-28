@@ -15,6 +15,7 @@ import { useNavigation } from './hooks/useNavigation';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useCalendar } from './hooks/useCalendar';
 import TowerView from './views/TowerView';
+import { PulseView } from './views/PulseView';
 import { HabitsView } from './views/HabitsView';
 import { YearView } from './views/YearView';
 import { ReadView } from './views/ReadView';
@@ -38,16 +39,6 @@ function AppContent() {
     nav.setView('year');
   }, [nav]);
 
-  // `p` is a request for the capture box, from wherever the owner is. Held as
-  // a pending flag rather than a counter so it fires once and is spent: a
-  // counter would re-focus the box every time Today is opened afterwards.
-  const [focusCapture, setFocusCapture] = useState(false);
-  const openCapture = useCallback(() => {
-    setFocusCapture(true);
-    nav.setView('tower');
-  }, [nav]);
-  const captureFocused = useCallback(() => setFocusCapture(false), []);
-
   // Keyboard shortcuts
   useKeyboardShortcuts({
     onViewChange: nav.setView,
@@ -55,7 +46,6 @@ function AppContent() {
     onPreviousDay: nav.goToPreviousDay,
     onNextDay: nav.goToNextDay,
     onOpenWeek: openWeek,
-    onCapture: openCapture,
   });
 
   const handleHabitsDateSelect = (date: string) => {
@@ -66,13 +56,9 @@ function AppContent() {
   const renderView = () => {
     switch (nav.view) {
       case 'tower':
-        return (
-          <TowerView
-            mirror={calendar.mirror}
-            focusCapture={focusCapture}
-            onFocusHandled={captureFocused}
-          />
-        );
+        return <TowerView mirror={calendar.mirror} />;
+      case 'pulse':
+        return <PulseView />;
       case 'habits':
         return (
           <HabitsView

@@ -94,8 +94,9 @@ lens feel right, or is Week missed? STOP.
 
 ## Phase 1 — `pulse` entity, capture box, Today stream (raw only, zero AI)
 
-**STATUS: built and deployed 2026-08-27, at spiff's instruction. Gate 1 is unrun — it is spiff's,
-on the phone, and it takes three real days of capture.**
+**STATUS: built and deployed 2026-08-27. GATE 1 RUN 2026-08-28 on the first morning of real use;
+the build list below is amended in place to match its verdict — pulse is its own view, the box is
+at the foot, the stream reads chronologically.**
 
 **Goal:** interstitial journaling ships. Timestamped verbatim lines, instant, offline.
 Already valuable with no intelligence in the loop — that is the point of the layering.
@@ -107,22 +108,29 @@ Build:
   *documented now, written only in Phase 2*. Delete = tombstone via the normal path
   (long-press / kebab on a stream line). No edit in v1 — delete and retype keeps
   verbatim semantics trivial.
-- **Capture box** pinned at the top of TodayView in the cleared header region. One field,
-  no pickers, no buttons. Placeholder: `what's happening…`. Enter → outbox → optimistic
-  render → field clears. Empty Enter is a no-op. Global `P` navigates to Today and
-  focuses the box.
-- **Today stream** directly under the box: the day's pulses, **newest-first** (most
-  recent utterance adjacent to the box — a deliberate call; chronological day-tape
-  reading can come later if the gate demands it). Line = mono `HH:MM` + text in the
-  reading face ~14.5px. Yesterday and earlier are not shown here (Year/stats own the
-  past).
+- **Pulse is its own view**, fifth on the rail: tower · pulse · habits · year · read.
+  *Amended 2026-08-28 at Gate 1 — it was "the top of TodayView"; see the run log.*
+- **Capture box** at the FOOT of that page. One field, no pickers, no buttons.
+  Placeholder: `what's happening…`. Enter → outbox → optimistic render → field clears.
+  Empty Enter is a no-op. Arriving on the page focuses the box — the tab is the gesture,
+  so there is nothing to tap before typing. `Escape` blurs it, because every view key is
+  dead while a field has focus. `P` is an ordinary view key now: it opens the page, and
+  the focus follows from arriving.
+- **The stream** fills the page above the box, **oldest-first**, scrolled to the bottom so
+  the newest line sits directly above where the next one is typed. Line = mono `HH:MM` +
+  text in the reading face ~14.5px. Today only — yesterday and earlier belong to
+  Year/stats.
+- **Tower keeps its own capture bar** and is otherwise untouched: a quick, glanceable page
+  for what needs doing. The bar stops being `fixed`, which is what was slicing
+  `what needs doing?` in half behind the sticky backup line.
 - Pulses do not yet appear anywhere else (no heatmap, no stats).
 
 Tests: pulse fold (create, tombstone, resurrect), day-filter + order selector, `P` focus,
 optimistic render + outbox flush reuse, old-`ENTITY` skip simulation for `pulse`.
 
-**GATE 1:** three real days of use. Is capture genuinely frictionless on the phone
-(taps-to-writable-surface ≈ zero)? Is newest-first right, or reverse it? STOP.
+**GATE 1: RUN 2026-08-28.** Capture is frictionless; the stream was not where it belongs.
+Answered: newest-first is wrong once the box moves to the foot. See the run log. A second
+sitting on the amended shape is still worth having before Phase 2 starts.
 
 ---
 
@@ -153,7 +161,8 @@ Build:
   submission is *also* recorded as a pulse, and the coder (task-biased context hint)
   later proposes field enrichments on the item (status / waitingOn / expectsBy) as chips
   on the item. The `parseTowerInput` stub is deleted; its seam is finally filled. The
-  Today mouth codes unbiased: `signal: task` there proposes `spawnTask`.
+  Pulse mouth (the plan's original "Today mouth" — the page moved at Gate 1) codes
+  unbiased: `signal: task` there proposes `spawnTask`.
 - Cost note in code comment: dozens of Haiku calls/day ≈ pennies/month; no caching.
 
 Tests: context-allowlist subset proof (fence 5), enrichment upsert excludes `text`
@@ -382,3 +391,55 @@ gate can run, and Meridian's PATs are per-origin, so localhost proves nothing.
 friction and newest-first. One more for it, unasked by the phase: the stream has no cap, so a
 heavy day pushes Now and the day shape a long way down a view whose job is to surface what needs
 attention. The `· n more` fold from Phase 0 is the house answer if it bites.
+
+### 2026-08-28 — Gate 1, and the restructure it ordered
+
+Gate 1 ran on the first morning of real use rather than after three days, because one chatty
+hour was enough to answer it. Capture itself passed: the box was reached and used without
+thinking about it, and seven pulses landed before 08:00. The placement failed. In spiff's own
+words, captured as pulses: *"on chatty days this fills up"*, *"we need a totally new tab for
+pulse and text box at bottom"*, and — of the box sitting above everything — *"interesting UX
+choice .. ok let's see"*. A morning's stream had already pushed Day Shape, Now and the whole
+Tower below the fold, on a view whose entire job is surfacing what needs attention.
+
+**Pulse is its own view.** Fifth on the rail, between tower and habits. Tower goes back to being
+Tower — a quick, glanceable page for what needs doing — and Phase 1's build list above is
+amended in place rather than annotated, because the old placement is not a thing anyone should
+implement again.
+
+**The box is at the foot and the stream reads downward.** That is the answer to the gate's own
+question. Newest-first existed to keep the last utterance next to the box; once the box moves to
+the bottom of the page, chronological is what does that, and the reverse would put the newest
+line as far from the cursor as the page allows. `pulsesForDay` returns oldest-first and
+`compareNewestFirst` is gone rather than kept as a second order nothing calls.
+
+**Arriving focuses the box.** No `focusCapture` prop, no pending flag, no counter — the page
+focuses its own input on mount, which is both simpler and what the gate asked for ("as soon as I
+click on pulse, the cursor is switched on"). `P` therefore stopped being a special key and became
+an ordinary view key. The cost is real and is paid deliberately: while the box has focus every
+other view key is dead, so `Escape` blurs it.
+
+**The footer grew a dock, which is the fix for the cut-off placeholder too.** Tower's
+`what needs doing?` bar was `fixed bottom-0`, which put it underneath the sticky backup-status
+footer and sliced the placeholder in half — visible in the gate screenshot. A `fixed` bar cannot
+know how tall that footer is, and hard-coding an offset would be a magic number that breaks the
+first time the backup line wraps. So the sticky footer now holds two rows: a slot the current
+view portals its capture bar into, and the backup line beneath it. Both bars are docked there and
+overlap stops being possible by construction. `Dock` distinguishes three states, and the third is
+what stops a flash: no Layout above it at all (a view rendered alone, as tests do) renders the
+bar in place, a Layout whose node is not attached yet on the first pass renders nothing, and
+otherwise it portals.
+
+**Untouched on purpose:** the entity, the fold, the journal, `usePulses`, and every fence. This
+was a placement problem, and nothing below the view layer moved.
+
+Green: `vitest` 523 passed / 28 files · `tsc -b` clean · `npm run build` clean ·
+`grep -rn "localStorage" src/` → 0 · lint 6 errors, all pre-existing (unchanged count).
+New: `src/views/PulseView.tsx`, `src/components/Dock.tsx`, `src/hooks/useDock.ts`,
+`src/views/PulseView.test.tsx`. Gone: `src/views/TowerView.test.tsx` (its coverage moved with the
+box), `compareNewestFirst`, the `onCapture` shortcut option, and TowerView's `focusCapture` props.
+
+**Not tested, and named rather than quietly skipped:** nothing pins that a docked bar actually
+lands in the footer. `Dock` renders in place when no Layout is above it, which is exactly what
+lets `PulseView` be tested alone — and it means the portal path itself is only proven on the
+device. A Layout test could pin it; it was not written, because the phase did not ask for one.

@@ -6,6 +6,7 @@
 
 import { useState, useEffect } from 'react';
 import type { ViewType } from '../types';
+import { DockContext } from '../hooks/useDock';
 import { isToday } from '../utils/dates';
 import { BackupStatus } from './BackupStatus';
 
@@ -55,6 +56,8 @@ export function Layout({
   children,
 }: LayoutProps) {
   const [symbolIndex, setSymbolIndex] = useState(0);
+  // The slot a view docks its capture bar into. See `useDock`.
+  const [dock, setDock] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -97,6 +100,12 @@ export function Layout({
                 onClick={() => onViewChange('tower')}
               />
               <NavItem
+                label="pulse"
+                shortcut="p"
+                isActive={currentView === 'pulse'}
+                onClick={() => onViewChange('pulse')}
+              />
+              <NavItem
                 label="habits"
                 shortcut="h"
                 isActive={currentView === 'habits'}
@@ -133,10 +142,11 @@ export function Layout({
         </div>
       )}
 
-      {/* Main */}
+      {/* Main. The dock provider wraps the views, so a view can render its
+          capture bar into the footer below rather than over it. */}
       <main className="flex-1">
         <div className="max-w-content mx-auto px-4 py-6">
-          {children}
+          <DockContext.Provider value={dock}>{children}</DockContext.Provider>
         </div>
       </main>
 
@@ -153,6 +163,9 @@ export function Layout({
         className="sticky bottom-0 border-t border-border bg-bg"
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
+        {/* The view's own bar, above the backup line and never over it. Empty
+            and zero-height on every view that docks nothing. */}
+        <div ref={setDock} className="max-w-content mx-auto px-4" />
         <div className="max-w-content mx-auto px-4 py-2">
           <BackupStatus />
         </div>

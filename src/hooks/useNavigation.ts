@@ -35,7 +35,7 @@ interface UseNavigationReturn extends NavigationState {
   setReadRoute: (surface: ReadSurface, item: string[]) => void;
 }
 
-const VALID_VIEWS: ViewType[] = ['tower', 'habits', 'year', 'read', 'settings'];
+const VALID_VIEWS: ViewType[] = ['tower', 'pulse', 'habits', 'year', 'read', 'settings'];
 const READ_SURFACES: ReadSurface[] = ['brief', 'tape', 'chart', 'canon', 'essay', 'library', 'raw'];
 const DEFAULT_READ: ReadRoute = { surface: 'tape', item: [] };
 

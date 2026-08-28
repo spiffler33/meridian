@@ -1,6 +1,6 @@
 /**
  * useKeyboardShortcuts: the Read key, the Week key that is no longer one, and
- * the Capture key.
+ * the Pulse key.
  *
  * R joins the view keys. The one thing worth holding down is that it stays a
  * view key and not a stray letter: typing the word "read" into a task field
@@ -9,10 +9,10 @@
  * W is the odd one now. The week stopped being a view, so the key has to reach
  * the lens rather than ask the router for a view that no longer exists.
  *
- * P is not a view key either — it asks the app to put the cursor in the
- * capture box, wherever the owner is. The hook's own job is only to fire the
- * callback and to stay out of the way while a field already has focus, the
- * same guard every other key gets.
+ * P is a plain view key too, now that Pulse has its own place on the rail: it
+ * asks for the pulse view exactly as `r` asks for read. Arriving there is what
+ * puts the cursor in the capture box — a job the box does for itself on mount,
+ * not one this hook knows about.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -23,7 +23,6 @@ import { useKeyboardShortcuts } from './useKeyboardShortcuts';
 function mount() {
   const onViewChange = vi.fn();
   const onOpenWeek = vi.fn();
-  const onCapture = vi.fn();
   renderHook(() =>
     useKeyboardShortcuts({
       onViewChange,
@@ -31,10 +30,9 @@ function mount() {
       onPreviousDay: vi.fn(),
       onNextDay: vi.fn(),
       onOpenWeek,
-      onCapture,
     })
   );
-  return { onViewChange, onOpenWeek, onCapture };
+  return { onViewChange, onOpenWeek };
 }
 
 afterEach(cleanup);
@@ -76,23 +74,23 @@ describe('the read key', () => {
   });
 });
 
-describe('the capture key', () => {
-  it('asks for the capture box', () => {
-    const { onCapture } = mount();
+describe('the pulse key', () => {
+  it('opens the pulse view', () => {
+    const { onViewChange } = mount();
 
     fireEvent.keyDown(window, { key: 'p' });
 
-    expect(onCapture).toHaveBeenCalled();
+    expect(onViewChange).toHaveBeenCalledWith('pulse');
   });
 
   it('stays out of the way while the owner is typing', () => {
-    const { onCapture } = mount();
+    const { onViewChange } = mount();
     const input = document.createElement('input');
     document.body.appendChild(input);
 
     fireEvent.keyDown(input, { key: 'p' });
 
-    expect(onCapture).not.toHaveBeenCalled();
+    expect(onViewChange).not.toHaveBeenCalled();
     input.remove();
   });
 });

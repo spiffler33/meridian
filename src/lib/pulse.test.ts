@@ -10,8 +10,13 @@
  * asserted against the raw folded record. Second, that `pulsesForDay` buckets
  * by the LOCAL day in the given zone rather than the UTC day `at` happens to
  * fall on — the bug a naive `slice(0, 10)` would reintroduce — and that its
- * ordering (newest first, id breaks a tie) is exactly what
- * `compareNewestFirst` says it is.
+ * ordering (oldest first, id breaks a tie) is exactly what
+ * `compareOldestFirst` says it is.
+ *
+ * The order used to be newest first. It flipped when the capture box moved to
+ * the foot of the Pulse page: chronological is what keeps the newest line
+ * sitting next to the box, which is Gate 1's answer to the question the plan
+ * asked.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -21,7 +26,7 @@ import { ENTITY, resetSession } from './entities';
 import type { PulseRow } from './entities';
 import { fold } from './journal';
 import type { JournalEvent } from './journal';
-import { compareNewestFirst, pulsesForDay } from './pulse';
+import { compareOldestFirst, pulsesForDay } from './pulse';
 import { getPulses } from '../services/data';
 
 type UpsertEvent = Extract<JournalEvent, { type: 'upsert' }>;
@@ -129,24 +134,24 @@ describe('the pulse fold', () => {
   });
 });
 
-describe('compareNewestFirst', () => {
-  it('sorts newest first, and breaks a tie on `at` by id', () => {
+describe('compareOldestFirst', () => {
+  it('sorts oldest first, and breaks a tie on `at` by id, smaller first', () => {
     const older: PulseRow = { id: 'older', text: 'a', at: '2026-08-26T09:00:00.000Z' };
     const newer: PulseRow = { id: 'newer', text: 'b', at: '2026-08-26T10:00:00.000Z' };
-    expect([older, newer].sort(compareNewestFirst).map((row) => row.id)).toEqual(['newer', 'older']);
-    expect([newer, older].sort(compareNewestFirst).map((row) => row.id)).toEqual(['newer', 'older']);
+    expect([older, newer].sort(compareOldestFirst).map((row) => row.id)).toEqual(['older', 'newer']);
+    expect([newer, older].sort(compareOldestFirst).map((row) => row.id)).toEqual(['older', 'newer']);
 
     const aaa: PulseRow = { id: 'aaa', text: 'x', at: '2026-08-26T09:00:00.000Z' };
     const zzz: PulseRow = { id: 'zzz', text: 'y', at: '2026-08-26T09:00:00.000Z' };
-    expect([aaa, zzz].sort(compareNewestFirst).map((row) => row.id)).toEqual(['zzz', 'aaa']);
-    expect([zzz, aaa].sort(compareNewestFirst).map((row) => row.id)).toEqual(['zzz', 'aaa']);
+    expect([aaa, zzz].sort(compareOldestFirst).map((row) => row.id)).toEqual(['aaa', 'zzz']);
+    expect([zzz, aaa].sort(compareOldestFirst).map((row) => row.id)).toEqual(['aaa', 'zzz']);
   });
 });
 
 describe('pulsesForDay', () => {
   const zone = 'America/Los_Angeles';
 
-  it('keeps a pulse whose UTC day differs from the local day it was captured on, and orders survivors newest first', () => {
+  it('keeps a pulse whose UTC day differs from the local day it was captured on, and orders survivors oldest first', () => {
     const boundary: PulseRow = {
       id: 'boundary',
       text: 'still the 26th here',
@@ -160,17 +165,17 @@ describe('pulsesForDay', () => {
 
     const rows = pulsesForDay([normal, dayBefore, boundary], '2026-08-26', zone);
 
-    // dayBefore is excluded, and the two survivors come back newest first.
-    expect(rows.map((row) => row.id)).toEqual(['boundary', 'normal']);
+    // dayBefore is excluded, and the two survivors come back oldest first.
+    expect(rows.map((row) => row.id)).toEqual(['normal', 'boundary']);
   });
 
-  it('breaks a tie on `at` by id, larger id first', () => {
+  it('breaks a tie on `at` by id, smaller id first', () => {
     const rows: PulseRow[] = [
       { id: 'aaa', text: 'first alphabetically', at: '2026-08-26T12:00:00.000Z' },
       { id: 'zzz', text: 'last alphabetically', at: '2026-08-26T12:00:00.000Z' },
     ];
 
-    expect(pulsesForDay(rows, '2026-08-26', zone).map((row) => row.id)).toEqual(['zzz', 'aaa']);
+    expect(pulsesForDay(rows, '2026-08-26', zone).map((row) => row.id)).toEqual(['aaa', 'zzz']);
   });
 
   it('drops a row whose `at` cannot be parsed as an instant, rather than throwing', () => {
