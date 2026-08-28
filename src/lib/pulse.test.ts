@@ -117,6 +117,23 @@ function del(spec: { id: string; device: string; seq: number; ts: number; entity
   };
 }
 
+// Frozen file-wide: `createPulse` stamps `at` from the real clock, and
+// `buildCoderContext` reads `getToday()`-derived habit/calendar data
+// alongside pulses whose `at` is hardcoded to 2026-08-28 (see "fence 5"
+// below) — both must land on the same calendar day, which the wall clock
+// cannot promise once it crosses local midnight mid-run. Noon UTC sits
+// safely inside 2026-08-28 in every real timezone.
+const NOW = new Date('2026-08-28T12:00:00.000Z');
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(NOW);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe('the pulse fold', () => {
   beforeEach(() => {
     resetSession();

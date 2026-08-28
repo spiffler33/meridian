@@ -53,6 +53,12 @@ import type { Coding } from '../services/coder';
 const DAY = '2026-08-28';
 const ZONE = 'America/Los_Angeles';
 
+// Frozen so a `capture()` call's real-clock write (`createPulse` stamps `at`
+// via `nowIso()`) cannot land on a different calendar day than DAY once the
+// wall clock crosses local midnight mid-run. Noon UTC sits safely inside
+// 2026-08-28 in ZONE and in the host machine's own local zone alike.
+const NOW = new Date('2026-08-28T12:00:00.000Z');
+
 const SAMPLE_CODING: Coding = {
   signal: 'note',
   domain: null,
@@ -65,6 +71,8 @@ const SAMPLE_CODING: Coding = {
 };
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(NOW);
   resetSession();
   scheduleFlushMock.mockClear();
   codePulseMock.mockReset();
@@ -73,6 +81,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   resetSession();
   await closeDb();
   await new Promise<void>((resolve, reject) => {
