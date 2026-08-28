@@ -17,20 +17,43 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { PulseRow } from '../lib/entities';
-import { pulsesForDay } from '../lib/pulse';
+import { NO_CHIP_NAMES, pulsesForDay } from '../lib/pulse';
+import type { PulseChipNames } from '../lib/pulse';
 import { scheduleFlush } from '../lib/sync';
-import { codeCapturedPulse, codeUncodedPulses, createPulse, deletePulse, getPulses } from '../services/data';
+import {
+  applyPulseEffect,
+  approvePulseVocabProposal,
+  codeCapturedPulse,
+  codeUncodedPulses,
+  createPulse,
+  deletePulse,
+  dismissPulseEffect,
+  dismissPulseVocabProposal,
+  getHabits,
+  getPulses,
+  getTowerItems,
+} from '../services/data';
 
 export interface Pulses {
   /** The day's pulses, oldest first — the page reads downward into the box. */
   today: PulseRow[];
+  /** What the chips call the habits and tasks the codings name, resolved by id. */
+  names: PulseChipNames;
   /** Capture one. Resolves false when nothing was saved, so the box can keep the text. */
   capture: (text: string) => Promise<boolean>;
   remove: (id: string) => void;
+  /** Apply the effect at `index` on that pulse, and drop its chip. */
+  applyEffect: (pulseId: string, index: number) => void;
+  /** Drop the chip and keep the coding. */
+  dismissEffect: (pulseId: string, index: number) => void;
+  /** Approve the vocabulary proposal. Always a tap — it has no auto path. */
+  applyVocab: (pulseId: string) => void;
+  dismissVocab: (pulseId: string) => void;
 }
 
 export function usePulses(day: string, timeZone: string): Pulses {
   const [rows, setRows] = useState<PulseRow[]>([]);
+  const [names, setNames] = useState<PulseChipNames>(NO_CHIP_NAMES);
 
   // Nothing may be set after the view closes: a capture is a write to
   // IndexedDB and its answer outlives whatever the owner typed it into.
@@ -57,10 +80,23 @@ export function usePulses(day: string, timeZone: string): Pulses {
    * started is only in `previous`, and replacing the list wholesale would take
    * it off the screen until something else refreshed. "Your line disappeared"
    * is the one failure capture must not have.
+   *
+   * The chip names come along with it. They are two more local reads of state
+   * already folded, and a `spawnTask` that just landed has to be able to name
+   * the task it created the moment the row repaints. Archived habits and done
+   * tasks are included: a chip must still be able to say what it acted on.
    */
   const refresh = useCallback(async () => {
-    const stored = await getPulses();
+    const [stored, habits, towerItems] = await Promise.all([
+      getPulses(),
+      getHabits(true),
+      getTowerItems(true),
+    ]);
     if (!live.current) return;
+    setNames({
+      habits: Object.fromEntries(habits.map((habit) => [habit.id, habit.label])),
+      towerItems: Object.fromEntries(towerItems.map((item) => [item.id, item.text])),
+    });
     setRows((previous) => {
       const known = new Set(stored.map((row) => row.id));
       const missed = previous.filter((row) => !known.has(row.id));
@@ -163,7 +199,45 @@ export function usePulses(day: string, timeZone: string): Pulses {
     })();
   }, [refresh]);
 
+  /**
+   * Act on a chip, then re-read.
+   *
+   * Not optimistic, unlike `remove`. A tap here is a write to two entities at
+   * once and the answer is whatever the fold says afterwards — showing the
+   * chip gone before the commit resolved would mean showing a task spawned
+   * that was not. The tap is a local IndexedDB write, so the wait is a frame.
+   */
+  const act = useCallback((work: () => Promise<void>) => {
+    void (async () => {
+      try {
+        await work();
+        // Same push path as every other write; the debounce collapses a burst.
+        scheduleFlush();
+      } catch (error) {
+        // The chip is still there and still tappable, which is the honest
+        // report: nothing happened.
+        if (import.meta.env.DEV) console.error('Failed to act on a pulse proposal:', error);
+      }
+      try {
+        await refresh();
+      } catch (error) {
+        if (import.meta.env.DEV) console.error('Failed to re-read pulses:', error);
+      }
+    })();
+  }, [refresh]);
+
+  const applyEffect = useCallback(
+    (pulseId: string, index: number) => act(() => applyPulseEffect(pulseId, index)),
+    [act]
+  );
+  const dismissEffect = useCallback(
+    (pulseId: string, index: number) => act(() => dismissPulseEffect(pulseId, index)),
+    [act]
+  );
+  const applyVocab = useCallback((pulseId: string) => act(() => approvePulseVocabProposal(pulseId)), [act]);
+  const dismissVocab = useCallback((pulseId: string) => act(() => dismissPulseVocabProposal(pulseId)), [act]);
+
   const today = useMemo(() => pulsesForDay(rows, day, timeZone), [rows, day, timeZone]);
 
-  return { today, capture, remove };
+  return { today, names, capture, remove, applyEffect, dismissEffect, applyVocab, dismissVocab };
 }

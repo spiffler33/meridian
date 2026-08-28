@@ -24,23 +24,31 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dayKey, deviceTimeZone, EVENTS_PATH } from './calendar';
 import { closeDb, enqueue, outboxSize, peekOutbox, putCachedContent } from './db';
 import type { OutboxRecord } from './db';
-import { ENTITY, resetSession } from './entities';
+import { ENTITY, readPulseVocabRow, resetSession } from './entities';
 import type { PulseRow } from './entities';
 import { fold } from './journal';
 import type { JournalEvent } from './journal';
 import { compareOldestFirst, pulsesForDay } from './pulse';
 import { addDays, getToday } from '../utils/dates';
 import {
+  applyPulseEffect,
+  approvePulseVocabProposal,
   codeCapturedPulse,
   codeUncodedPulses,
   createHabit,
   createPulse,
   createTowerItem,
   deletePulse,
+  dismissPulseEffect,
+  dismissPulseVocabProposal,
   enrichPulse,
   ensurePulseVocabSeeded,
+  getCompletionsForDate,
   getPulses,
+  getPulseEffectAutoApply,
+  getTowerItems,
   MAX_PULSES_PER_SWEEP,
+  setPulseEffectAutoApply,
   toggleCompletion,
 } from '../services/data';
 import type { Coding } from '../services/coder';
@@ -827,5 +835,459 @@ describe('habitAliases repair (D7)', () => {
 
     expect(again.habitAliases).toEqual({ gym: strength.id, lift: strength.id, strength: strength.id });
     expect(await outboxSize()).toBe(before);
+  });
+});
+
+// ============================================================================
+// Chips: applying a proposal, and dropping one
+// ============================================================================
+
+/**
+ * A coding carrying exactly the effects given, and nothing else proposed.
+ * Enrichment is the only way an effect ever reaches a row, so every test here
+ * writes one rather than hand-assembling a journal line.
+ */
+function codingWith(effects: Coding['effects'], vocabProposal: Coding['vocabProposal'] = null): Coding {
+  return { ...SAMPLE_CODING, effects, vocabProposal };
+}
+
+/** The pulse row as the store answers for it now. */
+async function reread(id: string): Promise<PulseRow> {
+  const row = (await getPulses()).find((candidate) => candidate.id === id);
+  if (row === undefined) throw new Error(`pulse ${id} is gone`);
+  return row;
+}
+
+/**
+ * Run `work` with `Date.now()` moving a second every time it is read.
+ *
+ * This is what makes "one commit" observable from the outbox alone. `commit`
+ * reads the clock exactly ONCE per call and stamps that `ts` on every draft it
+ * carries (`entities.ts`'s `record`), so under a ticking clock the events of a
+ * single commit share a `ts` and the events of two commits cannot — no matter
+ * how close together the two calls sit. Without it the file-wide frozen clock
+ * gives every write the same `ts` and the assertion proves nothing.
+ *
+ * Nothing else on an apply's path reads `Date.now()`: the field timestamps go
+ * through `nowIso`, which is `new Date()`, still answered by the frozen clock.
+ */
+async function withTickingClock(work: () => Promise<void>): Promise<void> {
+  let tick = NOW.getTime();
+  const clock = vi.spyOn(Date, 'now').mockImplementation(() => (tick += 1000));
+  try {
+    await work();
+  } finally {
+    clock.mockRestore();
+  }
+}
+
+/**
+ * The two events an apply is required to have written TOGETHER.
+ *
+ * The pair that came out of one commit is: the last two events in the outbox
+ * (`peekOutbox` reads the `bySeq` index, ascending), on consecutive seqs, from
+ * one device, sharing one `ts` — see `withTickingClock`, which the apply must
+ * have run under for that last part to mean anything.
+ *
+ * Read off the outbox, which is what was actually durably queued, rather than
+ * off a spy on `commit`'s arguments, which would prove only that the caller
+ * asked nicely.
+ */
+async function assertOneCommit(entity: string, pulseId: string): Promise<void> {
+  const queued = await peekOutbox<JournalEvent & OutboxRecord>();
+  expect(queued.length).toBeGreaterThanOrEqual(2);
+  const [target, listUpdate] = queued.slice(-2);
+
+  expect(target.entity).toBe(entity);
+  expect(listUpdate.entity).toBe(ENTITY.pulse);
+  expect(listUpdate.entityId).toBe(pulseId);
+  expect(listUpdate.type).toBe('upsert');
+  const fields = (listUpdate as UpsertEvent).fields;
+  expect('effects' in fields || 'vocabProposal' in fields).toBe(true);
+
+  expect(target.ts).toBe(listUpdate.ts);
+  expect(target.device).toBe(listUpdate.device);
+  expect(listUpdate.seq - target.seq).toBe(1);
+}
+
+describe('applying an effect chip', () => {
+  dbReset();
+
+  it('completeHabit ticks the habit on the pulse\'s own day, in one commit, and the chip goes', async () => {
+    const habit = await createHabit({ label: 'strength', category: 'health' });
+    const pulse = await createPulse('gym done');
+    await enrichPulse(pulse.id, codingWith([{ type: 'completeHabit', habitId: habit.id }]));
+
+    await withTickingClock(() => applyPulseEffect(pulse.id, 0));
+
+    const day = dayKey(Date.parse(pulse.at), deviceTimeZone());
+    expect((await getCompletionsForDate(day))[habit.id]).toBe(true);
+    await assertOneCommit(ENTITY.habitCompletion, pulse.id);
+
+    const row = await reread(pulse.id);
+    expect(row.effects).toEqual([]);
+    // The coding survives the apply — a chip changes what is offered, not how
+    // the line was read.
+    expect(row.signal).toBe(SAMPLE_CODING.signal);
+    expect(row.domain).toBe(SAMPLE_CODING.domain);
+    expect(row.text).toBe('gym done');
+  });
+
+  it('completeHabit writes nothing when the habit id names no live habit — never a text match', async () => {
+    await createHabit({ label: 'strength', category: 'health' });
+    const pulse = await createPulse('gym done');
+    // The label is right there in the text and in the effect; only the id counts.
+    await enrichPulse(pulse.id, codingWith([{ type: 'completeHabit', habitId: 'strength' }]));
+
+    await applyPulseEffect(pulse.id, 0);
+
+    const day = dayKey(Date.parse(pulse.at), deviceTimeZone());
+    expect(Object.keys(await getCompletionsForDate(day))).toHaveLength(0);
+    // The chip still goes: there is nothing to do and never will be.
+    expect((await reread(pulse.id)).effects).toEqual([]);
+  });
+
+  it('spawnTask creates the Tower item, links it, and does it in one commit', async () => {
+    const pulse = await createPulse('sort out the boiler');
+    await enrichPulse(pulse.id, codingWith([{ type: 'spawnTask', text: 'call the plumber' }]));
+
+    await withTickingClock(() => applyPulseEffect(pulse.id, 0));
+
+    const items = await getTowerItems();
+    expect(items).toHaveLength(1);
+    expect(items[0].text).toBe('call the plumber');
+    expect(items[0].status).toBe('active');
+
+    const row = await reread(pulse.id);
+    expect(row.links?.towerId).toBe(items[0].id);
+    expect(row.effects).toEqual([]);
+    await assertOneCommit(ENTITY.towerItem, pulse.id);
+  });
+
+  it("spawnTask falls back to the owner's own line when the coder proposed no text", async () => {
+    const pulse = await createPulse('renew the passport');
+    await enrichPulse(pulse.id, codingWith([{ type: 'spawnTask' }]));
+
+    await applyPulseEffect(pulse.id, 0);
+
+    expect((await getTowerItems())[0].text).toBe('renew the passport');
+  });
+
+  it('tapping spawnTask twice creates exactly one Tower item — the effect is bounded once', async () => {
+    const pulse = await createPulse('sort out the boiler');
+    await enrichPulse(pulse.id, codingWith([{ type: 'spawnTask', text: 'call the plumber' }]));
+
+    await applyPulseEffect(pulse.id, 0);
+    await applyPulseEffect(pulse.id, 0);
+
+    expect(await getTowerItems()).toHaveLength(1);
+  });
+
+  it('a spawnTask chip that came back after the task exists creates nothing more', async () => {
+    const pulse = await createPulse('sort out the boiler');
+    const effect = { type: 'spawnTask' as const, text: 'call the plumber' };
+    await enrichPulse(pulse.id, codingWith([effect]));
+    await applyPulseEffect(pulse.id, 0);
+    expect(await getTowerItems()).toHaveLength(1);
+
+    // The state the `links.towerId` guard exists for: a write that put the
+    // chip back without unsetting the link — a half-landed pair from a build
+    // that did not commit them together, or a hand-edited journal. The effect
+    // is not idempotent on its own; only the link makes a repeat safe.
+    await enqueue([
+      upsert({
+        id: 'e-chip-restored',
+        device: 'other',
+        seq: 1,
+        ts: NOW.getTime() + 1000,
+        entityId: pulse.id,
+        fields: { effects: [effect] },
+      }),
+    ]);
+    resetSession();
+    expect((await reread(pulse.id)).effects).toEqual([effect]);
+
+    // The tap comes after the write that restored the chip, so its own
+    // removal is the later writer. The clock is frozen file-wide, so this is
+    // the only way to say "and then the owner tapped it".
+    vi.setSystemTime(new Date(NOW.getTime() + 2000));
+    await applyPulseEffect(pulse.id, 0);
+
+    expect(await getTowerItems()).toHaveLength(1);
+    expect((await reread(pulse.id)).effects).toEqual([]);
+  });
+
+  it('updateTask writes the proposed fields onto the item it names, in one commit', async () => {
+    const item = await createTowerItem({ text: 'chase the council' });
+    const pulse = await createPulse('waiting on the council now');
+    await enrichPulse(
+      pulse.id,
+      codingWith([{ type: 'updateTask', towerId: item.id, status: 'waiting', waitingOn: 'the council' }])
+    );
+
+    await withTickingClock(() => applyPulseEffect(pulse.id, 0));
+
+    const updated = (await getTowerItems()).find((candidate) => candidate.id === item.id);
+    expect(updated?.status).toBe('waiting');
+    expect(updated?.waitingOn).toBe('the council');
+    expect((await reread(pulse.id)).effects).toEqual([]);
+    await assertOneCommit(ENTITY.towerItem, pulse.id);
+  });
+
+  it('updateTask writes nothing for an id no item holds, rather than resurrecting a deleted one', async () => {
+    const pulse = await createPulse('done with that');
+    await enrichPulse(pulse.id, codingWith([{ type: 'updateTask', towerId: 'not-an-item', status: 'done' }]));
+
+    await applyPulseEffect(pulse.id, 0);
+
+    expect(await getTowerItems(true)).toHaveLength(0);
+    expect((await reread(pulse.id)).effects).toEqual([]);
+  });
+
+  it('updateTask ignores a status Tower does not have', async () => {
+    const item = await createTowerItem({ text: 'chase the council' });
+    const pulse = await createPulse('parked that');
+    await enrichPulse(pulse.id, codingWith([{ type: 'updateTask', towerId: item.id, status: 'parked' }]));
+
+    await applyPulseEffect(pulse.id, 0);
+
+    expect((await getTowerItems()).find((candidate) => candidate.id === item.id)?.status).toBe('active');
+  });
+
+  it('claimEvent sets links.eventId and nothing else — a claim has no entity of its own', async () => {
+    const pulse = await createPulse('that was the school thing');
+    await enrichPulse(pulse.id, codingWith([{ type: 'claimEvent', eventId: 'evt-42' }]));
+
+    await applyPulseEffect(pulse.id, 0);
+
+    const row = await reread(pulse.id);
+    expect(row.links?.eventId).toBe('evt-42');
+    expect(row.effects).toEqual([]);
+  });
+
+  it('applies only the effect tapped, leaving the rest of the chips alone', async () => {
+    const pulse = await createPulse('gym, then the boiler');
+    await enrichPulse(
+      pulse.id,
+      codingWith([{ type: 'claimEvent', eventId: 'evt-1' }, { type: 'spawnTask', text: 'call the plumber' }])
+    );
+
+    await applyPulseEffect(pulse.id, 1);
+
+    const row = await reread(pulse.id);
+    expect(row.effects).toEqual([{ type: 'claimEvent', eventId: 'evt-1' }]);
+    expect(await getTowerItems()).toHaveLength(1);
+  });
+
+  it('writes nothing at all for an index no effect sits at', async () => {
+    const pulse = await createPulse('nothing proposed here');
+    await enrichPulse(pulse.id, codingWith([]));
+    const before = await outboxSize();
+
+    await applyPulseEffect(pulse.id, 0);
+
+    expect(await outboxSize()).toBe(before);
+  });
+});
+
+describe('dismissing a chip', () => {
+  dbReset();
+
+  it('drops the effect and keeps the coding (Appendix C)', async () => {
+    const pulse = await createPulse('sort out the boiler');
+    await enrichPulse(
+      pulse.id,
+      codingWith([{ type: 'spawnTask', text: 'call the plumber' }, { type: 'claimEvent', eventId: 'evt-1' }])
+    );
+
+    await dismissPulseEffect(pulse.id, 0);
+
+    // A real re-open: the dismissal has to be durable, not a render-time flag.
+    resetSession();
+    const row = await reread(pulse.id);
+    expect(row.effects).toEqual([{ type: 'claimEvent', eventId: 'evt-1' }]);
+    expect(row.signal).toBe(SAMPLE_CODING.signal);
+    expect(row.domain).toBe(SAMPLE_CODING.domain);
+    expect(row.span).toEqual(SAMPLE_CODING.span);
+    // Nothing was created by the dismissal.
+    expect(await getTowerItems(true)).toHaveLength(0);
+  });
+
+  it('drops the vocabulary proposal and keeps the coding', async () => {
+    const pulse = await createPulse('plumbing all afternoon');
+    await enrichPulse(pulse.id, codingWith([], { kind: 'activity', value: 'plumbing', mapsTo: 'home-ops' }));
+
+    await dismissPulseVocabProposal(pulse.id);
+
+    resetSession();
+    const row = await reread(pulse.id);
+    expect(row.vocabProposal).toBeNull();
+    expect(row.signal).toBe(SAMPLE_CODING.signal);
+    expect(readPulseVocabRow()?.activities.plumbing).toBeUndefined();
+  });
+});
+
+describe('approving a vocabulary proposal', () => {
+  dbReset();
+
+  it('upserts pulseVocab and clears the proposal in one commit', async () => {
+    const pulse = await createPulse('plumbing all afternoon');
+    await enrichPulse(pulse.id, codingWith([], { kind: 'activity', value: 'plumbing', mapsTo: 'home-ops' }));
+
+    await withTickingClock(() => approvePulseVocabProposal(pulse.id));
+
+    expect(readPulseVocabRow()?.activities.plumbing).toBe('home-ops');
+    expect((await reread(pulse.id)).vocabProposal).toBeNull();
+    await assertOneCommit(ENTITY.pulseVocab, pulse.id);
+  });
+
+  it('adds a domain and a person without disturbing what is already there', async () => {
+    const seeded = await ensurePulseVocabSeeded();
+    const pulse = await createPulse('drinks with sam');
+    await enrichPulse(pulse.id, codingWith([], { kind: 'person', value: 'sam', mapsTo: null }));
+
+    await approvePulseVocabProposal(pulse.id);
+
+    const vocab = readPulseVocabRow();
+    expect(vocab?.people).toEqual([...seeded.people, 'sam']);
+    expect(vocab?.domains).toEqual(seeded.domains);
+  });
+
+  it('approving the same value twice cannot duplicate it', async () => {
+    const first = await createPulse('a new domain');
+    await enrichPulse(first.id, codingWith([], { kind: 'domain', value: 'garden', mapsTo: null }));
+    await approvePulseVocabProposal(first.id);
+
+    const second = await createPulse('the same domain again');
+    await enrichPulse(second.id, codingWith([], { kind: 'domain', value: 'garden', mapsTo: null }));
+    await approvePulseVocabProposal(second.id);
+
+    expect(readPulseVocabRow()?.domains.filter((domain) => domain === 'garden')).toEqual(['garden']);
+    expect((await reread(second.id)).vocabProposal).toBeNull();
+  });
+
+  it('a habitAlias is written only when it points at a live habit, by id', async () => {
+    const habit = await createHabit({ label: 'strength', category: 'health' });
+    const good = await createPulse('lifted');
+    await enrichPulse(good.id, codingWith([], { kind: 'habitAlias', value: 'lift', mapsTo: habit.id }));
+    const bad = await createPulse('lifted again');
+    await enrichPulse(bad.id, codingWith([], { kind: 'habitAlias', value: 'pump', mapsTo: 'strength' }));
+
+    await approvePulseVocabProposal(good.id);
+    await approvePulseVocabProposal(bad.id);
+
+    const aliases = readPulseVocabRow()?.habitAliases ?? {};
+    expect(aliases.lift).toBe(habit.id);
+    expect(aliases.pump).toBeUndefined();
+    // Both chips go either way: neither is a failure to retry.
+    expect((await reread(bad.id)).vocabProposal).toBeNull();
+  });
+
+  it('an activity with no domain to map to writes nothing', async () => {
+    const pulse = await createPulse('plumbing all afternoon');
+    await enrichPulse(pulse.id, codingWith([], { kind: 'activity', value: 'plumbing', mapsTo: null }));
+
+    await approvePulseVocabProposal(pulse.id);
+
+    expect(readPulseVocabRow()?.activities.plumbing).toBeUndefined();
+    expect((await reread(pulse.id)).vocabProposal).toBeNull();
+  });
+});
+
+describe('auto-apply', () => {
+  dbReset();
+
+  const SPAWN = { type: 'spawnTask' as const, text: 'call the plumber' };
+
+  it('is off on a fresh device, for every type', async () => {
+    expect(await getPulseEffectAutoApply('completeHabit')).toBe(false);
+    expect(await getPulseEffectAutoApply('spawnTask')).toBe(false);
+    expect(await getPulseEffectAutoApply('updateTask')).toBe(false);
+    expect(await getPulseEffectAutoApply('claimEvent')).toBe(false);
+  });
+
+  it('off: a coding lands with its chips intact and nothing is written for them', async () => {
+    const habit = await createHabit({ label: 'strength', category: 'health' });
+    const item = await createTowerItem({ text: 'chase the council' });
+    await createPulse('a busy line');
+    codePulseMock.mockResolvedValue(
+      codingWith([
+        { type: 'completeHabit', habitId: habit.id },
+        SPAWN,
+        { type: 'updateTask', towerId: item.id, status: 'waiting' },
+        { type: 'claimEvent', eventId: 'evt-1' },
+      ])
+    );
+
+    await codeUncodedPulses();
+
+    const row = (await getPulses())[0];
+    expect(row.effects).toHaveLength(4);
+    expect(await getTowerItems()).toHaveLength(1); // the one created above, no more
+    expect((await getTowerItems())[0].status).toBe('active');
+    const day = dayKey(Date.parse(row.at), deviceTimeZone());
+    expect(Object.keys(await getCompletionsForDate(day))).toHaveLength(0);
+    expect(row.links?.eventId ?? null).toBeNull();
+  });
+
+  it('on: the effect applies as the coding lands, with no tap', async () => {
+    await setPulseEffectAutoApply('spawnTask', true);
+    await createPulse('sort out the boiler');
+    codePulseMock.mockResolvedValue(codingWith([SPAWN]));
+
+    await codeUncodedPulses();
+
+    const items = await getTowerItems();
+    expect(items).toHaveLength(1);
+    expect(items[0].text).toBe('call the plumber');
+    const row = (await getPulses())[0];
+    expect(row.effects).toEqual([]);
+    expect(row.links?.towerId).toBe(items[0].id);
+  });
+
+  it('on: applies only the switched-on types and leaves the others as chips', async () => {
+    await setPulseEffectAutoApply('spawnTask', true);
+    await createPulse('sort out the boiler');
+    codePulseMock.mockResolvedValue(codingWith([{ type: 'claimEvent', eventId: 'evt-1' }, SPAWN]));
+
+    await codeUncodedPulses();
+
+    const row = (await getPulses())[0];
+    expect(row.effects).toEqual([{ type: 'claimEvent', eventId: 'evt-1' }]);
+    expect(await getTowerItems()).toHaveLength(1);
+  });
+
+  it('switching a type on does not reach back over pulses already coded', async () => {
+    await createPulse('sort out the boiler');
+    codePulseMock.mockResolvedValue(codingWith([SPAWN]));
+    await codeUncodedPulses();
+    expect(await getTowerItems()).toHaveLength(0);
+
+    // The owner changes their mind a fortnight in. Everything already coded
+    // keeps its chips; the switch decides what happens next, not what happened.
+    await setPulseEffectAutoApply('spawnTask', true);
+
+    const pulseId = (await getPulses())[0].id;
+    await codeUncodedPulses();
+    await codeCapturedPulse(pulseId);
+    resetSession();
+    await codeUncodedPulses();
+
+    expect(await getTowerItems()).toHaveLength(0);
+    expect((await getPulses())[0].effects).toEqual([SPAWN]);
+  });
+
+  it('never applies a vocabulary proposal, whatever is switched on', async () => {
+    await setPulseEffectAutoApply('completeHabit', true);
+    await setPulseEffectAutoApply('spawnTask', true);
+    await setPulseEffectAutoApply('updateTask', true);
+    await setPulseEffectAutoApply('claimEvent', true);
+    await createPulse('plumbing all afternoon');
+    codePulseMock.mockResolvedValue(codingWith([], { kind: 'activity', value: 'plumbing', mapsTo: 'home-ops' }));
+
+    await codeUncodedPulses();
+
+    expect((await getPulses())[0].vocabProposal).toEqual({ kind: 'activity', value: 'plumbing', mapsTo: 'home-ops' });
+    expect(readPulseVocabRow()?.activities.plumbing).toBeUndefined();
   });
 });

@@ -56,6 +56,17 @@ export type MetaKey =
   | 'theme'
   | 'skippedContextPrompt'
   /**
+   * Per-effect auto-apply, one key per `PulseEffectType` (Appendix C). All
+   * default off, and device-local on purpose: this is how one device behaves
+   * when a coding lands, not a fact about the data, so it is `meta` rather
+   * than a journalled profile field. `vocabProposal` has no key here and must
+   * never get one — Appendix C gives it no auto path at all.
+   */
+  | 'autoApplyCompleteHabit'
+  | 'autoApplySpawnTask'
+  | 'autoApplyUpdateTask'
+  | 'autoApplyClaimEvent'
+  /**
    * The Claude API key. Device-local on purpose: `meta` is the one store that
    * is never journalled, so the key cannot reach the data repo.
    */

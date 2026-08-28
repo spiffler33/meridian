@@ -17,6 +17,7 @@ import {
   hydrate,
   newId,
   profileEntityId,
+  PULSE_EFFECT_TYPES,
   PULSE_VOCAB_ID,
   readDailyEntries,
   readHabitCompletions,
@@ -40,24 +41,31 @@ import {
   toPackSession,
   toProfile,
   toTowerItem,
+  TOWER_STATUSES,
   yearThemeKey,
 } from '../lib/entities';
 import type {
   DailyEntry,
+  EventDraft,
   Habit,
   HabitCompletion,
   Profile,
+  PulseEffect,
+  PulseEffectType,
+  PulseLinks,
   PulseRow,
+  PulseVocabProposal,
   PulseVocabRow,
   ReadItemRow,
   Task,
   TowerItemRow,
   YearTheme,
 } from '../lib/entities';
-import { allCachedFiles } from '../lib/db';
+import { allCachedFiles, getMeta, setMeta } from '../lib/db';
+import type { MetaKey } from '../lib/db';
 import { dayKey, deviceTimeZone, eventsForDay } from '../lib/calendar';
 import { loadCalendar } from '../lib/calendarSync';
-import { compareOldestFirst } from '../lib/pulse';
+import { compareOldestFirst, effectString, spawnTaskText } from '../lib/pulse';
 import { scheduleFlush } from '../lib/sync';
 import { codePulse } from './coder';
 import type { Coding, CoderContext, PulseEnrichment, RecentPulse } from './coder';
@@ -810,6 +818,319 @@ export async function ensurePulseVocabSeeded(): Promise<PulseVocabRow> {
 }
 
 // ============================================================================
+// Pulse proposals (chips)
+// ============================================================================
+
+/**
+ * The one rule this whole section is built around: **an apply is a single
+ * `commit`.**
+ *
+ * Applying touches two things — the entity the effect names, and the pulse's
+ * own `effects` list, which the applied effect has to leave. Split across two
+ * commits, a failure between them leaves the chip on screen with the write
+ * already done, and the next tap repeats it. Three of the four effects would
+ * survive that (a habit completion is keyed `habit+date`, a claim writes the
+ * same id, an update rewrites the same fields), but `spawnTask` mints a fresh
+ * id and would make a second Tower item the owner never asked for.
+ *
+ * `commit` takes an array and turns it into one `enqueue` (`entities.ts`), so
+ * both writes land or neither does. Nothing here calls `createTowerItem` or
+ * `toggleCompletion`: each of those is its own `commit`, which is exactly the
+ * split this must not have. The fields they write are mirrored instead, which
+ * is the one duplication this design pays for.
+ *
+ * `spawnTask` is guarded on top of that: a pulse whose `links.towerId` is
+ * already set has its task, so the chip is dropped and nothing is created.
+ */
+
+/** No link at all — what a pulse coded before `links` existed reads as. */
+const NO_LINKS: PulseLinks = { habitId: null, towerId: null, eventId: null };
+
+/**
+ * Per-effect auto-apply, one device-local `meta` key each (Appendix C: all
+ * default off). `vocabProposal` is absent by design and must stay absent.
+ */
+const AUTO_APPLY_META_KEY: Record<PulseEffectType, MetaKey> = {
+  completeHabit: 'autoApplyCompleteHabit',
+  spawnTask: 'autoApplySpawnTask',
+  updateTask: 'autoApplyUpdateTask',
+  claimEvent: 'autoApplyClaimEvent',
+};
+
+/** Whether this device applies `type` by itself. Off until the owner says so. */
+export async function getPulseEffectAutoApply(type: PulseEffectType): Promise<boolean> {
+  return (await getMeta<boolean>(AUTO_APPLY_META_KEY[type], false)) === true;
+}
+
+/** Turn one effect type's auto-apply on or off, on this device only. */
+export async function setPulseEffectAutoApply(type: PulseEffectType, on: boolean): Promise<void> {
+  await setMeta(AUTO_APPLY_META_KEY[type], on);
+}
+
+/** The pulse-side half of an apply: the effect leaves the list, and stays gone. */
+function withoutEffect(row: PulseRow, index: number): Record<string, unknown> {
+  return { effects: (row.effects ?? []).filter((_, at) => at !== index) };
+}
+
+/**
+ * The `habitCompletion` draft a `completeHabit` chip stands for, or none.
+ *
+ * The date is the pulse's OWN local day, not today's: the coder already reads
+ * a pulse against its own instant (see `CoderContext.now`), and a sweep
+ * draining a backlog on Saturday must not tick Saturday's box for a Thursday
+ * line. The entity id is the natural key `habit+date` through
+ * `resolveEntityId`, which is what makes an apply idempotent — a repeat is
+ * the same row, never a second completion.
+ *
+ * The habit is resolved by id against the live habits, the same ones the
+ * coder was shown. An id naming none of them writes nothing.
+ */
+function completeHabitDraft(row: PulseRow, effect: PulseEffect, habits: readonly Habit[]): EventDraft | null {
+  const habitId = effectString(effect, 'habitId');
+  if (habitId === null || !habits.some((habit) => habit.id === habitId)) return null;
+
+  const at = Date.parse(row.at);
+  if (!Number.isFinite(at)) return null;
+
+  const key = habitCompletionKey(habitId, dayKey(at, deviceTimeZone()));
+  const completions = readHabitCompletions();
+  const entityId = resolveEntityId(completions, completionKeyOf, key);
+  const fields: Record<string, unknown> = { habit_id: habitId, date: dayKey(at, deviceTimeZone()) };
+  if (!completions.some((completion) => completion.id === entityId)) fields.created_at = nowIso();
+
+  return { entity: ENTITY.habitCompletion, entityId, type: 'upsert', fields };
+}
+
+/**
+ * The `towerItem` draft an `updateTask` chip stands for, or none.
+ *
+ * The item is resolved by id and must already exist: an upsert against an id
+ * nothing holds would not update a task, it would RESURRECT a deleted one as
+ * a textless ghost carrying only the fields written here. `status` is checked
+ * against the four Tower knows for the same reason.
+ */
+function updateTaskDraft(effect: PulseEffect): EventDraft | null {
+  const towerId = effectString(effect, 'towerId');
+  if (towerId === null || !readTowerItemRows().some((item) => item.id === towerId)) return null;
+
+  const fields: Record<string, unknown> = {};
+  const status = effectString(effect, 'status');
+  if (status !== null && (TOWER_STATUSES as readonly string[]).includes(status)) fields.status = status;
+  const waitingOn = effectString(effect, 'waitingOn');
+  if (waitingOn !== null) fields.waiting_on = waitingOn;
+  const expectsBy = effectString(effect, 'expectsBy');
+  if (expectsBy !== null) fields.expects_by = expectsBy;
+  if (Object.keys(fields).length === 0) return null;
+
+  // Any touch counts as attention, exactly as `updateTowerItem` records it.
+  fields.last_touched = nowIso();
+  return { entity: ENTITY.towerItem, entityId: towerId, type: 'upsert', fields };
+}
+
+/**
+ * Apply one proposed effect: the chip's own write and the chip's removal, in
+ * one commit (see this section's opening note).
+ *
+ * The effect always leaves the list, whether or not it could be applied. An
+ * effect naming a habit that no longer exists, or a task that was deleted, is
+ * not a failure to report — there is nothing to do and nothing that will ever
+ * make there be, so the honest outcome is the chip going away. That also
+ * keeps the auto-apply pass below finite.
+ *
+ * Out of range, or a pulse that is gone: nothing at all is written.
+ */
+export async function applyPulseEffect(pulseId: string, index: number): Promise<void> {
+  // One await, then every read is against a settled session: `commit`'s own
+  // generation guard covers the write, but a row read either side of a
+  // suspension point would not be reading the same state.
+  const habits = await getHabits();
+
+  const row = readPulseRows().find((candidate) => candidate.id === pulseId);
+  const effect = row?.effects?.[index];
+  if (row === undefined || effect === undefined) return;
+
+  const pulseFields = withoutEffect(row, index);
+  const drafts: EventDraft[] = [];
+
+  switch (effect.type) {
+    case 'completeHabit': {
+      const draft = completeHabitDraft(row, effect, habits);
+      if (draft !== null) drafts.push(draft);
+      break;
+    }
+    case 'spawnTask': {
+      // Already spawned. The item exists, this tap is a repeat, and minting a
+      // second id is the one mistake in this file that cannot be undone by
+      // tapping again — so the chip goes and nothing is created.
+      if ((row.links ?? NO_LINKS).towerId !== null) break;
+      const text = spawnTaskText(row, effect);
+      if (text.length === 0) break;
+      const towerId = newId();
+      const now = nowIso();
+      drafts.push({
+        entity: ENTITY.towerItem,
+        entityId: towerId,
+        type: 'upsert',
+        // The same fields `createTowerItem` writes, mirrored rather than
+        // called: that function is its own commit, and this must be one.
+        fields: {
+          text,
+          status: 'active',
+          waiting_on: null,
+          expects_by: null,
+          effort: null,
+          is_event: false,
+          last_touched: now,
+          created_at: now,
+          done_at: null,
+        },
+      });
+      pulseFields.links = { ...(row.links ?? NO_LINKS), towerId };
+      break;
+    }
+    case 'updateTask': {
+      const draft = updateTaskDraft(effect);
+      if (draft !== null) drafts.push(draft);
+      break;
+    }
+    case 'claimEvent': {
+      // The whole effect IS a field on the pulse: a claim is derived from the
+      // stream, with no entity of its own (Appendix C). The event id is not
+      // checked against the calendar mirror — the mirror is a read-only cache
+      // that can be stale or absent, and a claim must not depend on it.
+      const eventId = effectString(effect, 'eventId');
+      if (eventId !== null) pulseFields.links = { ...(row.links ?? NO_LINKS), eventId };
+      break;
+    }
+  }
+
+  drafts.push({ entity: ENTITY.pulse, entityId: pulseId, type: 'upsert', fields: pulseFields });
+  await commit(drafts);
+}
+
+/**
+ * Drop one proposed effect and keep the coding (Appendix C). The rest of the
+ * enrichment is untouched, so a dismissed chip changes what is offered, never
+ * what the pulse was read as.
+ */
+export async function dismissPulseEffect(pulseId: string, index: number): Promise<void> {
+  await hydrate();
+  const row = readPulseRows().find((candidate) => candidate.id === pulseId);
+  if (row?.effects?.[index] === undefined) return;
+  await commit([{ entity: ENTITY.pulse, entityId: pulseId, type: 'upsert', fields: withoutEffect(row, index) }]);
+}
+
+/**
+ * The `pulseVocab` fields an approved proposal would write, or none.
+ *
+ * Additive and set-like: a value already there writes nothing, so approving
+ * the same proposal twice cannot duplicate it. An `activity` with no domain
+ * to map to, or a `habitAlias` pointing at no live habit, is not written —
+ * Appendix A's shapes are `label -> domain` and `alias -> habitId`, and half
+ * an entry is worse than none for phase 3, which reads nothing else.
+ */
+function vocabFieldsFor(
+  vocab: PulseVocabRow,
+  proposal: PulseVocabProposal,
+  habits: readonly Habit[]
+): Record<string, unknown> | null {
+  switch (proposal.kind) {
+    case 'domain':
+      if (vocab.domains.includes(proposal.value)) return null;
+      return { domains: [...vocab.domains, proposal.value] };
+    case 'activity':
+      if (proposal.mapsTo === null) return null;
+      if (vocab.activities[proposal.value] === proposal.mapsTo) return null;
+      return { activities: { ...vocab.activities, [proposal.value]: proposal.mapsTo } };
+    case 'person':
+      if (vocab.people.includes(proposal.value)) return null;
+      return { people: [...vocab.people, proposal.value] };
+    case 'habitAlias': {
+      const habitId = proposal.mapsTo;
+      if (habitId === null || !habits.some((habit) => habit.id === habitId)) return null;
+      if (vocab.habitAliases[proposal.value] === habitId) return null;
+      return { habitAliases: { ...vocab.habitAliases, [proposal.value]: habitId } };
+    }
+  }
+}
+
+/**
+ * Approve the vocabulary proposal on a pulse: the `pulseVocab` upsert and the
+ * proposal's removal, in one commit.
+ *
+ * Confirm-only, forever. Appendix C gives this no auto-apply toggle and this
+ * function is reachable from nothing but a tap — the vocabulary is the spine
+ * the coder reads on every call, so it grows by the owner's hand or not at
+ * all.
+ *
+ * Seeding runs first and is deliberately NOT part of the pair: it is its own
+ * idempotent write (`ensurePulseVocabSeeded`), and the row has to exist
+ * before it can grow.
+ */
+export async function approvePulseVocabProposal(pulseId: string): Promise<void> {
+  const [vocab, habits] = await Promise.all([ensurePulseVocabSeeded(), getHabits()]);
+
+  const row = readPulseRows().find((candidate) => candidate.id === pulseId);
+  const proposal = row?.vocabProposal;
+  if (row === undefined || proposal === undefined || proposal === null) return;
+
+  const fields = vocabFieldsFor(vocab, proposal, habits);
+  const drafts: EventDraft[] = [];
+  if (fields !== null) drafts.push({ entity: ENTITY.pulseVocab, entityId: PULSE_VOCAB_ID, type: 'upsert', fields });
+  // `null` is a real stored value meaning "cleared", which is what keeps the
+  // chip from coming back when the row is folded again on another device.
+  drafts.push({ entity: ENTITY.pulse, entityId: pulseId, type: 'upsert', fields: { vocabProposal: null } });
+
+  await commit(drafts);
+}
+
+/** Drop the vocabulary proposal and keep the coding. */
+export async function dismissPulseVocabProposal(pulseId: string): Promise<void> {
+  await hydrate();
+  const row = readPulseRows().find((candidate) => candidate.id === pulseId);
+  if (row === undefined || row.vocabProposal === undefined || row.vocabProposal === null) return;
+  await commit([{ entity: ENTITY.pulse, entityId: pulseId, type: 'upsert', fields: { vocabProposal: null } }]);
+}
+
+/**
+ * Apply, without a tap, the effects whose type this device has switched on.
+ *
+ * Called from ONE place — `codeRow`, the moment a coding lands — and never
+ * over stored effects. That is the whole guarantee behind the toggles: they
+ * change what happens next, not what already happened. An owner who turns
+ * `spawnTask` on after a fortnight of coded pulses gets no burst of Tower
+ * items for proposals that have been sitting there; a sweep over the store
+ * would give exactly that, and there is deliberately no code path that could.
+ *
+ * The list is re-read each time round because every apply rewrites it, so an
+ * index taken before the first one would point at the wrong effect after it.
+ * The loop is bounded by the effects the coding produced, and terminates
+ * because an apply always removes its effect, applicable or not.
+ *
+ * Never throws: an auto-apply that fails leaves the chip exactly where a
+ * manual one would have — on screen, still tappable.
+ */
+async function autoApplyEffects(pulseId: string): Promise<void> {
+  try {
+    const enabled = new Set<PulseEffectType>();
+    for (const type of PULSE_EFFECT_TYPES) {
+      if (await getPulseEffectAutoApply(type)) enabled.add(type);
+    }
+    if (enabled.size === 0) return;
+
+    const initial = readPulseRows().find((row) => row.id === pulseId)?.effects?.length ?? 0;
+    for (let remaining = initial; remaining > 0; remaining -= 1) {
+      const effects = readPulseRows().find((row) => row.id === pulseId)?.effects ?? [];
+      const index = effects.findIndex((effect) => enabled.has(effect.type));
+      if (index === -1) return;
+      await applyPulseEffect(pulseId, index);
+    }
+  } catch {
+    // Same shape as every other failure on this path: nothing happened.
+  }
+}
+
+// ============================================================================
 // Pulse coding (lazy queue)
 // ============================================================================
 
@@ -929,6 +1250,9 @@ async function codeRow(row: PulseRow, allRows: readonly PulseRow[]): Promise<voi
     // correct, finished outcome, and the pulse simply stays uncoded.
     if (coding) {
       await enrichPulse(row.id, coding);
+      // The one place auto-apply is ever reached from: a coding, the moment it
+      // lands. Never a sweep over stored effects — see `autoApplyEffects`.
+      await autoApplyEffects(row.id);
       // The enrichment is durable in the outbox either way; this only shortens
       // the window in which it is invisible to the other device, which would
       // otherwise re-code the same pulse and bill it a second time.

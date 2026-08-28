@@ -281,7 +281,7 @@ type Record_ = Record<string, unknown>;
 
 const HABIT_CATEGORIES: readonly HabitCategory[] = ['health', 'work', 'family', 'learning', 'other'];
 const MIT_CATEGORIES: readonly MitCategory[] = ['work', 'self', 'family'];
-const TOWER_STATUSES: readonly TowerStatus[] = ['active', 'waiting', 'someday', 'done'];
+export const TOWER_STATUSES: readonly TowerStatus[] = ['active', 'waiting', 'someday', 'done'];
 const TOWER_EFFORTS: readonly TowerEffort[] = ['quick', 'medium', 'deep'];
 const AI_TONES: readonly Profile['ai_tone'][] = ['stoic', 'friendly', 'wise'];
 
@@ -416,7 +416,7 @@ function optionalLinks(record: Record_, key: string): PulseLinks | undefined {
   return { habitId: pick('habitId'), towerId: pick('towerId'), eventId: pick('eventId') };
 }
 
-const PULSE_EFFECT_TYPES: readonly PulseEffectType[] = ['completeHabit', 'spawnTask', 'updateTask', 'claimEvent'];
+export const PULSE_EFFECT_TYPES: readonly PulseEffectType[] = ['completeHabit', 'spawnTask', 'updateTask', 'claimEvent'];
 const PULSE_VOCAB_PROPOSAL_KINDS: readonly PulseVocabProposalKind[] = ['domain', 'activity', 'person', 'habitAlias'];
 
 /**

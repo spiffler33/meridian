@@ -33,9 +33,10 @@ vi.mock('../services/coder', async (importOriginal) => {
 
 import { closeDb, outboxSize, peekOutbox } from '../lib/db';
 import type { OutboxRecord } from '../lib/db';
-import { ENTITY, resetSession } from '../lib/entities';
+import { ENTITY, readPulseVocabRow, resetSession } from '../lib/entities';
 import type { JournalEvent } from '../lib/journal';
 import { PulseView } from './PulseView';
+import { createHabit, getPulses, getTowerItems } from '../services/data';
 import type { Coding } from '../services/coder';
 
 const NOW = new Date('2026-08-27T12:00:00.000Z');
@@ -169,5 +170,110 @@ describe('the coding dot', () => {
       expect(dot).toHaveClass('bg-text-muted');
       expect(dot).not.toHaveClass('bg-transparent');
     });
+  });
+});
+
+/**
+ * The chips.
+ *
+ * Rendered from the row, not from whatever the coder happened to return into a
+ * variable: the tests below capture a line, let the coding land, and then read
+ * the DOM — which is the same path a reload takes, and the reason the pulse row
+ * stores its proposals at all.
+ */
+describe('effect chips', () => {
+  it('renders nothing under a line whose coding proposed nothing', async () => {
+    codePulseMock.mockImplementation(async () => SAMPLE_CODING);
+
+    render(<PulseView />);
+    const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
+    fireEvent.change(box, { target: { value: 'just a note' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    const line = await screen.findByText('just a note');
+    await waitFor(() => {
+      const dot = line.closest('li')?.querySelector('[aria-hidden="true"]');
+      expect(dot).toHaveClass('bg-text-muted');
+    });
+    expect(line.closest('li')?.querySelectorAll('button')).toHaveLength(1); // the kebab, alone
+  });
+
+  it('names the habit a completeHabit chip would tick, resolved by id', async () => {
+    const habit = await createHabit({ label: 'strength', category: 'health' });
+    codePulseMock.mockImplementation(async () => ({
+      ...SAMPLE_CODING,
+      effects: [{ type: 'completeHabit', habitId: habit.id }],
+    }));
+
+    render(<PulseView />);
+    const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
+    fireEvent.change(box, { target: { value: 'gym done' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    expect(await screen.findByText('tick strength')).toBeInTheDocument();
+  });
+
+  it('tapping one applies it and takes the chip away', async () => {
+    codePulseMock.mockImplementation(async () => ({
+      ...SAMPLE_CODING,
+      effects: [{ type: 'spawnTask', text: 'call the plumber' }],
+    }));
+
+    render(<PulseView />);
+    const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
+    fireEvent.change(box, { target: { value: 'sort out the boiler' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    fireEvent.click(await screen.findByText('+ call the plumber'));
+
+    await waitFor(() => expect(screen.queryByText('+ call the plumber')).toBeNull());
+    const items = await getTowerItems();
+    expect(items).toHaveLength(1);
+    expect(items[0].text).toBe('call the plumber');
+  });
+
+  it('dismissing one drops the effect and keeps the coding', async () => {
+    codePulseMock.mockImplementation(async () => ({
+      ...SAMPLE_CODING,
+      signal: 'task',
+      effects: [{ type: 'spawnTask', text: 'call the plumber' }],
+    }));
+
+    render(<PulseView />);
+    const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
+    fireEvent.change(box, { target: { value: 'sort out the boiler' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    fireEvent.click(await screen.findByLabelText('dismiss + call the plumber'));
+
+    await waitFor(() => expect(screen.queryByText('+ call the plumber')).toBeNull());
+    expect(await getTowerItems(true)).toHaveLength(0);
+
+    // The line is still coded: the dot stays filled and the signal is still there.
+    const line = screen.getByText('sort out the boiler');
+    expect(line.closest('li')?.querySelector('[aria-hidden="true"]')).toHaveClass('bg-text-muted');
+    expect((await getPulses())[0].signal).toBe('task');
+  });
+
+  it('approves a vocabulary proposal on a tap, and it has no other way in', async () => {
+    codePulseMock.mockImplementation(async () => ({
+      ...SAMPLE_CODING,
+      vocabProposal: { kind: 'domain', value: 'garden', mapsTo: null },
+    }));
+
+    render(<PulseView />);
+    const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
+    fireEvent.change(box, { target: { value: 'pruned the hedge' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    const chip = await screen.findByText('+ domain garden');
+    // Nothing applied it while it sat there — a vocabulary proposal has no
+    // auto path at all (Appendix C), whatever any switch says.
+    expect(readPulseVocabRow()?.domains ?? []).not.toContain('garden');
+
+    fireEvent.click(chip);
+
+    await waitFor(() => expect(readPulseVocabRow()?.domains).toContain('garden'));
+    expect(screen.queryByText('+ domain garden')).toBeNull();
   });
 });

@@ -11,7 +11,15 @@ import type { HabitDefinition, HabitCategory } from '../types';
 import { DEFAULT_HABITS } from '../types';
 import { saveApiKey, loadApiKey, clearApiKey } from '../services/claude';
 import type { AiTone } from '../services/claude';
-import { createHabit, updateHabit as updateHabitInDb, deleteHabit as deleteHabitInDb } from '../services/data';
+import {
+  createHabit,
+  updateHabit as updateHabitInDb,
+  deleteHabit as deleteHabitInDb,
+  getPulseEffectAutoApply,
+  setPulseEffectAutoApply,
+} from '../services/data';
+import { PULSE_EFFECT_TYPES } from '../lib/entities';
+import type { PulseEffectType } from '../lib/entities';
 import { clearToken, getDeviceId, getToken, requestPersistence, setMeta, setToken } from '../lib/db';
 import { NewslettersSettings } from '../components/NewslettersSettings';
 import { CalendarSettings } from '../components/CalendarSettings';
@@ -122,6 +130,28 @@ const AI_TONES: { value: AiTone; label: string; description: string }[] = [
 ];
 
 /**
+ * What each of Appendix C's four effects would do, in the owner's words.
+ *
+ * The vocabulary proposal is deliberately not here and must never be: it is
+ * the only proposal with no automatic path at all, because it edits the
+ * vocabulary the coder reads on every subsequent call.
+ */
+const EFFECT_LABELS: Record<PulseEffectType, string> = {
+  completeHabit: 'tick a habit',
+  spawnTask: 'spawn a task',
+  updateTask: 'update a task',
+  claimEvent: 'claim an event',
+};
+
+/** Every switch off — what a device that has never been asked answers. */
+const NO_AUTO_APPLY: Record<PulseEffectType, boolean> = {
+  completeHabit: false,
+  spawnTask: false,
+  updateTask: false,
+  claimEvent: false,
+};
+
+/**
  * What the browser says about keeping this origin's data, asked live.
  *
  * 'unknown' is a browser that cannot answer at all, which is a different thing
@@ -161,6 +191,9 @@ export function SettingsView() {
   const [accessFailed, setAccessFailed] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [persistence, setPersistence] = useState<PersistenceAnswer | null>(null);
+  // Device-local, and off until the store says otherwise: a fresh device must
+  // never apply anything by itself before it has been told to.
+  const [autoApply, setAutoApply] = useState<Record<PulseEffectType, boolean>>(NO_AUTO_APPLY);
   // Null means "not edited yet", so the field follows the profile until it is.
   const [usernameDraft, setUsernameDraft] = useState<string | null>(null);
   const [displayNameDraft, setDisplayNameDraft] = useState<string | null>(null);
@@ -170,6 +203,24 @@ export function SettingsView() {
 
   useEffect(() => {
     loadApiKey().then(key => setApiKey(key));
+  }, []);
+
+  // The four auto-apply switches, from `meta`. A read that fails leaves them
+  // all off, which is the safe answer rather than a merely convenient one.
+  useEffect(() => {
+    let live = true;
+    Promise.all(PULSE_EFFECT_TYPES.map(type => getPulseEffectAutoApply(type))).then(
+      answers => {
+        if (!live) return;
+        const next = { ...NO_AUTO_APPLY };
+        PULSE_EFFECT_TYPES.forEach((type, index) => { next[type] = answers[index]; });
+        setAutoApply(next);
+      },
+      () => undefined
+    );
+    return () => {
+      live = false;
+    };
   }, []);
 
   // The device id and whether a token is stored come from IndexedDB; the
@@ -208,6 +259,18 @@ export function SettingsView() {
 
   const handleContextSave = () => {
     updateProfile({ personal_context: personalContext });
+  };
+
+  /**
+   * Flip one effect's auto-apply. Optimistic, and put back if the write fails
+   * — a switch that reads on while the store says off would auto-apply
+   * nothing, which is a lie the owner would only find out about later.
+   */
+  const handleAutoApplyChange = (type: PulseEffectType, on: boolean) => {
+    setAutoApply(previous => ({ ...previous, [type]: on }));
+    setPulseEffectAutoApply(type, on).catch(() => {
+      setAutoApply(previous => ({ ...previous, [type]: !on }));
+    });
   };
 
   const handleSaveApiKey = async () => {
@@ -740,6 +803,30 @@ export function SettingsView() {
               rows={3}
             />
           </div>
+        </div>
+      </section>
+
+      {/* Pulse effects */}
+      <section className="bg-bg-card rounded border border-border p-4">
+        <div className="text-xs text-text-muted uppercase tracking-wide mb-3">pulse effects</div>
+        <div className="text-xs text-text-muted mb-3 leading-relaxed">
+          a coding proposes; you tap. switch one on and it applies itself as a coding lands —
+          never reaching back over pulses already coded. vocabulary is always confirmed by hand.
+        </div>
+        <div className="space-y-2">
+          {PULSE_EFFECT_TYPES.map(type => (
+            <label key={type} className="flex items-center gap-2 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={autoApply[type]}
+                onChange={e => handleAutoApplyChange(type, e.target.checked)}
+                className="accent-accent"
+              />
+              <span className="text-sm text-text group-hover:text-accent transition-colors">
+                {EFFECT_LABELS[type]}
+              </span>
+            </label>
+          ))}
         </div>
       </section>
 

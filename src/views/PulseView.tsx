@@ -19,6 +19,9 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { Dock } from '../components/Dock';
 import { deviceTimeZone, timeLabel } from '../lib/calendar';
 import { usePulses } from '../hooks/usePulses';
+import type { Pulses } from '../hooks/usePulses';
+import { effectChipLabel, vocabChipLabel } from '../lib/pulse';
+import type { PulseChipNames } from '../lib/pulse';
 import { getToday } from '../utils/dates';
 import type { PulseRow } from '../lib/entities';
 
@@ -36,11 +39,44 @@ export function PulseView() {
 
   return (
     <>
-      <PulseStream pulses={pulses.today} timeZone={timeZone} onDelete={pulses.remove} />
+      <PulseStream pulses={pulses.today} timeZone={timeZone} actions={pulses} />
       <Dock>
         <PulseCapture onCapture={pulses.capture} />
       </Dock>
     </>
+  );
+}
+
+/**
+ * One chip: what it proposes, and the way out of it.
+ *
+ * Quiet by construction — a hairline box, muted mono at the timestamp's size,
+ * no fill and no colour. A proposal is not an achievement, and the stream is a
+ * ledger: the only thing that should catch an eye on this page is the line the
+ * owner wrote. Colour is spent on the accent the capture box takes when it has
+ * focus, and nowhere else here.
+ *
+ * Two buttons rather than one with a gesture: tapping the words applies, and
+ * the `×` beside them drops it. Both are the same weight, because dismissing
+ * is not the lesser answer.
+ */
+function Chip({ label, onApply, onDismiss }: { label: string; onApply: () => void; onDismiss: () => void }) {
+  return (
+    <span className="inline-flex items-stretch rounded border border-border">
+      <button
+        onClick={onApply}
+        className="px-2 py-1 font-mono text-xs text-text-muted transition-colors hover:text-text"
+      >
+        {label}
+      </button>
+      <button
+        onClick={onDismiss}
+        aria-label={`dismiss ${label}`}
+        className="border-l border-border px-2 py-1 font-mono text-xs text-text-muted transition-colors hover:text-text"
+      >
+        ×
+      </button>
+    </span>
   );
 }
 
@@ -58,11 +94,11 @@ export function PulseView() {
 function PulseStream({
   pulses,
   timeZone,
-  onDelete,
+  actions,
 }: {
   pulses: readonly PulseRow[];
   timeZone: string;
-  onDelete: (id: string) => void;
+  actions: Pulses;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
 
@@ -71,7 +107,10 @@ function PulseStream({
   return (
     <ul className="space-y-2">
       {pulses.map((pulse) => (
-        <li key={pulse.id} className="flex items-baseline gap-3">
+        // A grid rather than a row: the chips sit in the text's own column,
+        // under the line they belong to, without anything having to know how
+        // wide a timestamp is.
+        <li key={pulse.id} className="grid grid-cols-[auto_1fr_auto] items-baseline gap-x-3 gap-y-2">
           <span className="flex items-center gap-1.5">
             {/*
               Hollow = uncoded, filled = coded. No spinner, no color beyond
@@ -88,31 +127,70 @@ function PulseStream({
               {timeLabel(pulse.at, timeZone)}
             </time>
           </span>
-          <span className="flex-1 font-read text-[14.5px] leading-[1.6] text-text">
+          <span className="font-read text-[14.5px] leading-[1.6] text-text">
             {pulse.text}
           </span>
-          {openId === pulse.id && (
+          <span className="flex items-baseline gap-3">
+            {openId === pulse.id && (
+              <button
+                onClick={() => {
+                  setOpenId(null);
+                  actions.remove(pulse.id);
+                }}
+                className="text-xs text-error hover:underline"
+              >
+                delete
+              </button>
+            )}
             <button
-              onClick={() => {
-                setOpenId(null);
-                onDelete(pulse.id);
-              }}
-              className="text-xs text-error hover:underline"
+              onClick={() => setOpenId(openId === pulse.id ? null : pulse.id)}
+              aria-label={`actions for the pulse at ${timeLabel(pulse.at, timeZone)}`}
+              aria-expanded={openId === pulse.id}
+              className="font-mono text-xs text-text-muted transition-colors hover:text-text"
             >
-              delete
+              ···
             </button>
-          )}
-          <button
-            onClick={() => setOpenId(openId === pulse.id ? null : pulse.id)}
-            aria-label={`actions for the pulse at ${timeLabel(pulse.at, timeZone)}`}
-            aria-expanded={openId === pulse.id}
-            className="font-mono text-xs text-text-muted transition-colors hover:text-text"
-          >
-            ···
-          </button>
+          </span>
+          <PulseChips pulse={pulse} actions={actions} />
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * The proposals under one line.
+ *
+ * Nothing renders when a pulse has none, which is most of them — a coding
+ * usually classifies and proposes nothing at all, and an empty row under every
+ * line would turn the stream into a form. Effects first, in the order the
+ * coder gave them, then the vocabulary proposal, which is the only one that
+ * changes what the coder reads next.
+ */
+function PulseChips({ pulse, actions }: { pulse: PulseRow; actions: Pulses }) {
+  const names: PulseChipNames = actions.names;
+  const effects = pulse.effects ?? [];
+  const proposal = pulse.vocabProposal ?? null;
+  if (effects.length === 0 && proposal === null) return null;
+
+  return (
+    <div className="col-start-2 col-span-2 flex flex-wrap items-center gap-2">
+      {effects.map((effect, index) => (
+        <Chip
+          key={index}
+          label={effectChipLabel(pulse, effect, names)}
+          onApply={() => actions.applyEffect(pulse.id, index)}
+          onDismiss={() => actions.dismissEffect(pulse.id, index)}
+        />
+      ))}
+      {proposal !== null && (
+        <Chip
+          label={vocabChipLabel(proposal, names)}
+          onApply={() => actions.applyVocab(pulse.id)}
+          onDismiss={() => actions.dismissVocab(pulse.id)}
+        />
+      )}
+    </div>
   );
 }
 
