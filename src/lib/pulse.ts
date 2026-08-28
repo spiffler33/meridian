@@ -76,6 +76,25 @@ export function effectString(effect: PulseEffect, key: string): string | null {
 }
 
 /**
+ * One effect's identity: exactly what it proposes.
+ *
+ * An effect carries no id — it is a proposal, not an entity — so the only
+ * thing that tells one apart from another is its own payload. Its stored JSON
+ * is that payload, so the serialization IS the identity: exact structural
+ * equality over a machine-defined record, never a pattern match over what it
+ * says. Both sides of any comparison come out of the same stored line, so key
+ * order is the same on both.
+ *
+ * Two effects proposing exactly the same thing are the same proposal, and
+ * applying either one is the same act — which is what makes this safe to use
+ * where a position would otherwise be trusted (a list shifts under an apply)
+ * and as a React key (an index does not survive a removal).
+ */
+export function effectKey(effect: PulseEffect): string {
+  return JSON.stringify(effect);
+}
+
+/**
  * The text a `spawnTask` chip would create the Tower item with: the coder's
  * own proposal, or — when it offered none — the line the owner actually said.
  *

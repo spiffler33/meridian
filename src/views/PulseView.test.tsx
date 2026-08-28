@@ -267,8 +267,10 @@ describe('effect chips', () => {
     fireEvent.keyDown(box, { key: 'Enter' });
 
     const chip = await screen.findByText('+ domain garden');
-    // Nothing applied it while it sat there — a vocabulary proposal has no
-    // auto path at all (Appendix C), whatever any switch says.
+    // Nothing applied it while it sat there: approving is the tap and only the
+    // tap. No switch is on here — that a proposal survives every switch being
+    // on (Appendix C: it has no auto path at all) is pinned in pulse.test.ts,
+    // which is where the switches live.
     expect(readPulseVocabRow()?.domains ?? []).not.toContain('garden');
 
     fireEvent.click(chip);

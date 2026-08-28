@@ -20,7 +20,7 @@ import { Dock } from '../components/Dock';
 import { deviceTimeZone, timeLabel } from '../lib/calendar';
 import { usePulses } from '../hooks/usePulses';
 import type { Pulses } from '../hooks/usePulses';
-import { effectChipLabel, vocabChipLabel } from '../lib/pulse';
+import { effectChipLabel, effectKey, vocabChipLabel } from '../lib/pulse';
 import type { PulseChipNames } from '../lib/pulse';
 import { getToday } from '../utils/dates';
 import type { PulseRow } from '../lib/entities';
@@ -177,7 +177,11 @@ function PulseChips({ pulse, actions }: { pulse: PulseRow; actions: Pulses }) {
     <div className="col-start-2 col-span-2 flex flex-wrap items-center gap-2">
       {effects.map((effect, index) => (
         <Chip
-          key={index}
+          // The effect itself, never its position: an apply removes one and
+          // shifts the rest down, and React would then reuse the node of the
+          // chip that was there — swapping the label under a finger already
+          // on its way to the button.
+          key={effectKey(effect)}
           label={effectChipLabel(pulse, effect, names)}
           onApply={() => actions.applyEffect(pulse.id, index)}
           onDismiss={() => actions.dismissEffect(pulse.id, index)}

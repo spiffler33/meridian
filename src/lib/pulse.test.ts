@@ -786,6 +786,84 @@ describe('codeCapturedPulse', () => {
   });
 });
 
+// ============================================================================
+// The snapshot a sweep walks goes stale under it (D8)
+// ============================================================================
+
+describe('a pulse coded while the sweep was blocked on an earlier one', () => {
+  dbReset();
+
+  /**
+   * The race, made deterministic.
+   *
+   * `codeUncodedPulses` reads the rows once and walks that snapshot. Blocked
+   * inside the first pulse's call — which is the normal case, a coder call is
+   * the slowest thing in the app — the capture trigger codes the SECOND pulse
+   * to completion beside it. The sweep then resumes into a snapshot where that
+   * pulse is still uncoded and its in-flight marker has already been released.
+   *
+   * Nothing here is contrived: the two triggers are `usePulses`'s own, one on
+   * open and one on save, and the plan gives them both.
+   */
+  async function sweepOvertakenByACapture(): Promise<{ first: string; second: string }> {
+    const first = 'the line the sweep blocks on';
+    const second = 'the line coded while it waits';
+    await createPulse(first);
+    const captured = await createPulse(second);
+
+    // The sweep walks them in this order; the whole race depends on it, so it
+    // is asserted rather than assumed.
+    expect((await getPulses()).map((row) => row.text)).toEqual([first, second]);
+
+    let enteredFirst = () => {};
+    const entered = new Promise<void>((resolve) => {
+      enteredFirst = resolve;
+    });
+    let release = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    codePulseMock.mockImplementation(async (text: string) => {
+      if (text === first) {
+        enteredFirst();
+        await blocked;
+      }
+      return codingWith([{ type: 'spawnTask', text: `task for ${text}` }]);
+    });
+
+    const sweep = codeUncodedPulses();
+    await entered;
+    await codeCapturedPulse(captured.id);
+    release();
+    await sweep;
+
+    return { first, second };
+  }
+
+  it('is not coded a second time when the sweep reaches it — the row is re-read, not the snapshot', async () => {
+    const { second } = await sweepOvertakenByACapture();
+
+    const codedSecond = (codePulseMock.mock.calls as Array<[string, unknown]>).filter(
+      ([text]) => text === second
+    );
+    // Twice is a second paid call, a second set of proposals over the first,
+    // and a coding of a line that was already read.
+    expect(codedSecond).toHaveLength(1);
+  });
+
+  it('with auto-apply on, two pulses make two Tower items and not three (F5)', async () => {
+    await setPulseEffectAutoApply('spawnTask', true);
+
+    const { first, second } = await sweepOvertakenByACapture();
+
+    // The invariant the "switching a type on does not reach back" test states
+    // but cannot reach: every path it drives takes a fresh snapshot and skips
+    // correctly. This is the path that does not.
+    const items = await getTowerItems();
+    expect(items.map((item) => item.text).sort()).toEqual([`task for ${first}`, `task for ${second}`].sort());
+  });
+});
+
 describe('habitAliases repair (D7)', () => {
   dbReset();
 
@@ -1087,6 +1165,73 @@ describe('applying an effect chip', () => {
     await applyPulseEffect(pulse.id, 0);
 
     expect(await outboxSize()).toBe(before);
+  });
+
+  it("updateTask to done dates it, exactly as completing it from Tower does", async () => {
+    const item = await createTowerItem({ text: 'chase the council' });
+    const pulse = await createPulse('council came back, that one is finished');
+    await enrichPulse(pulse.id, codingWith([{ type: 'updateTask', towerId: item.id, status: 'done' }]));
+
+    await applyPulseEffect(pulse.id, 0);
+
+    const done = (await getTowerItems(true)).find((candidate) => candidate.id === item.id);
+    expect(done?.status).toBe('done');
+    // Without this the row is done with no date, in a journal that is never
+    // compacted — permanently inconsistent with every item Tower finished
+    // itself. `completeTowerItem` stamps one clock reading on both fields.
+    expect(done?.doneAt).toBe(NOW.toISOString());
+    expect(done?.lastTouched).toBe(done?.doneAt);
+  });
+
+  it('two chips tapped at once each keep their own write (F2)', async () => {
+    const pulse = await createPulse('drinks with sam, and the boiler again');
+    await enrichPulse(
+      pulse.id,
+      codingWith([
+        { type: 'claimEvent', eventId: 'evt-1' },
+        { type: 'spawnTask', text: 'call the plumber' },
+      ])
+    );
+
+    // Two taps, neither waiting for the other — which is exactly what the view
+    // does: `act()` fires each on its own chain.
+    await Promise.all([applyPulseEffect(pulse.id, 0), applyPulseEffect(pulse.id, 1)]);
+
+    const items = await getTowerItems();
+    expect(items).toHaveLength(1);
+    const row = await reread(pulse.id);
+    // Both are whole-field writes on one row. Interleaved, the second is built
+    // from a row read before the first landed and simply overwrites it: the
+    // claim vanishes and its chip comes back, which phase 3's Needed-vs-Spent
+    // reads as an event that was never claimed.
+    expect(row.links?.eventId).toBe('evt-1');
+    expect(row.links?.towerId).toBe(items[0].id);
+    expect(row.effects).toEqual([]);
+  });
+
+  it('a second coding cannot unset a link a chip already recorded (F1b)', async () => {
+    const pulse = await createPulse('sort out the boiler');
+    await enrichPulse(pulse.id, codingWith([{ type: 'spawnTask', text: 'call the plumber' }]));
+    await applyPulseEffect(pulse.id, 0);
+    const item = (await getTowerItems())[0];
+    expect((await reread(pulse.id)).links?.towerId).toBe(item.id);
+
+    // The other device coded the same pulse before this one's enrichment
+    // reached it: the same proposals again, and all-null links. An apply
+    // records a fact; an enrichment only proposes, so the fact outranks it.
+    await enrichPulse(pulse.id, {
+      ...codingWith([{ type: 'spawnTask', text: 'call the plumber' }]),
+      links: { habitId: null, towerId: null, eventId: 'evt-9' },
+    });
+
+    const row = await reread(pulse.id);
+    expect(row.links?.towerId).toBe(item.id);
+    // Only the nulls are filled: a link the coding DID propose still lands.
+    expect(row.links?.eventId).toBe('evt-9');
+
+    // And the guard that link is holds, so the restored chip creates nothing.
+    await applyPulseEffect(pulse.id, 0);
+    expect(await getTowerItems()).toHaveLength(1);
   });
 });
 

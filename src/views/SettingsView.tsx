@@ -205,8 +205,10 @@ export function SettingsView() {
     loadApiKey().then(key => setApiKey(key));
   }, []);
 
-  // The four auto-apply switches, from `meta`. A read that fails leaves them
-  // all off, which is the safe answer rather than a merely convenient one.
+  // The four auto-apply switches, from `meta`. A read that fails leaves every
+  // switch DRAWN off — which is all this panel can say, not what the device
+  // will do: `autoApplyEffects` reads `meta` itself at apply time, so a type
+  // that is really on keeps applying while these say it does not.
   useEffect(() => {
     let live = true;
     Promise.all(PULSE_EFFECT_TYPES.map(type => getPulseEffectAutoApply(type))).then(

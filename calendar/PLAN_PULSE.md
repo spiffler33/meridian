@@ -506,3 +506,39 @@ capture codes its own line rather than re-walking the history; the coder call is
 30 s and a `stop_reason: 'max_tokens'` response is a failure like any other; `habitAliases`
 is repaired from empty when matching habits appear later, so an owner whose habits are
 named differently does not lose Phase 3's histogram permanently.
+
+### 2026-08-29 — amendment: Appendix B's effect payload, written out
+
+Appendix B's output schema left an effect's payload as a placeholder —
+`{"type": "completeHabit|spawnTask|updateTask|claimEvent", "...": "..."}` — and the first
+implementation transcribed it verbatim, so the model was never told what an effect
+actually carries. The chip code reads exact keys and validates only `type`, so a coding
+answering `habit_id` or `waiting_for` would render a fallback label, write nothing when
+tapped, and drop the proposal: a silently dead feature, and one that would have burned a
+week-long Gate 2 before anyone noticed. `updateTask` was the worst of it — `text`,
+`waitingOn` and `expectsBy` appeared nowhere in the prompt at all.
+
+Filled in, in `coder.ts`'s `EFFECT_PAYLOADS`, which the system prompt now names:
+
+| effect | keys |
+|---|---|
+| `completeHabit` | `habitId` — an id from `todayHabits` |
+| `spawnTask` | `text`, optional; left out, the pulse is used verbatim |
+| `updateTask` | `towerId` (an id from `openTowerItems`) plus at least one of `status` (`active\|waiting\|someday\|done`), `waitingOn`, `expectsBy` (`YYYY-MM-DD`) |
+| `claimEvent` | `eventId` — an id from `todayEvents` |
+
+A prompt fix, which is the doctrine: a coder that answers badly is met with vocabulary,
+prompt, or a bigger model. The alternative — teaching the chip code to recognise a variant
+spelling — is a string rule over the model's output, the same fence as a string rule over
+the owner's text, and it would hide exactly the miscoding Gate 2 exists to see.
+
+Also fixed in the same pass, without plan consequences: a coding that finished while the
+backlog sweep was blocked on an earlier pulse was coded a second time (the sweep walks a
+snapshot; the row is now re-read inside the coder's own in-flight guard) — with
+`spawnTask` auto-apply on that put two Tower items on screen for one line; an enrichment
+now merges `links` instead of replacing it, so a chip apply's recorded fact outranks a
+later proposal; applies and dismisses of a pulse's chips are serialized and carry the
+effect by value rather than by position, so two taps in one second cannot overwrite each
+other's write; an applied chip now tells `AppContext` to re-read, so a spawned task is in
+Tower before the next reload rather than after it; and `updateTask` to `done` writes
+`done_at`, as completing an item from Tower always did.

@@ -127,7 +127,10 @@ const SIGNALS: readonly PulseSignal[] = ['block', 'event', 'state', 'plan', 'tas
 const EFFECT_TYPES: readonly EffectType[] = ['completeHabit', 'spawnTask', 'updateTask', 'claimEvent'];
 const VOCAB_PROPOSAL_KINDS: readonly VocabProposalKind[] = ['domain', 'activity', 'person', 'habitAlias'];
 
-/** Appendix B's output schema, transcribed verbatim. */
+/**
+ * Appendix B's output schema, transcribed verbatim — placeholder included.
+ * `EFFECT_PAYLOADS` below is what its `"...": "..."` stands for.
+ */
 const OUTPUT_SCHEMA = `{
   "signal": "block|event|state|plan|task|claim|note",
   "domain": null, "activity": null, "people": [],
@@ -136,6 +139,33 @@ const OUTPUT_SCHEMA = `{
   "effects": [{"type": "completeHabit|spawnTask|updateTask|claimEvent", "...": "..."}],
   "vocabProposal": {"kind": "domain|activity|person|habitAlias", "value": "...", "mapsTo": null}
 }`;
+
+/**
+ * What Appendix B's `"...": "..."` placeholder stands for: the exact keys each
+ * effect type carries.
+ *
+ * Appendix B left an effect's payload unwritten, so the model was never told
+ * what one looks like — while the chips read these keys and only these. An
+ * effect answering with a key spelled any other way renders a bare chip whose
+ * tap writes nothing, and the proposal is dropped: a silently dead feature
+ * rather than a visible failure.
+ *
+ * The fix is here, in the prompt, and it cannot be anywhere else. Matching a
+ * variant spelling back to a key in the chip code would be a string rule over
+ * the model's output — the same fence as a string rule over the owner's text,
+ * and worse, since it would hide exactly the miscoding Gate 2 exists to see.
+ *
+ * Every id named here comes out of the context the model was given, which is
+ * what makes an effect resolvable by id alone at apply time.
+ */
+const EFFECT_PAYLOADS = `completeHabit: {"type": "completeHabit", "habitId": "<an id from todayHabits>"}
+spawnTask: {"type": "spawnTask", "text": "<the task, in the owner's own words>"} \
+— leave "text" out to use the pulse verbatim
+updateTask: {"type": "updateTask", "towerId": "<an id from openTowerItems>", "status": \
+"active|waiting|someday|done", "waitingOn": "<who or what it waits on>", "expectsBy": "<YYYY-MM-DD>"} \
+— "towerId" is required, and at least one of "status", "waitingOn", "expectsBy"; leave out the ones \
+you are not proposing
+claimEvent: {"type": "claimEvent", "eventId": "<an id from todayEvents>"}`;
 
 /** Appendix B's rules given to the model, transcribed verbatim. */
 const RULES =
@@ -149,6 +179,10 @@ are given, never string matching. Respond with strict JSON only, matching exactl
 prose, no markdown fences, nothing before or after it:
 
 ${OUTPUT_SCHEMA}
+
+An effect carries exactly the keys listed for its type and no others, spelled exactly as written here:
+
+${EFFECT_PAYLOADS}
 
 Rules given to the model: ${RULES}`;
 

@@ -65,7 +65,7 @@ import { allCachedFiles, getMeta, setMeta } from '../lib/db';
 import type { MetaKey } from '../lib/db';
 import { dayKey, deviceTimeZone, eventsForDay } from '../lib/calendar';
 import { loadCalendar } from '../lib/calendarSync';
-import { compareOldestFirst, effectString, spawnTaskText } from '../lib/pulse';
+import { compareOldestFirst, effectKey, effectString, spawnTaskText } from '../lib/pulse';
 import { scheduleFlush } from '../lib/sync';
 import { codePulse } from './coder';
 import type { Coding, CoderContext, PulseEnrichment, RecentPulse } from './coder';
@@ -697,25 +697,55 @@ export async function deletePulse(id: string): Promise<void> {
  * can leave this event durably enqueued without applying it to the current
  * session (L4), and that is fine as-is — the event is safe, and the next read
  * sees it.
+ *
+ * `links` is the one field this MERGES rather than replaces (see `mergeLinks`),
+ * and the read it needs is why this queues with the chip applies: the same
+ * field is read-modify-written on both paths.
  */
 export async function enrichPulse(id: string, coding: Coding): Promise<void> {
-  await hydrate();
-  // Every field of the coding except the two fence 1 forbids. `effects` and
-  // `vocabProposal` are stored rather than held in memory: a coded pulse is
-  // invisible to the sweep forever, so a proposal that lived only in the
-  // sweep's local variable could never be regenerated, and Appendix C's
-  // "dismiss drops the effect, keeps the coding" needs it to survive a reload.
-  const fields: Coding = {
-    signal: coding.signal,
-    domain: coding.domain,
-    activity: coding.activity,
-    people: coding.people,
-    span: coding.span,
-    links: coding.links,
-    effects: coding.effects,
-    vocabProposal: coding.vocabProposal,
+  return serializePulseWrite(async () => {
+    await hydrate();
+    // Every field of the coding except the two fence 1 forbids. `effects` and
+    // `vocabProposal` are stored rather than held in memory: a coded pulse is
+    // invisible to the sweep forever, so a proposal that lived only in the
+    // sweep's local variable could never be regenerated, and Appendix C's
+    // "dismiss drops the effect, keeps the coding" needs it to survive a reload.
+    const fields: Coding = {
+      signal: coding.signal,
+      domain: coding.domain,
+      activity: coding.activity,
+      people: coding.people,
+      span: coding.span,
+      links: mergeLinks(readPulseRows().find((row) => row.id === id)?.links, coding.links),
+      effects: coding.effects,
+      vocabProposal: coding.vocabProposal,
+    };
+    await commit([{ entity: ENTITY.pulse, entityId: id, type: 'upsert', fields }]);
+  });
+}
+
+/**
+ * The coder's `links`, with anything already recorded on the row left alone.
+ *
+ * A chip apply records a FACT — this pulse spawned that task, this pulse
+ * claimed that event. An enrichment only PROPOSES, and a recorded fact
+ * outranks a fresh proposal. The other device re-coding a pulse whose
+ * enrichment has not reached it yet answers with all-null links, and writing
+ * those wholesale would erase the fact and re-arm `spawnTask`'s own guard —
+ * a second Tower item for a task the owner spawned exactly once.
+ *
+ * So a sub-key already holding a value survives and only the nulls are filled
+ * from the coding. A row that does not exist has nothing to keep: an
+ * enrichment landing after a delete resurrects the pulse carrying the coding's
+ * own links, which is the pinned behaviour (P2), unchanged.
+ */
+function mergeLinks(existing: PulseLinks | undefined, proposed: PulseLinks): PulseLinks {
+  if (existing === undefined) return proposed;
+  return {
+    habitId: existing.habitId ?? proposed.habitId,
+    towerId: existing.towerId ?? proposed.towerId,
+    eventId: existing.eventId ?? proposed.eventId,
   };
-  await commit([{ entity: ENTITY.pulse, entityId: id, type: 'upsert', fields }]);
 }
 
 // ============================================================================
@@ -847,6 +877,75 @@ export async function ensurePulseVocabSeeded(): Promise<PulseVocabRow> {
 const NO_LINKS: PulseLinks = { habitId: null, towerId: null, eventId: null };
 
 /**
+ * Every read-modify-write of a pulse's own `effects` and `links` runs one at
+ * a time.
+ *
+ * Both fields are written whole: an apply rewrites the effects list without
+ * the one it took, and sets a link beside whatever was already there. Run
+ * concurrently — two chips tapped in the same second, or a tap landing while
+ * the auto-apply pass walks a fresh coding's own effects — the second write
+ * is built from a row read before the first one landed, and the first's work
+ * is simply overwritten. Measured: `claimEvent` and `spawnTask` applied
+ * together left `links.eventId` null and the claim's chip back on screen,
+ * which phase 3's Needed-vs-Spent reads as "never claimed".
+ *
+ * The lock lives here rather than in the hook because the background
+ * auto-apply path never goes near the hook, and a lock only one of the two
+ * paths takes is not a lock. Same promise-chain shape as `entities.ts`'s
+ * `serialize` and `sync.ts`'s `serialized`, for the same reason.
+ */
+let pulseWriteQueue: Promise<void> = Promise.resolve();
+
+function serializePulseWrite<T>(work: () => Promise<T>): Promise<T> {
+  const run = pulseWriteQueue.then(work);
+  // The queue itself must never reject: one failed apply cannot be allowed to
+  // fail every apply queued behind it.
+  pulseWriteQueue = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
+/**
+ * Watchers of the writes an apply makes OUTSIDE the pulse itself.
+ *
+ * `spawnTask`/`updateTask` write a `towerItem`, `completeHabit` writes a
+ * `habitCompletion` — and both of those are shown from `AppContext`'s reducer
+ * state, which is read once on open and refreshed only by a pull that fetched
+ * something. A push does not refresh it. Without this the owner taps
+ * "+ call the plumber", the chip goes, they open Tower, and it is empty until
+ * the app is reloaded: a durable write that reads exactly like a failed one.
+ *
+ * A listener only re-reads what is already on the device. The write it is
+ * told about has already landed, in its own single commit; nothing here
+ * writes anything, and this is deliberately not a second write path.
+ *
+ * Same shape as `github.ts`'s `onPushFailure`: a module-level set, no React,
+ * nothing to clean up, and a listener that throws cannot disturb the write it
+ * is watching.
+ */
+const pulseEffectListeners = new Set<() => void>();
+
+/** Watch every applied effect that wrote outside the pulse. Returns the unsubscribe. */
+export function onPulseEffectApplied(listener: () => void): () => void {
+  pulseEffectListeners.add(listener);
+  return () => {
+    pulseEffectListeners.delete(listener);
+  };
+}
+
+function reportPulseEffectApplied(): void {
+  for (const listener of pulseEffectListeners) {
+    try {
+      listener();
+    } catch {
+      // A watcher's problem is not the write's problem.
+    }
+  }
+}
+
+/**
  * Per-effect auto-apply, one device-local `meta` key each (Appendix C: all
  * default off). `vocabProposal` is absent by design and must stay absent.
  */
@@ -924,6 +1023,10 @@ function updateTaskDraft(effect: PulseEffect): EventDraft | null {
 
   // Any touch counts as attention, exactly as `updateTowerItem` records it.
   fields.last_touched = nowIso();
+  // And `done` carries its date, exactly as `completeTowerItem` writes it. A
+  // done row with no `done_at` is one Tower can never say when it finished,
+  // and in a journal that is never compacted it stays that way forever.
+  if (fields.status === 'done') fields.done_at = fields.last_touched;
   return { entity: ENTITY.towerItem, entityId: towerId, type: 'upsert', fields };
 }
 
@@ -940,14 +1043,35 @@ function updateTaskDraft(effect: PulseEffect): EventDraft | null {
  * Out of range, or a pulse that is gone: nothing at all is written.
  */
 export async function applyPulseEffect(pulseId: string, index: number): Promise<void> {
+  await hydrate();
+  // WHICH effect the caller means is decided here, against the list it was
+  // actually looking at, and carried into the queue as a value rather than a
+  // position. An apply queued ahead of this one removes an effect and shifts
+  // every later one down, so the same index would then name a different
+  // proposal — and applying one the owner never tapped is worse than
+  // applying none at all.
+  const target = readPulseRows().find((candidate) => candidate.id === pulseId)?.effects?.[index];
+  if (target === undefined) return;
+
+  return serializePulseWrite(() => applyOneEffect(pulseId, target));
+}
+
+async function applyOneEffect(pulseId: string, target: PulseEffect): Promise<void> {
   // One await, then every read is against a settled session: `commit`'s own
   // generation guard covers the write, but a row read either side of a
-  // suspension point would not be reading the same state.
+  // suspension point would not be reading the same state. The row is read
+  // again HERE, inside the queue, because the apply ahead of this one has
+  // already changed it.
   const habits = await getHabits();
 
   const row = readPulseRows().find((candidate) => candidate.id === pulseId);
-  const effect = row?.effects?.[index];
-  if (row === undefined || effect === undefined) return;
+  if (row === undefined) return;
+  const effects = row.effects ?? [];
+  const wanted = effectKey(target);
+  const index = effects.findIndex((candidate) => effectKey(candidate) === wanted);
+  // Gone already — applied or dismissed while this waited its turn.
+  if (index === -1) return;
+  const effect = effects[index];
 
   const pulseFields = withoutEffect(row, index);
   const drafts: EventDraft[] = [];
@@ -1006,18 +1130,40 @@ export async function applyPulseEffect(pulseId: string, index: number): Promise<
 
   drafts.push({ entity: ENTITY.pulse, entityId: pulseId, type: 'upsert', fields: pulseFields });
   await commit(drafts);
+
+  // Anything beyond the pulse's own upsert is a row Tower or Habits shows,
+  // and neither of those reads this store directly. Told after the commit,
+  // never before: what is on screen must not claim a write that has not
+  // landed. See `onPulseEffectApplied`.
+  if (drafts.length > 1) reportPulseEffectApplied();
 }
 
 /**
  * Drop one proposed effect and keep the coding (Appendix C). The rest of the
  * enrichment is untouched, so a dismissed chip changes what is offered, never
  * what the pulse was read as.
+ *
+ * Carried by value and queued for exactly the reasons `applyPulseEffect`
+ * gives: it rewrites the same whole list, so a dismiss racing an apply
+ * overwrites it, and a position taken before the queue names the wrong chip
+ * after it.
  */
 export async function dismissPulseEffect(pulseId: string, index: number): Promise<void> {
   await hydrate();
-  const row = readPulseRows().find((candidate) => candidate.id === pulseId);
-  if (row?.effects?.[index] === undefined) return;
-  await commit([{ entity: ENTITY.pulse, entityId: pulseId, type: 'upsert', fields: withoutEffect(row, index) }]);
+  const target = readPulseRows().find((candidate) => candidate.id === pulseId)?.effects?.[index];
+  if (target === undefined) return;
+
+  return serializePulseWrite(async () => {
+    // Again inside the queue: a pull landing while this waited its turn drops
+    // the session, and the read below would otherwise be against nothing.
+    await hydrate();
+    const row = readPulseRows().find((candidate) => candidate.id === pulseId);
+    if (row === undefined) return;
+    const wanted = effectKey(target);
+    const at = (row.effects ?? []).findIndex((candidate) => effectKey(candidate) === wanted);
+    if (at === -1) return;
+    await commit([{ entity: ENTITY.pulse, entityId: pulseId, type: 'upsert', fields: withoutEffect(row, at) }]);
+  });
 }
 
 /**
@@ -1232,6 +1378,22 @@ async function buildCoderContext(row: PulseRow, allRows: readonly PulseRow[]): P
 export const MAX_PULSES_PER_SWEEP = 20;
 
 /**
+ * Whether the STORE — not a snapshot — now holds a coding for this pulse.
+ *
+ * `signal === undefined` is the one, total test for "uncoded" (`PulseRow`), so
+ * this is that same test, read fresh. Both callers awaited `getPulses()`, so
+ * the session is hydrated and this needs no await of its own — which is what
+ * lets it sit between the in-flight guard and the calls it protects.
+ *
+ * A pulse that is GONE reads as not coded, deliberately. An enrichment landing
+ * after a delete resurrects it, which is pinned behaviour (P2); this is a
+ * re-entry guard, not a resurrection guard, and must not quietly become one.
+ */
+function alreadyCoded(id: string): boolean {
+  return readPulseRows().find((row) => row.id === id)?.signal !== undefined;
+}
+
+/**
  * Code one pulse, if it is not already being coded.
  *
  * Never throws. A failure at any step — the coder, the write — leaves the
@@ -1239,12 +1401,24 @@ export const MAX_PULSES_PER_SWEEP = 20;
  * `has`/`add` pair is the whole in-flight guard, and it is deliberately
  * synchronous: nothing may await between the two, or the on-save and on-open
  * triggers can both slip past it for the same pulse and bill it twice.
+ *
+ * That pair only excludes an OVERLAP. The row itself is re-read twice, for
+ * the coding that already FINISHED: both callers hand in a row off a snapshot
+ * taken before they started, and a sweep blocked on an earlier pulse resumes
+ * into a list where the pulse it is about to code was coded, and its effects
+ * applied, while it waited. Coding it again bills a second call, writes a
+ * second set of proposals, and — with `spawnTask` auto-apply on — measured two
+ * pulses in, three Tower items out. The second read is not a duplicate of the
+ * first: `buildCoderContext` awaits the vocab seed and the calendar between
+ * them, which is a second window of exactly the same shape.
  */
 async function codeRow(row: PulseRow, allRows: readonly PulseRow[]): Promise<void> {
   if (codingInFlight.has(row.id)) return;
   codingInFlight.add(row.id);
   try {
+    if (alreadyCoded(row.id)) return;
     const context = await buildCoderContext(row, allRows);
+    if (alreadyCoded(row.id)) return;
     const coding = await codePulse(row.text, context);
     // A null coding is not a failure to recover from — it is fence 2's
     // correct, finished outcome, and the pulse simply stays uncoded.
