@@ -118,14 +118,18 @@ export function useTowerPulses(): TowerPulses {
    */
   const act = useCallback((work: () => Promise<void>) => {
     void (async () => {
+      // Only work() answers for this catch — see usePulses.act for why
+      // scheduleFlush cannot share it.
+      let acted = false;
       try {
         await work();
-        scheduleFlush();
+        acted = true;
       } catch (error) {
         // The chip is still there and still tappable, which is the honest
         // report: nothing happened.
         if (import.meta.env.DEV) console.error('Failed to act on a task proposal:', error);
       }
+      if (acted) scheduleFlush();
       try {
         await refresh();
       } catch (error) {

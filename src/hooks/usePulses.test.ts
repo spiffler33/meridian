@@ -62,6 +62,7 @@ import { ENTITY, resetSession } from '../lib/entities';
 import type { JournalEvent } from '../lib/journal';
 import { usePulses } from './usePulses';
 import type { Coding } from '../services/coder';
+import { getPulses } from '../services/data';
 
 const DAY = '2026-08-28';
 const ZONE = 'America/Los_Angeles';
@@ -328,5 +329,33 @@ describe('the coding write is pushed, not left sitting in the outbox (D6)', () =
     // enrichment waits for an unrelated edit or a foreground before the other
     // device can see it — and until then that device re-codes the same pulse.
     await waitFor(() => expect(scheduleFlushMock).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe('a write that already landed is never re-reported as lost (F6)', () => {
+  it('does not resolve false — or drop the row — when scheduleFlush throws after the save', async () => {
+    const LINE = 'saved before the flush blew up';
+    scheduleFlushMock.mockImplementationOnce(() => {
+      throw new Error('scheduleFlush exploded');
+    });
+
+    const { result } = renderHook(() => usePulses(DAY, ZONE));
+    await waitFor(() => expect(result.current.today).toEqual([]));
+
+    // The old shape put scheduleFlush() inside createPulse's own try, so its
+    // throw landed in the catch built for "the write never happened" and
+    // capture() answered false — the caller hands the text back, and a
+    // second Enter makes a duplicate pulse for the one line the owner said
+    // once. The fix narrows that try to the write alone, so a scheduleFlush
+    // failure propagates instead of being reported as a lost save.
+    await act(async () => {
+      await expect(result.current.capture(LINE)).rejects.toThrow('scheduleFlush exploded');
+    });
+
+    // The save landed regardless — this is the whole reason `false` would
+    // have been the wrong answer.
+    await waitFor(async () => {
+      expect((await getPulses()).some((row) => row.text === LINE)).toBe(true);
+    });
   });
 });

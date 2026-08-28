@@ -87,16 +87,20 @@ export function useReadState(synced = false): ReadState {
   useEffect(() => {
     if (!synced) return;
     void (async () => {
+      // Only the durable write is inside the try: anything after it throwing
+      // would report a baseline that HAS been established as failed.
+      let mark: string | null;
       try {
-        const mark = await ensureReadingBaseline();
-        // A mark is an edit like any other, and an edit that never reaches the
-        // journal is an edit the other device never sees. The debounce inside
-        // collapses a burst, and an empty outbox costs nothing.
-        scheduleFlush();
-        if (live.current) setBaseline(mark);
+        mark = await ensureReadingBaseline();
       } catch (error) {
         if (import.meta.env.DEV) console.error('Failed to establish the reading baseline:', error);
+        return;
       }
+      // A mark is an edit like any other, and an edit that never reaches the
+      // journal is an edit the other device never sees. The debounce inside
+      // collapses a burst, and an empty outbox costs nothing.
+      scheduleFlush();
+      if (live.current) setBaseline(mark);
     })();
   }, [synced]);
 
@@ -114,12 +118,11 @@ export function useReadState(synced = false): ReadState {
       const ticket = latest.current + 1;
       latest.current = ticket;
       void (async () => {
+        // Only the write is inside this try: a read or a flush failing
+        // afterwards must never be reported as the mark itself having failed
+        // and reverted, when it did not.
         try {
           await setItemRead(key, wanted);
-          scheduleFlush();
-          if (!live.current) return;
-          const rows = await getReadItems();
-          if (live.current && ticket === latest.current) adopt(rows);
         } catch (error) {
           if (import.meta.env.DEV) console.error('Failed to record read-state:', error);
           if (!live.current) return;
@@ -129,6 +132,15 @@ export function useReadState(synced = false): ReadState {
             else next.add(key);
             return next;
           });
+          return;
+        }
+        scheduleFlush();
+        if (!live.current) return;
+        try {
+          const rows = await getReadItems();
+          if (live.current && ticket === latest.current) adopt(rows);
+        } catch (error) {
+          if (import.meta.env.DEV) console.error('Failed to re-read read-state:', error);
         }
       })();
     },

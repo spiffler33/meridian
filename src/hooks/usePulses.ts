@@ -154,26 +154,14 @@ export function usePulses(day: string, timeZone: string): Pulses {
   const capture = useCallback(async (text: string): Promise<boolean> => {
     // An empty Enter is a no-op, not an empty pulse.
     if (text.trim().length === 0) return false;
+
+    // Only the durable write is inside the try, and only its failure answers
+    // false. Anything after it throwing would report a write that HAS landed
+    // as lost, and the caller hands the text back: a second Enter then makes
+    // a duplicate pulse, for one thing the owner said once.
+    let saved: PulseRow;
     try {
-      const saved = await createPulse(text);
-      // An edit that never reaches the journal is an edit the other device
-      // never sees. The debounce inside collapses a burst into one push.
-      scheduleFlush();
-      if (live.current) setRows((previous) => [...previous, saved]);
-      // "Coding runs on-save when online" — this line, not the whole history.
-      // Fired, not awaited: capture has already resolved by the time this
-      // settles, network dead or not (O1). It is not tied to the mount the way
-      // the sweep is: this is one call, for the line the owner just typed, and
-      // navigating away the same second should not throw its answer away.
-      void (async () => {
-        try {
-          await codeCapturedPulse(saved.id);
-          await refresh();
-        } catch (error) {
-          if (import.meta.env.DEV) console.error('Failed to refresh pulses after coding:', error);
-        }
-      })();
-      return true;
+      saved = await createPulse(text);
     } catch (error) {
       // The line is in no journal and never will be. Saying so is the caller's
       // job — it still has the text, and handing it back is the only way the
@@ -181,6 +169,25 @@ export function usePulses(day: string, timeZone: string): Pulses {
       if (import.meta.env.DEV) console.error('Failed to capture a pulse:', error);
       return false;
     }
+
+    // An edit that never reaches the journal is an edit the other device
+    // never sees. The debounce inside collapses a burst into one push.
+    scheduleFlush();
+    if (live.current) setRows((previous) => [...previous, saved]);
+    // "Coding runs on-save when online" — this line, not the whole history.
+    // Fired, not awaited: capture has already resolved by the time this
+    // settles, network dead or not (O1). It is not tied to the mount the way
+    // the sweep is: this is one call, for the line the owner just typed, and
+    // navigating away the same second should not throw its answer away.
+    void (async () => {
+      try {
+        await codeCapturedPulse(saved.id);
+        await refresh();
+      } catch (error) {
+        if (import.meta.env.DEV) console.error('Failed to refresh pulses after coding:', error);
+      }
+    })();
+    return true;
   }, [refresh]);
 
   const remove = useCallback((id: string) => {
@@ -188,9 +195,12 @@ export function usePulses(day: string, timeZone: string): Pulses {
     // did not; a line that reappears is the honest report of the second.
     setRows((previous) => previous.filter((row) => row.id !== id));
     void (async () => {
+      // Only the durable write is inside the try: anything after it throwing
+      // would report a delete that HAS landed as failed, and this catch's
+      // recovery — restoring the row from the store — would run for a store
+      // that no longer has it.
       try {
         await deletePulse(id);
-        scheduleFlush();
       } catch (error) {
         if (import.meta.env.DEV) console.error('Failed to delete a pulse:', error);
         // Re-read rather than put a remembered copy back. The write failed, so
@@ -201,7 +211,10 @@ export function usePulses(day: string, timeZone: string): Pulses {
         } catch (reread) {
           if (import.meta.env.DEV) console.error('Failed to re-read pulses:', reread);
         }
+        return;
       }
+      // Same push path as every other write; the debounce collapses a burst.
+      scheduleFlush();
     })();
   }, [refresh]);
 
@@ -215,15 +228,21 @@ export function usePulses(day: string, timeZone: string): Pulses {
    */
   const act = useCallback((work: () => Promise<void>) => {
     void (async () => {
+      // Only work() answers for this catch. scheduleFlush cannot fail in
+      // practice, but folding it into the same try would let its failure be
+      // reported as "the act failed" — the catch's actual story, "nothing
+      // happened", would be false for a write that landed.
+      let acted = false;
       try {
         await work();
-        // Same push path as every other write; the debounce collapses a burst.
-        scheduleFlush();
+        acted = true;
       } catch (error) {
         // The chip is still there and still tappable, which is the honest
         // report: nothing happened.
         if (import.meta.env.DEV) console.error('Failed to act on a pulse proposal:', error);
       }
+      // Same push path as every other write; the debounce collapses a burst.
+      if (acted) scheduleFlush();
       try {
         await refresh();
       } catch (error) {
