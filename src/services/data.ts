@@ -908,35 +908,41 @@ function serializePulseWrite<T>(work: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Watchers of the writes an apply makes OUTSIDE the pulse itself.
+ * Watchers of a write this layer made that `AppContext` cannot know about.
  *
- * `spawnTask`/`updateTask` write a `towerItem`, `completeHabit` writes a
- * `habitCompletion` — and both of those are shown from `AppContext`'s reducer
- * state, which is read once on open and refreshed only by a pull that fetched
- * something. A push does not refresh it. Without this the owner taps
- * "+ call the plumber", the chip goes, they open Tower, and it is empty until
- * the app is reloaded: a durable write that reads exactly like a failed one.
+ * Two paths reach it. A chip apply writes a `towerItem` or a `habitCompletion`
+ * beside the pulse's own update; a Tower capture writes a `towerItem` beside
+ * the pulse it records. Both are one commit, deliberately — routing either
+ * through `createTowerItem`/`toggleCompletion` would be a second commit, the
+ * exact split the one-commit rule exists to prevent — and both therefore go
+ * straight past the provider that renders the row.
+ *
+ * `AppContext`'s reducer state is read once on open and refreshed only by a
+ * pull that fetched something; a push never refreshes it. Without this the
+ * owner taps "+ call the plumber", or types into Tower's own box, and the item
+ * is not there until the app is reloaded: a durable write that reads exactly
+ * like a failed one.
  *
  * A listener only re-reads what is already on the device. The write it is
- * told about has already landed, in its own single commit; nothing here
- * writes anything, and this is deliberately not a second write path.
+ * told about has already landed; nothing here writes anything, and this is
+ * deliberately not a second write path.
  *
  * Same shape as `github.ts`'s `onPushFailure`: a module-level set, no React,
  * nothing to clean up, and a listener that throws cannot disturb the write it
  * is watching.
  */
-const pulseEffectListeners = new Set<() => void>();
+const localWriteListeners = new Set<() => void>();
 
-/** Watch every applied effect that wrote outside the pulse. Returns the unsubscribe. */
-export function onPulseEffectApplied(listener: () => void): () => void {
-  pulseEffectListeners.add(listener);
+/** Watch every write this layer made outside the pulse. Returns the unsubscribe. */
+export function onLocalWrite(listener: () => void): () => void {
+  localWriteListeners.add(listener);
   return () => {
-    pulseEffectListeners.delete(listener);
+    localWriteListeners.delete(listener);
   };
 }
 
-function reportPulseEffectApplied(): void {
-  for (const listener of pulseEffectListeners) {
+function reportLocalWrite(): void {
+  for (const listener of localWriteListeners) {
     try {
       listener();
     } catch {
@@ -1134,8 +1140,8 @@ async function applyOneEffect(pulseId: string, target: PulseEffect): Promise<voi
   // Anything beyond the pulse's own upsert is a row Tower or Habits shows,
   // and neither of those reads this store directly. Told after the commit,
   // never before: what is on screen must not claim a write that has not
-  // landed. See `onPulseEffectApplied`.
-  if (drafts.length > 1) reportPulseEffectApplied();
+  // landed. See `onLocalWrite`.
+  if (drafts.length > 1) reportLocalWrite();
 }
 
 /**
@@ -1319,8 +1325,12 @@ function recentPulsesFor(row: PulseRow, allRows: readonly PulseRow[]): RecentPul
 
 /**
  * Assembles exactly the slices Appendix B's allowlist names, and nothing else
- * (fence 5). `mouth` is always `'today'` here — the Pulse page is the plan's
- * "Today mouth"; a `'tower'` mouth is Phase 2's later stage, not this one.
+ * (fence 5).
+ *
+ * `mouth` comes off the row rather than off the caller: the queue is lazy, so
+ * the sweep coding a backlog has no idea which box any of it was typed into,
+ * and by then the box is long closed. A pulse with no `mouth` is a Pulse-page
+ * one — the unbiased mouth, and every pulse written before Tower had one.
  */
 async function buildCoderContext(row: PulseRow, allRows: readonly PulseRow[]): Promise<CoderContext> {
   const tz = deviceTimeZone();
@@ -1362,7 +1372,7 @@ async function buildCoderContext(row: PulseRow, allRows: readonly PulseRow[]): P
     })),
     openTowerItems: towerItems.map((item) => ({ id: item.id, text: item.text, status: item.status })),
     recentPulses: recentPulsesFor(row, allRows),
-    mouth: 'today',
+    mouth: row.mouth ?? 'today',
   };
 }
 
@@ -1731,6 +1741,71 @@ export async function createTowerItem(item: TowerItemInput): Promise<TowerItem> 
       'create tower item'
     )
   );
+}
+
+/**
+ * Tower's own box: one submission, one item AND one pulse, in one commit.
+ *
+ * "One parser, two mouths." Tower's input keeps exactly the behaviour the
+ * owner likes — an item appears immediately, from the raw text, with nothing
+ * between Enter and a saved task — and the same submission is also recorded in
+ * the stream, where the coder reaches it. Nothing about the item waits on the
+ * coder; the coding arrives later and proposes, as a chip on the item.
+ *
+ * ONE commit, for the reason the chip layer has one (see "Pulse proposals"):
+ * split in two, a failure between them either costs the owner the item they
+ * watched appear, or leaves an orphan pulse claiming a task that does not
+ * exist — and the pulse is the only record of the utterance. `commit` turns
+ * the array into one `enqueue`, so both land or neither does. `createTowerItem`
+ * is mirrored rather than called for exactly that reason: it is its own commit.
+ *
+ * `links.towerId` is the recorded fact that this line IS that item. It also
+ * arms `spawnTask`'s existing guard, so a coding that proposes a task anyway —
+ * the tower mouth biases toward `task` — cannot mint a second one.
+ *
+ * No read-back of either row. `createPulse`'s read-and-throw is a live hazard
+ * rather than a check (a pull landing mid-call leaves the event enqueued but
+ * not applied to this session, L4); the ids are what the caller needs, and
+ * they are known before the write.
+ */
+export async function captureTowerItem(text: string): Promise<{ towerId: string; pulseId: string }> {
+  await hydrate();
+
+  const line = text.trim();
+  const towerId = newId();
+  const pulseId = newId();
+  const now = nowIso();
+
+  await commit([
+    {
+      entity: ENTITY.towerItem,
+      entityId: towerId,
+      type: 'upsert',
+      // The fields `createTowerItem` writes for an input of `{ text }`.
+      fields: {
+        text: line,
+        status: 'active',
+        waiting_on: null,
+        expects_by: null,
+        effort: null,
+        is_event: false,
+        last_touched: now,
+        created_at: now,
+        done_at: null,
+      },
+    },
+    {
+      entity: ENTITY.pulse,
+      entityId: pulseId,
+      type: 'upsert',
+      fields: { text: line, at: now, mouth: 'tower', links: { habitId: null, towerId, eventId: null } },
+    },
+  ]);
+
+  // The item is `AppContext`'s to render and this never went through it.
+  reportLocalWrite();
+
+  return { towerId, pulseId };
 }
 
 /**

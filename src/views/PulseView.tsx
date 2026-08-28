@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+import { Chip } from '../components/Chip';
 import { Dock } from '../components/Dock';
 import { deviceTimeZone, timeLabel } from '../lib/calendar';
 import { usePulses } from '../hooks/usePulses';
@@ -44,39 +45,6 @@ export function PulseView() {
         <PulseCapture onCapture={pulses.capture} />
       </Dock>
     </>
-  );
-}
-
-/**
- * One chip: what it proposes, and the way out of it.
- *
- * Quiet by construction — a hairline box, muted mono at the timestamp's size,
- * no fill and no colour. A proposal is not an achievement, and the stream is a
- * ledger: the only thing that should catch an eye on this page is the line the
- * owner wrote. Colour is spent on the accent the capture box takes when it has
- * focus, and nowhere else here.
- *
- * Two buttons rather than one with a gesture: tapping the words applies, and
- * the `×` beside them drops it. Both are the same weight, because dismissing
- * is not the lesser answer.
- */
-function Chip({ label, onApply, onDismiss }: { label: string; onApply: () => void; onDismiss: () => void }) {
-  return (
-    <span className="inline-flex items-stretch rounded border border-border">
-      <button
-        onClick={onApply}
-        className="px-2 py-1 font-mono text-xs text-text-muted transition-colors hover:text-text"
-      >
-        {label}
-      </button>
-      <button
-        onClick={onDismiss}
-        aria-label={`dismiss ${label}`}
-        className="border-l border-border px-2 py-1 font-mono text-xs text-text-muted transition-colors hover:text-text"
-      >
-        ×
-      </button>
-    </span>
   );
 }
 

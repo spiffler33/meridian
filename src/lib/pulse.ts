@@ -98,9 +98,10 @@ export function effectKey(effect: PulseEffect): string {
  * The text a `spawnTask` chip would create the Tower item with: the coder's
  * own proposal, or — when it offered none — the line the owner actually said.
  *
- * The fallback is the same one the deleted `parseTowerInput` stub made: a
- * captured line IS the task, verbatim. It is not a rewrite of the pulse
- * (fence 1 guards the pulse's own `text` field, which nothing here touches).
+ * The fallback is the one the deleted Tower-input stub made, and the one
+ * Tower's own box still makes: a captured line IS the task, verbatim. It is
+ * not a rewrite of the pulse (fence 1 guards the pulse's own `text` field,
+ * which nothing here touches).
  */
 export function spawnTaskText(pulse: PulseRow, effect: PulseEffect): string {
   return effectString(effect, 'text') ?? pulse.text.trim();
@@ -182,4 +183,69 @@ export function vocabChipLabel(proposal: PulseVocabProposal, names: PulseChipNam
       return `+ alias ${proposal.value} → ${habit ?? 'habit'}`;
     }
   }
+}
+
+// ============================================================================
+// The other mouth: proposals shown on the Tower item they name
+// ============================================================================
+
+/**
+ * One `updateTask` proposal, and where to act on it.
+ *
+ * `pulseId` and `index` are exactly what `applyPulseEffect`/`dismissPulseEffect`
+ * take — the same two arguments the chip on the pulse line passes, so both
+ * surfaces go through the one serialized path in `data.ts` rather than opening
+ * a second one. Acting in either place is the same act, and clears the chip in
+ * both, because there is only ever one stored proposal behind them.
+ */
+export type TowerProposal = {
+  /** The pulse whose coding proposed this. */
+  pulseId: string;
+  /** Its position in that pulse's `effects` at the moment this was built. */
+  index: number;
+  effect: PulseEffect;
+};
+
+/**
+ * Every `updateTask` proposal still awaiting a tap, keyed by the tower item it
+ * names.
+ *
+ * BY ID, always: the coder is handed `openTowerItems[].id` and answers with
+ * one of them, and this reads that id straight back out. Nothing here matches
+ * a proposal to an item by its text — that is the heuristic fence 2 forbids,
+ * and here it would silently attach a proposal to the wrong task.
+ *
+ * Oldest pulse first, so two proposals on one item read in the order they were
+ * said rather than in whatever order the fold happened to return.
+ */
+export function towerProposals(pulses: readonly PulseRow[]): Record<string, TowerProposal[]> {
+  const byItem: Record<string, TowerProposal[]> = {};
+  for (const pulse of [...pulses].sort(compareOldestFirst)) {
+    const effects = pulse.effects ?? [];
+    for (let index = 0; index < effects.length; index += 1) {
+      const effect = effects[index];
+      if (effect.type !== 'updateTask') continue;
+      const towerId = effectString(effect, 'towerId');
+      if (towerId === null) continue;
+      const list = byItem[towerId] ?? [];
+      list.push({ pulseId: pulse.id, index, effect });
+      byItem[towerId] = list;
+    }
+  }
+  return byItem;
+}
+
+/**
+ * The words on an `updateTask` chip shown ON the item it names: only what
+ * would change.
+ *
+ * The pulse-line label has to say which task it means; here the task is the
+ * line above the chip, so naming it again would be noise on a page whose job
+ * is a glance. A proposal carrying nothing this app writes still says
+ * something rather than nothing — tapping it clears a dead proposal, which is
+ * the honest outcome.
+ */
+export function updateTaskChipLabel(effect: PulseEffect): string {
+  const changes = updateTaskChanges(effect);
+  return changes.length === 0 ? 'update' : changes.join(', ');
 }

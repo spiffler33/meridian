@@ -1,36 +1,18 @@
 /**
  * AI Service
  *
- * Tower brain-dump capture.
+ * Tower's "why this?" line, and nothing else any more.
  *
- * The server-side parse is gone with the server. `parseTowerInput` is now the
- * local fallback it always had, and nothing more: whatever the owner typed is
- * saved as one active item. Rebuilding the parse is a later plan, and this is
- * deliberately the whole seam it will replace.
- */
-
-import type { TowerItemInput } from './data';
-
-/**
- * Parsed result from AI with confidence indicator
- */
-export interface ParsedTowerItem {
-  text: string;
-  status: 'active' | 'waiting' | 'someday';
-  waitingOn?: string;
-  expectsBy?: string;
-  effort?: 'quick' | 'medium' | 'deep';
-  isEvent?: boolean;  // false = action, true = event
-}
-
-/**
- * Parse user input into structured tower items.
+ * The Tower-input stub lived here as the seam the server-side parse left
+ * behind: one item, exactly as typed. Phase 2 filled it — a Tower submission
+ * is now also a pulse, and the coder proposes the fields the parse used to
+ * guess, as chips on the item. Nothing replaced the stub in this file; the
+ * seam moved to `services/coder.ts` and `captureTowerItem` in
+ * `services/data.ts`.
  *
- * One item, exactly as typed. See the module note.
+ * What is left has never been AI at all: `explainWhyThis` is arithmetic over
+ * dates, named for an ambition the app no longer has.
  */
-export async function parseTowerInput(userInput: string): Promise<ParsedTowerItem[]> {
-  return [{ text: userInput.trim(), status: 'active' }];
-}
 
 /**
  * Generate "Why this?" explanation for a tower item
@@ -110,18 +92,4 @@ function generateFallbackExplanation(
   }
 
   return `${daysOld} days in limbo. Either do it, delegate it, or delete it.`;
-}
-
-/**
- * Convert ParsedTowerItem to TowerItemInput
- */
-export function toTowerItemInput(parsed: ParsedTowerItem): TowerItemInput {
-  return {
-    text: parsed.text,
-    status: parsed.status,
-    waitingOn: parsed.waitingOn,
-    expectsBy: parsed.expectsBy,
-    effort: parsed.effort,
-    isEvent: parsed.isEvent,
-  };
 }

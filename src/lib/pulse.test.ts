@@ -28,11 +28,12 @@ import { ENTITY, readPulseVocabRow, resetSession } from './entities';
 import type { PulseRow } from './entities';
 import { fold } from './journal';
 import type { JournalEvent } from './journal';
-import { compareOldestFirst, pulsesForDay } from './pulse';
+import { compareOldestFirst, pulsesForDay, towerProposals, updateTaskChipLabel } from './pulse';
 import { addDays, getToday } from '../utils/dates';
 import {
   applyPulseEffect,
   approvePulseVocabProposal,
+  captureTowerItem,
   codeCapturedPulse,
   codeUncodedPulses,
   createHabit,
@@ -1434,5 +1435,223 @@ describe('auto-apply', () => {
 
     expect((await getPulses())[0].vocabProposal).toEqual({ kind: 'activity', value: 'plumbing', mapsTo: 'home-ops' });
     expect(readPulseVocabRow()?.activities.plumbing).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// One parser, two mouths — Tower's box
+// ============================================================================
+
+/**
+ * Tower's own input, which keeps every bit of its behaviour and gains a second
+ * record of the same submission.
+ *
+ * The one rule holding the pair together is the same one the chip layer has:
+ * ONE commit. Split in two, a failure between them either costs the owner the
+ * item they watched appear, or leaves a pulse claiming a task that does not
+ * exist — and the pulse is the only record of what was said. Proved off the
+ * outbox under `withTickingClock`, because a frozen clock stamps two commits
+ * with the same `ts` and the assertion would pass on the broken version.
+ */
+describe("Tower's mouth", () => {
+  dbReset();
+
+  it('writes the item and the pulse in ONE commit, the line verbatim on both', async () => {
+    const before = await outboxSize();
+
+    await withTickingClock(async () => {
+      await captureTowerItem('  call the plumber  ');
+    });
+
+    const queued = await peekOutbox<JournalEvent & OutboxRecord>();
+    expect(queued.length - before).toBe(2);
+    const [item, pulse] = queued.slice(-2);
+
+    expect(item.entity).toBe(ENTITY.towerItem);
+    expect(pulse.entity).toBe(ENTITY.pulse);
+    // One `Date.now()` read, so one commit. Two commits cannot share a `ts`
+    // under the ticking clock however close together they are made.
+    expect(item.ts).toBe(pulse.ts);
+    expect(item.device).toBe(pulse.device);
+    expect(pulse.seq - item.seq).toBe(1);
+
+    const items = await getTowerItems();
+    expect(items).toHaveLength(1);
+    expect(items[0].text).toBe('call the plumber');
+    expect(items[0].status).toBe('active');
+
+    const rows = await getPulses();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].text).toBe('call the plumber');
+    expect(rows[0].mouth).toBe('tower');
+    // The recorded fact that this line IS that item — by id, resolved nowhere
+    // else and never by matching the text the two happen to share.
+    expect(rows[0].links).toEqual({ habitId: null, towerId: items[0].id, eventId: null });
+  });
+
+  it('leaves the pulse uncoded when the coder is dead — the item is the whole outcome', async () => {
+    codePulseMock.mockResolvedValue(null);
+
+    const { pulseId } = await captureTowerItem('call the plumber');
+    await codeCapturedPulse(pulseId);
+
+    expect(await getTowerItems()).toHaveLength(1);
+    expect((await reread(pulseId)).signal).toBeUndefined();
+  });
+
+  it("sends the coder mouth 'tower', read off the row rather than off the caller", async () => {
+    codePulseMock.mockResolvedValue(codingWith([]));
+    const { pulseId } = await captureTowerItem('call the plumber');
+
+    // A later open on another device: nothing in memory remembers which box
+    // this was typed into, and the sweep that codes it never saw either.
+    resetSession();
+    await codeUncodedPulses();
+
+    const calls = codePulseMock.mock.calls as Array<[string, Record<string, unknown>]>;
+    const call = calls.find(([text]) => text === 'call the plumber');
+    expect(call).toBeDefined();
+    expect((call as [string, Record<string, unknown>])[1].mouth).toBe('tower');
+    // And the item it created is in the slice the coder resolves an
+    // `updateTask` against, so the proposal can name it by id.
+    const open = (call as [string, Record<string, unknown>])[1].openTowerItems as Array<{ text: string }>;
+    expect(open.map((entry) => entry.text)).toContain('call the plumber');
+
+    expect((await reread(pulseId)).mouth).toBe('tower');
+  });
+
+  it("the Pulse page's own capture stays the unbiased mouth", async () => {
+    codePulseMock.mockResolvedValue(codingWith([]));
+    const created = await createPulse('gym at six');
+
+    resetSession();
+    await codeUncodedPulses();
+
+    const calls = codePulseMock.mock.calls as Array<[string, Record<string, unknown>]>;
+    expect(calls[0][1].mouth).toBe('today');
+    expect((await reread(created.id)).mouth).toBeUndefined();
+  });
+
+  it('cannot spawn a second item for a line Tower already saved', async () => {
+    // The tower mouth biases the coder toward `task`, so a `spawnTask` on a
+    // line that IS already a task is exactly the answer to expect. The link
+    // written at capture arms the guard, and the chip goes without a write.
+    await setPulseEffectAutoApply('spawnTask', true);
+    codePulseMock.mockResolvedValue(codingWith([{ type: 'spawnTask', text: 'call the plumber' }]));
+
+    const { pulseId, towerId } = await captureTowerItem('call the plumber');
+    await codeCapturedPulse(pulseId);
+
+    const items = await getTowerItems();
+    expect(items).toHaveLength(1);
+    expect(items[0].id).toBe(towerId);
+    expect((await reread(pulseId)).effects).toEqual([]);
+  });
+
+  it('an enrichment cannot take the item away from the line that made it', async () => {
+    // The other device re-coding a pulse whose enrichment has not reached it
+    // answers with all-null links; `mergeLinks` keeps the recorded fact.
+    const { pulseId, towerId } = await captureTowerItem('call the plumber');
+
+    await enrichPulse(pulseId, codingWith([]));
+
+    expect((await reread(pulseId)).links?.towerId).toBe(towerId);
+  });
+});
+
+// ============================================================================
+// The proposals shown on the item, rather than on the line
+// ============================================================================
+
+/**
+ * `towerProposals` is the whole Tower-side selector: which stored proposals
+ * belong to which item, resolved BY ID off the effect's own `towerId`. Nothing
+ * matches a proposal to a task by its text — that is the heuristic fence 2
+ * forbids, and here it would silently attach a proposal to the wrong task.
+ */
+describe('proposals on the item they name', () => {
+  dbReset();
+
+  const UPDATE = {
+    type: 'updateTask' as const,
+    towerId: 'item-1',
+    status: 'waiting',
+    waitingOn: 'the landlord',
+    expectsBy: '2026-09-04',
+  };
+
+  function pulseRow(id: string, at: string, effects: PulseRow['effects']): PulseRow {
+    return { id, text: 'said something', at, effects };
+  }
+
+  it('groups by the tower id an effect carries, oldest pulse first', async () => {
+    const grouped = towerProposals([
+      pulseRow('p-late', '2026-08-28T10:00:00.000Z', [{ ...UPDATE, status: 'done' }]),
+      pulseRow('p-early', '2026-08-28T09:00:00.000Z', [UPDATE]),
+      pulseRow('p-other', '2026-08-28T11:00:00.000Z', [{ ...UPDATE, towerId: 'item-2' }]),
+    ]);
+
+    expect(grouped['item-1'].map((proposal) => proposal.pulseId)).toEqual(['p-early', 'p-late']);
+    expect(grouped['item-1'][0]).toEqual({ pulseId: 'p-early', index: 0, effect: UPDATE });
+    expect(grouped['item-2'].map((proposal) => proposal.pulseId)).toEqual(['p-other']);
+  });
+
+  it('carries the position the data layer takes, not the position among updateTasks', async () => {
+    const grouped = towerProposals([
+      pulseRow('p1', '2026-08-28T09:00:00.000Z', [
+        { type: 'completeHabit', habitId: 'h1' },
+        { type: 'claimEvent', eventId: 'e1' },
+        UPDATE,
+      ]),
+    ]);
+
+    expect(grouped['item-1']).toEqual([{ pulseId: 'p1', index: 2, effect: UPDATE }]);
+  });
+
+  it('skips an effect naming no task at all, rather than filing it under nothing', async () => {
+    const grouped = towerProposals([
+      pulseRow('p1', '2026-08-28T09:00:00.000Z', [{ type: 'updateTask', status: 'done' }]),
+      pulseRow('p2', '2026-08-28T09:30:00.000Z', []),
+    ]);
+
+    expect(grouped).toEqual({});
+  });
+
+  it('says only what would change — the task is the line above the chip', () => {
+    expect(updateTaskChipLabel(UPDATE)).toBe('waiting, waiting on the landlord, by 2026-09-04');
+    expect(updateTaskChipLabel({ type: 'updateTask', towerId: 'item-1' })).toBe('update');
+  });
+
+  it('acting on the item is the same act as acting on the line, and clears both', async () => {
+    const { pulseId, towerId } = await captureTowerItem('call the plumber');
+    await enrichPulse(pulseId, codingWith([{ ...UPDATE, towerId }]));
+
+    // Exactly what TowerView taps with: the selector's own answer, straight
+    // into the data layer's one serialized apply path.
+    const proposal = towerProposals(await getPulses())[towerId][0];
+    await applyPulseEffect(proposal.pulseId, proposal.index);
+
+    const item = (await getTowerItems()).find((candidate) => candidate.id === towerId);
+    expect(item?.status).toBe('waiting');
+    expect(item?.waitingOn).toBe('the landlord');
+    expect(item?.expectsBy).toBe('2026-09-04');
+
+    // The chip is gone from the pulse row itself, which is the only place
+    // either surface reads it from — so it is gone from both.
+    expect((await reread(pulseId)).effects).toEqual([]);
+    expect(towerProposals(await getPulses())).toEqual({});
+  });
+
+  it('a dismiss on the item drops the chip on the line too, and keeps the coding', async () => {
+    const { pulseId, towerId } = await captureTowerItem('call the plumber');
+    await enrichPulse(pulseId, codingWith([{ ...UPDATE, towerId }]));
+
+    const proposal = towerProposals(await getPulses())[towerId][0];
+    await dismissPulseEffect(proposal.pulseId, proposal.index);
+
+    const row = await reread(pulseId);
+    expect(row.effects).toEqual([]);
+    expect(row.signal).toBe(SAMPLE_CODING.signal);
+    expect((await getTowerItems()).find((candidate) => candidate.id === towerId)?.status).toBe('active');
   });
 });

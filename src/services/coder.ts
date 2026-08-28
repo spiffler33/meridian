@@ -29,6 +29,7 @@ import type {
   PulseEffect,
   PulseEffectType,
   PulseLinks,
+  PulseMouth,
   PulseSignal,
   PulseSpan,
   PulseVocabProposal,
@@ -51,8 +52,12 @@ const CODER_TIMEOUT_MS = 30_000;
 
 const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
 
-/** Which capture surface produced the pulse. `tower` biases the model toward `task`. */
-export type Mouth = 'today' | 'tower';
+/**
+ * Which capture surface produced the pulse. `tower` biases the model toward
+ * `task`. Stored on the row it describes (`PulseRow.mouth`), because the queue
+ * is lazy and this call can happen long after the box it was typed into closed.
+ */
+export type Mouth = PulseMouth;
 
 /** Appendix B's `vocab` slice: the full pulseVocab row, minus its id. */
 export type CoderVocab = Omit<PulseVocabRow, 'id'>;
@@ -167,6 +172,28 @@ updateTask: {"type": "updateTask", "towerId": "<an id from openTowerItems>", "st
 you are not proposing
 claimEvent: {"type": "claimEvent", "eventId": "<an id from todayEvents>"}`;
 
+/**
+ * What `mouth: "tower"` means on the wire, which Appendix B states only as a
+ * bias ("mouth: tower biases toward task").
+ *
+ * The bias alone is not enough once Tower's box writes a pulse for every
+ * submission: the utterance is ALREADY a Tower item, saved verbatim before
+ * this call was made, so a model told only to lean toward `task` proposes
+ * `spawnTask` and the owner is offered a chip that would duplicate the item
+ * they are looking at. `links.towerId` is set at capture, so the apply itself
+ * is guarded — but a chip that silently does nothing is exactly the dead
+ * feature `EFFECT_PAYLOADS` exists to prevent.
+ *
+ * So the prompt says what is true, and the useful proposal is named: the plan's
+ * "the coder later proposes field enrichments on the item — status /
+ * waitingOn / expectsBy". Which item it is, is the model's own judgment over
+ * `openTowerItems`; the app never matches a proposal to a task by text.
+ */
+const TOWER_MOUTH = `With mouth "tower" the utterance was typed into the task list and has ALREADY been \
+saved, verbatim, as one of the openTowerItems. Never propose spawnTask for it. Propose updateTask on \
+that item when the utterance says something about its status, what it is waiting on, or when it is \
+expected — and nothing at all when it does not.`;
+
 /** Appendix B's rules given to the model, transcribed verbatim. */
 const RULES =
   'nulls over guesses; signal always set (note when unsure); never invent people, habits, ' +
@@ -183,6 +210,8 @@ ${OUTPUT_SCHEMA}
 An effect carries exactly the keys listed for its type and no others, spelled exactly as written here:
 
 ${EFFECT_PAYLOADS}
+
+${TOWER_MOUTH}
 
 Rules given to the model: ${RULES}`;
 

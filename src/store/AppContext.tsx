@@ -63,7 +63,7 @@ import {
   createPackSession,
   deletePackSession,
   getProfile,
-  onPulseEffectApplied,
+  onLocalWrite,
   updateProfile as updateProfileInStore,
 } from '../services/data';
 import type { TowerItemInput, PackInput, PackSessionInput, Profile } from '../services/data';
@@ -654,14 +654,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
   }, [loadLocalData]);
 
-  // A chip applied on the Pulse page writes a Tower item or a habit tick
-  // straight through the data layer, which this provider knows nothing about:
-  // `onSynced` fires only for a pull that fetched something, and a push never
-  // fires it at all. Without this the write is durable and invisible — the
-  // owner taps "+ call the plumber" and finds Tower empty. The write has
-  // already landed in its own commit; this only re-reads the local store, in
-  // exactly the same way the pull does.
-  useEffect(() => onPulseEffectApplied(() => void loadLocalData()), [loadLocalData]);
+  // A chip applied on the Pulse page, and a line typed into Tower's own box,
+  // both write a Tower item or a habit tick straight through the data layer,
+  // which this provider knows nothing about: `onSynced` fires only for a pull
+  // that fetched something, and a push never fires it at all. Without this the
+  // write is durable and invisible — the owner taps "+ call the plumber", or
+  // captures a task, and finds Tower empty. The write has already landed in
+  // its own commit; this only re-reads the local store, in exactly the same
+  // way the pull does.
+  useEffect(() => onLocalWrite(() => void loadLocalData()), [loadLocalData]);
 
   // Any change to rendered state or to the profile may have queued events —
   // including writes made outside this provider. The debounce inside

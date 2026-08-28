@@ -215,6 +215,16 @@ export type PulseVocabProposalKind = 'domain' | 'activity' | 'person' | 'habitAl
 export type PulseVocabProposal = { kind: PulseVocabProposalKind; value: string; mapsTo: string | null };
 
 /**
+ * Which capture surface a pulse was said into — Appendix B's `mouth`.
+ *
+ * One parser, two mouths: the Pulse page codes unbiased, Tower's box biases
+ * the coder toward `task`. It has to be stored rather than passed, because
+ * the coding queue is lazy: the call that needs to know can happen days after
+ * the utterance, on the other device, from a journal line.
+ */
+export type PulseMouth = 'today' | 'tower';
+
+/**
  * One captured utterance. Verbatim, timestamped, and never edited.
  *
  * `at` is a field rather than the event envelope's `ts`, which the plan's
@@ -243,6 +253,14 @@ export type PulseRow = {
   text: string;
   /** ISO instant of capture. */
   at: string;
+  /**
+   * Which box this was typed into, written once at capture beside `text`.
+   *
+   * Absent means the Pulse page — the unbiased mouth, and every pulse written
+   * before Tower had one. Only `'tower'` is ever written, so the field appears
+   * exactly where it changes something.
+   */
+  mouth?: PulseMouth;
   signal?: PulseSignal;
   domain?: string | null;
   activity?: string | null;
@@ -578,6 +596,7 @@ function toReadItemRow(id: string, record: Record_): ReadItemRow {
 }
 
 const PULSE_SIGNALS: readonly PulseSignal[] = ['block', 'event', 'state', 'plan', 'task', 'claim', 'note'];
+const PULSE_MOUTHS: readonly PulseMouth[] = ['today', 'tower'];
 
 /**
  * `signal` through `vocabProposal` are only ever set together, by one
@@ -589,6 +608,8 @@ const PULSE_SIGNALS: readonly PulseSignal[] = ['block', 'event', 'state', 'plan'
 function toPulseRow(id: string, record: Record_): PulseRow {
   const row: PulseRow = { id, text: str(record, 'text', ''), at: str(record, 'at', EPOCH_FLOOR) };
 
+  const mouth = optionalOneOf(record, 'mouth', PULSE_MOUTHS);
+  if (mouth !== undefined) row.mouth = mouth;
   const signal = optionalOneOf(record, 'signal', PULSE_SIGNALS);
   if (signal !== undefined) row.signal = signal;
   const domain = optionalNullableStr(record, 'domain');

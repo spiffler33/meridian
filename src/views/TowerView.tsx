@@ -8,10 +8,13 @@
 import { useCallback, useState } from 'react';
 import { useApp } from '../store/AppContext';
 import { TwoMinuteTimer } from '../components/TwoMinuteTimer';
-import { parseTowerInput, toTowerItemInput } from '../services/ai';
+import { Chip } from '../components/Chip';
 import { DayShape } from '../components/DayShape';
 import { Dock } from '../components/Dock';
 import { deviceTimeZone } from '../lib/calendar';
+import { effectKey, updateTaskChipLabel } from '../lib/pulse';
+import { useTowerPulses } from '../hooks/useTowerPulses';
+import type { TowerPulses } from '../hooks/useTowerPulses';
 import { getToday } from '../utils/dates';
 import type { CalendarMirror } from '../lib/calendar';
 import type { TowerItem } from '../types';
@@ -19,11 +22,14 @@ import type { TowerItem } from '../types';
 export default function TowerView({ mirror }: { mirror: CalendarMirror | null }) {
   const {
     state,
-    addTowerItem,
     completeTowerItemById,
     updateTowerItemById,
     deleteTowerItemById,
   } = useApp();
+
+  // The pulse half of this page: a submission is also an utterance, and the
+  // coder's answer comes back as proposals on the items it names.
+  const pulses = useTowerPulses();
 
   const today = getToday();
   const timeZone = deviceTimeZone();
@@ -44,7 +50,19 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
   // Overflow (remaining active items beyond first 3)
   const overflowItems = activeItems.slice(3);
 
-  // Parse and add immediately - zero friction capture (supports multiple items from brain dump)
+  /**
+   * Add immediately — zero-friction capture, unchanged from the owner's side.
+   *
+   * There is no parse and no model between Enter and the item: the line IS the
+   * task, as it always was. The same submission also becomes a pulse, in one
+   * commit, and the coder runs on that pulse afterwards — fired, never awaited
+   * (fence 3), so a dead or slow coder costs the item nothing.
+   *
+   * The text comes back if the write failed. One commit means both halves
+   * failed together, so there is nothing saved anywhere and the sentence would
+   * otherwise be gone: the old fallback here could never run, because the
+   * provider it called swallowed its own errors.
+   */
   const handleCapture = useCallback(async () => {
     const text = captureText.trim();
     if (!text || isCapturing) return;
@@ -52,20 +70,10 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
     setIsCapturing(true);
     setCaptureText('');
 
-    try {
-      const parsedItems = await parseTowerInput(text);
-      // Add all parsed items
-      for (const parsed of parsedItems) {
-        await addTowerItem(toTowerItemInput(parsed));
-      }
-    } catch (err) {
-      if (import.meta.env.DEV) console.error('Capture failed:', err);
-      // Fallback: add as simple active item
-      await addTowerItem({ text });
-    } finally {
-      setIsCapturing(false);
-    }
-  }, [captureText, isCapturing, addTowerItem]);
+    const saved = await pulses.capture(text);
+    if (!saved) setCaptureText(text);
+    setIsCapturing(false);
+  }, [captureText, isCapturing, pulses]);
 
   const handleComplete = useCallback(async (id: string) => {
     await completeTowerItemById(id);
@@ -114,6 +122,17 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
   return (
     <div className="space-y-6">
       {/* What the day already has in it, before anything is chosen for it. */}
+      {/*
+        `Date.now()` in render is impure and the rule is right about it. It is
+        pre-existing and not this stage's to change: `now` decides which event
+        DayShape lights as next and whether the mirror reads stale, so sampling
+        it at mount instead would freeze both on a page left open. The real fix
+        is DayShape owning its own clock, which is a change to DayShape.
+        Reported rather than silently re-hidden: it was invisible only because
+        the compiler bails out of a component containing `try`, and this file's
+        capture handler no longer needs one.
+      */}
+      {/* eslint-disable-next-line react-hooks/purity */}
       <DayShape mirror={mirror} date={today} timeZone={timeZone} now={Date.now()} />
 
       {/* NOW Section - Hero Item */}
@@ -131,6 +150,7 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
             onStartTimer={() => handleStartTimer(nowItem.id)}
             isTimerRunning={timerItemId === nowItem.id}
             onEdit={(text) => handleEdit(nowItem.id, text)}
+            pulses={pulses}
           />
         ) : (
           <div className="text-text-muted text-sm py-8 text-center border border-dashed border-border rounded">
@@ -145,6 +165,7 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
           <QueueList
             items={queueItems}
             onComplete={handleComplete}
+            pulses={pulses}
           />
         </section>
       )}
@@ -163,6 +184,7 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
               <QueueList
                 items={overflowItems}
                 onComplete={handleComplete}
+                pulses={pulses}
               />
             </div>
           )}
@@ -211,6 +233,51 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
 // Sub-components
 // ============================================================================
 
+/**
+ * The coder's proposals about one item.
+ *
+ * Nothing renders when an item has none, which is nearly all of them at any
+ * moment — an empty row under every task would turn a page built for a glance
+ * into a form. The label says only what would CHANGE: the task is the line
+ * directly above it, so naming it again is noise here (the pulse line, where
+ * the task is not on screen, spells it out instead).
+ *
+ * Shown on the items this page actually surfaces — Now, the queue, the
+ * overflow. A proposal on a followed-up or someday item stays reachable on its
+ * own pulse line rather than being buried in a drawer nothing opens; Tower is
+ * a quick page for what needs doing, and a chip that is never seen is worse
+ * than a chip that lives in one place.
+ */
+function ItemProposals({
+  itemId,
+  pulses,
+  className,
+}: {
+  itemId: string;
+  pulses: TowerPulses;
+  className: string;
+}) {
+  const proposals = pulses.proposals[itemId] ?? [];
+  if (proposals.length === 0) return null;
+
+  return (
+    <div className={className}>
+      {proposals.map((proposal) => (
+        <Chip
+          // The proposal itself, never its position: acting on one shifts the
+          // rest down, and React would then reuse the node of the chip that
+          // was there. Two lines can propose the same change, so the pulse
+          // that said it is part of the identity.
+          key={`${proposal.pulseId}:${effectKey(proposal.effect)}`}
+          label={updateTaskChipLabel(proposal.effect)}
+          onApply={() => pulses.apply(proposal)}
+          onDismiss={() => pulses.dismiss(proposal)}
+        />
+      ))}
+    </div>
+  );
+}
+
 interface NowCardProps {
   item: TowerItem;
   onComplete: () => void;
@@ -218,9 +285,10 @@ interface NowCardProps {
   onSomeday: () => void;
   onStartTimer: () => void;
   isTimerRunning: boolean;
+  pulses: TowerPulses;
 }
 
-function NowCard({ item, onComplete, onHold, onSomeday, onStartTimer, isTimerRunning, onEdit }: NowCardProps & { onEdit: (text: string) => void }) {
+function NowCard({ item, onComplete, onHold, onSomeday, onStartTimer, isTimerRunning, onEdit, pulses }: NowCardProps & { onEdit: (text: string) => void }) {
   const [showHoldInput, setShowHoldInput] = useState(false);
   const [waitingOnText, setWaitingOnText] = useState('');
   const [isEditing, setIsEditing] = useState(false);
@@ -333,6 +401,8 @@ function NowCard({ item, onComplete, onHold, onSomeday, onStartTimer, isTimerRun
           </button>
         </div>
       )}
+
+      <ItemProposals itemId={item.id} pulses={pulses} className="ml-6 flex flex-wrap items-center gap-2" />
     </div>
   );
 }
@@ -340,29 +410,30 @@ function NowCard({ item, onComplete, onHold, onSomeday, onStartTimer, isTimerRun
 interface QueueListProps {
   items: TowerItem[];
   onComplete: (id: string) => void;
+  pulses: TowerPulses;
 }
 
-function QueueList({ items, onComplete }: QueueListProps) {
+function QueueList({ items, onComplete, pulses }: QueueListProps) {
   return (
     <ul className="space-y-2 border-l-2 border-border pl-4 ml-2">
       {items.map((item) => (
-        <li
-          key={item.id}
-          className="flex items-center gap-3 text-text-secondary group"
-        >
-          <button
-            onClick={() => onComplete(item.id)}
-            className="w-4 h-4 border border-border rounded-sm hover:border-accent transition-colors flex items-center justify-center"
-            title="Mark done"
-          >
-            <span className="opacity-0 group-hover:opacity-100 text-xs text-accent">
-              +
-            </span>
-          </button>
-          <span className="text-sm">{item.text}</span>
-          {item.expectsBy && (
-            <span className="text-xs text-text-muted">· {formatDate(item.expectsBy, item.isEvent)}</span>
-          )}
+        <li key={item.id} className="text-text-secondary group">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => onComplete(item.id)}
+              className="w-4 h-4 border border-border rounded-sm hover:border-accent transition-colors flex items-center justify-center"
+              title="Mark done"
+            >
+              <span className="opacity-0 group-hover:opacity-100 text-xs text-accent">
+                +
+              </span>
+            </button>
+            <span className="text-sm">{item.text}</span>
+            {item.expectsBy && (
+              <span className="text-xs text-text-muted">· {formatDate(item.expectsBy, item.isEvent)}</span>
+            )}
+          </div>
+          <ItemProposals itemId={item.id} pulses={pulses} className="mt-2 ml-7 flex flex-wrap items-center gap-2" />
         </li>
       ))}
     </ul>
