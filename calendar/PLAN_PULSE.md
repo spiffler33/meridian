@@ -542,3 +542,75 @@ effect by value rather than by position, so two taps in one second cannot overwr
 other's write; an applied chip now tells `AppContext` to re-read, so a spawned task is in
 Tower before the next reload rather than after it; and `updateTask` to `done` writes
 `done_at`, as completing an item from Tower always did.
+
+### 2026-08-29 — Phase 2: the coder, closed. Gate 2 is open and is the owner's.
+
+Green: `vitest` **635 passed / 32 files** (was 524 / 28) · `tsc -b` clean · `npm run build` clean ·
+`grep -rn "localStorage" src/` → 0 · `grep -rn "parseTowerInput" src/` → 0 · lint 6 errors —
+but see the suppression note below, because 6 no longer means what it meant. The suite was run
+**80 consecutive times** at the end, not once: this phase produced two separate intermittent
+failures, and a single green run proved nothing about either.
+
+Shipped in three stages on `local-first`, **not deployed** — `main` is untouched, so
+meridian.spiffler.xyz still serves Phase 1.
+
+- **The coder.** `src/services/coder.ts`, one `claude-sonnet-5` call per pulse against Appendix
+  B's allowlist, `max_tokens` 500, thinking disabled. Every failure — no key, dead network,
+  non-2xx, unparseable JSON, a `signal` outside the seven — collapses to the same outcome: the
+  pulse stays uncoded. There is no taxonomy, no retry ladder and no fallback classifier, and the
+  absence is asserted by a test rather than merely intended.
+- **Entity #12 `pulseVocab`**, natural key `vocab`, seeded once and idempotently, repaired if
+  `habitAliases` seeds empty because no habit label matched. Criterion 20 pins that an older build
+  folds it away quietly.
+- **Chips.** Four effect types plus the vocab proposal, each a dismissible proposal; per-type
+  auto-apply toggles in Settings, all off, and none of them retroactive — turning one on changes
+  what happens next, never what is already stored. `vocabProposal` has no auto path at all.
+- **Tower convergence.** One submission writes the item and the pulse in **one** commit; the box
+  behaves exactly as before. `parseTowerInput` is deleted, and `toTowerItemInput` and
+  `ParsedTowerItem` went with it — `src/services/ai.ts` is now 94 lines of date arithmetic with no
+  AI in it.
+
+**What the reviews caught that a green suite did not.** Each was proved by reverting the fix and
+watching a test fail, not by reasoning:
+- The lazy queue sent the coder **wall-clock `now`**, so a pulse captured Thursday and coded
+  Saturday resolved "gym at 6" against Saturday — silently, and never revisited, because a coded
+  pulse is never re-coded. Fixed by reading `now` as the pulse's own instant.
+- `span.start` defaulted to `''`, which is not a null but junk that Phase 3 would have read as
+  `Invalid Date`, in a journal that is never compacted.
+- The same pulse could be **coded twice** — the sweep walks a snapshot and the in-flight guard only
+  excluded overlap, never a completed prior coding. With `spawnTask` auto-apply on, two pulses
+  produced three Tower items.
+- A chip apply wrote the journal but never told `AppContext`, so a spawned task was **invisible
+  until reload** and read as a failed write.
+- A proposal landing on a `waiting` or `someday` item could be **neither applied nor dismissed** —
+  the coder sees those items, but only active ones rendered chips, and the pulse leaves the stream
+  the next day. Stranded forever.
+- Chips carried their identity by **array position**, so a second tap could apply a proposal the
+  owner never tapped.
+- Six places called `scheduleFlush()` inside a durable write's own `try`, so a failure *after* a
+  successful write reported failure — worst in `useReadState.toggle`, where it flipped a correct
+  read-mark back to wrong.
+
+**Deliberately not fixed.**
+- The enrichment-after-delete resurrection stays **pinned, not guarded**. It is now routine rather
+  than theoretical, and its blast radius changed: the resurrected row can carry an epoch `at`, so
+  it renders *invisibly* rather than as an empty line.
+- Two devices can still each code the same pulse; the fold merges it correctly, so the cost is one
+  wasted call and a duplicate event. The real fix is architectural.
+- `lint = 6` now includes **one suppression** — a `react-hooks/purity` error on
+  `<DayShape now={Date.now()} />` that a `try` inside a hook callback used to mask. Its real fix is
+  DayShape owning its own clock, which is the minute-ticker the owner declined: **blocked on a
+  decision, not deferred.** `reportUnusedDisableDirectives` is now `error` so it cannot go stale
+  unnoticed.
+- Two pre-existing flakes, unrelated to this phase, appear only under concurrent load:
+  `sync.test.ts > the sync triggers` and `ReadView.test.tsx > the instrument`.
+
+**Add to GATE 2's checklist**, beyond the plan's own "judge 20 pulses like an ATUS supervisor":
+1. **Do chips do anything?** Appendix B wrote an effect's payload as `{"...": "..."}` — a
+   placeholder, never a specification — so the model was never told the key names the chip code
+   reads. That is now written out (see the amendment above), but it is unproven against the real
+   model. A chip that renders with a fallback noun and then quietly clears on tap is the symptom.
+2. **Count `spawnTask` proposals from the Pulse mouth.** The tower-mouth clause is a strong
+   prohibition sent on every call; a drop to zero from the *other* mouth means it over-reached.
+3. **Is `now`-as-the-pulse's-instant right?** It is an interpretation of the allowlist, not an
+   amendment to it. Backlogged pulses are where it shows.
