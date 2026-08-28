@@ -19,7 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PulseRow } from '../lib/entities';
 import { pulsesForDay } from '../lib/pulse';
 import { scheduleFlush } from '../lib/sync';
-import { createPulse, deletePulse, getPulses } from '../services/data';
+import { codeUncodedPulses, createPulse, deletePulse, getPulses } from '../services/data';
 
 export interface Pulses {
   /** The day's pulses, oldest first — the page reads downward into the box. */
@@ -42,6 +42,23 @@ export function usePulses(day: string, timeZone: string): Pulses {
     };
   }, []);
 
+  /**
+   * Runs the lazy coding queue, then re-reads so a pulse that just went from
+   * uncoded to coded repaints. Never awaited by anything the owner is
+   * waiting on (O1) — both call sites below fire this and move on.
+   */
+  const codeThenRefresh = useCallback(async () => {
+    await codeUncodedPulses();
+    if (!live.current) return;
+    try {
+      setRows(await getPulses());
+    } catch (error) {
+      // The rows already on screen stay as they are; the next successful
+      // read (another save, another open) catches up.
+      if (import.meta.env.DEV) console.error('Failed to refresh pulses after coding:', error);
+    }
+  }, []);
+
   useEffect(() => {
     void (async () => {
       try {
@@ -52,8 +69,11 @@ export function usePulses(day: string, timeZone: string): Pulses {
         // owner with nothing captured today sees anyway.
         if (import.meta.env.DEV) console.error('Failed to read pulses:', error);
       }
+      // "Uncoded pulses are coded on next open" — this is the open. Off the
+      // render path already: the initial read above has already settled.
+      void codeThenRefresh();
     })();
-  }, []);
+  }, [codeThenRefresh]);
 
   const capture = useCallback(async (text: string): Promise<boolean> => {
     // An empty Enter is a no-op, not an empty pulse.
@@ -64,6 +84,9 @@ export function usePulses(day: string, timeZone: string): Pulses {
       // never sees. The debounce inside collapses a burst into one push.
       scheduleFlush();
       if (live.current) setRows((previous) => [...previous, saved]);
+      // "Coding runs on-save when online." Fired, not awaited: capture has
+      // already resolved by the time this settles, network dead or not (O1).
+      void codeThenRefresh();
       return true;
     } catch (error) {
       // The line is in no journal and never will be. Saying so is the caller's
@@ -72,7 +95,7 @@ export function usePulses(day: string, timeZone: string): Pulses {
       if (import.meta.env.DEV) console.error('Failed to capture a pulse:', error);
       return false;
     }
-  }, []);
+  }, [codeThenRefresh]);
 
   const remove = useCallback((id: string) => {
     // Optimistic, and put back on a throw. The delete either happened or it

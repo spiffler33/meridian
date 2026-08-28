@@ -19,15 +19,62 @@
  * asked.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { closeDb, enqueue } from './db';
+import { EVENTS_PATH } from './calendar';
+import { closeDb, enqueue, outboxSize, peekOutbox, putCachedContent } from './db';
+import type { OutboxRecord } from './db';
 import { ENTITY, resetSession } from './entities';
 import type { PulseRow } from './entities';
 import { fold } from './journal';
 import type { JournalEvent } from './journal';
 import { compareOldestFirst, pulsesForDay } from './pulse';
-import { getPulses } from '../services/data';
+import { addDays, getToday } from '../utils/dates';
+import {
+  codeUncodedPulses,
+  createHabit,
+  createPulse,
+  createTowerItem,
+  deletePulse,
+  enrichPulse,
+  ensurePulseVocabSeeded,
+  getPulses,
+  toggleCompletion,
+} from '../services/data';
+import type { Coding } from '../services/coder';
+
+/**
+ * `codeUncodedPulses` calls the real coder module for everything except the
+ * network call itself — mocking only `codePulse` lets these tests drive the
+ * real context assembly, the real enrichment write, and the real fold, and
+ * assert on the one seam that would otherwise need a live API key.
+ */
+const codePulseMock = vi.hoisted(() => vi.fn());
+vi.mock('../services/coder', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/coder')>();
+  return { ...actual, codePulse: codePulseMock };
+});
+
+const SAMPLE_CODING: Coding = {
+  signal: 'task',
+  domain: 'db',
+  activity: 'deep-work',
+  people: [],
+  span: { start: '2026-08-28T09:00:00.000Z', end: null, approx: false },
+  links: { habitId: null, towerId: null, eventId: null },
+  effects: [],
+  vocabProposal: null,
+};
+
+/** The subset of SAMPLE_CODING fence 1 allows onto a pulse — what enrichPulse actually writes. */
+const SAMPLE_ENRICHMENT = {
+  signal: SAMPLE_CODING.signal,
+  domain: SAMPLE_CODING.domain,
+  activity: SAMPLE_CODING.activity,
+  people: SAMPLE_CODING.people,
+  span: SAMPLE_CODING.span,
+  links: SAMPLE_CODING.links,
+};
 
 type UpsertEvent = Extract<JournalEvent, { type: 'upsert' }>;
 type DeleteEvent = Extract<JournalEvent, { type: 'delete' }>;
@@ -186,5 +233,300 @@ describe('pulsesForDay', () => {
 
     expect(() => pulsesForDay(rows, '2026-08-26', zone)).not.toThrow();
     expect(pulsesForDay(rows, '2026-08-26', zone).map((row) => row.id)).toEqual(['good']);
+  });
+});
+
+function dbReset() {
+  beforeEach(() => {
+    resetSession();
+    codePulseMock.mockReset();
+  });
+  afterEach(async () => {
+    resetSession();
+    codePulseMock.mockReset();
+    await closeDb();
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.deleteDatabase('meridian');
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error ?? new Error('deleteDatabase failed'));
+      request.onblocked = () => reject(new Error('deleteDatabase was blocked: a test leaked a connection'));
+    });
+  });
+}
+
+describe('enrichPulse', () => {
+  dbReset();
+
+  it("writes only the coder's six derived fields — never text, never at, never effects or vocabProposal (fence 1)", async () => {
+    const created = await createPulse('wrote the plan');
+
+    await enrichPulse(created.id, SAMPLE_CODING);
+
+    const queued = await peekOutbox<JournalEvent & OutboxRecord>();
+    const enrichment = queued.find(
+      (event): event is UpsertEvent & OutboxRecord =>
+        event.type === 'upsert' && event.entityId === created.id && !('text' in event.fields)
+    );
+    expect(enrichment).toBeDefined();
+    expect(enrichment?.fields).toEqual(SAMPLE_ENRICHMENT);
+
+    const rows = await getPulses();
+    const row = rows.find((r) => r.id === created.id);
+    expect(row?.text).toBe('wrote the plan'); // untouched
+    expect(row?.signal).toBe('task');
+  });
+
+  it('does not read back or throw when the row is not found afterward — the write still lands (L4)', async () => {
+    // Simulates the race commit's generation guard allows: the row is not (or
+    // no longer) in this session, but the event must still be safe and queued
+    // rather than thrown away, unlike createPulse's read-back-and-throw.
+    await expect(enrichPulse('never-created', SAMPLE_CODING)).resolves.toBeUndefined();
+
+    const queued = await peekOutbox<JournalEvent & OutboxRecord>();
+    expect(queued.some((event) => event.entityId === 'never-created' && event.type === 'upsert')).toBe(true);
+  });
+
+  it("an enrichment landing after a delete resurrects the pulse with text and at both falling back — pinned P2 behaviour, sharpened by fence 1's own ban on carrying `at`", async () => {
+    const created = await createPulse('temporary note');
+    await deletePulse(created.id);
+
+    await enrichPulse(created.id, SAMPLE_CODING);
+
+    const rows = await getPulses();
+    const resurrected = rows.find((r) => r.id === created.id);
+    // Fence 1 forbids enrichPulse from carrying `at`, so unlike the
+    // hand-crafted revival in "the pulse fold" above (which deliberately
+    // supplied a fresh `at`), here BOTH text and at fall back — text to '',
+    // at to the epoch floor toPulseRow uses for a field nothing wrote.
+    expect(resurrected).toMatchObject({ id: created.id, text: '', at: '1970-01-01T00:00:00.000Z', signal: 'task' });
+  });
+});
+
+describe('ensurePulseVocabSeeded', () => {
+  dbReset();
+
+  it('seeds the Appendix A values exactly once — a second call writes nothing further', async () => {
+    const before = await outboxSize();
+
+    const first = await ensurePulseVocabSeeded();
+    expect(first.domains).toEqual(['db', 'hoa', 'family', 'home-ops', 'self', 'social', 'transit', 'admin']);
+    expect(first.activities).toEqual({
+      gym: 'self',
+      read: 'self',
+      'deep-work': 'db',
+      'school-run': 'family',
+      dinner: 'family',
+      drinks: 'social',
+    });
+    expect(first.people).toEqual(['wife', 'kids']);
+
+    const afterFirst = await outboxSize();
+    expect(afterFirst).toBe(before + 1);
+
+    const second = await ensurePulseVocabSeeded();
+    expect(second).toEqual(first);
+    expect(await outboxSize()).toBe(afterFirst); // idempotent: no second seed event
+  });
+
+  it('resolves gym/lift/strength to the strength habit and read to the reading habit, case-insensitively', async () => {
+    const strength = await createHabit({ label: 'Strength', category: 'health' });
+    const reading = await createHabit({ label: 'READING', category: 'learning' });
+
+    const vocab = await ensurePulseVocabSeeded();
+
+    expect(vocab.habitAliases).toEqual({
+      gym: strength.id,
+      lift: strength.id,
+      strength: strength.id,
+      read: reading.id,
+    });
+  });
+
+  it('omits an alias rather than guessing when no habit matches — nulls over guesses applies at seed time too', async () => {
+    await createHabit({ label: 'Meditate', category: 'health' });
+
+    const vocab = await ensurePulseVocabSeeded();
+
+    expect(vocab.habitAliases).toEqual({});
+  });
+});
+
+describe('codeUncodedPulses', () => {
+  dbReset();
+
+  /** Appendix B's allowlist, keyed by the object it governs. 'root' is the wire payload itself. */
+  const ALLOWED_KEYS: Record<string, readonly string[]> = {
+    root: ['text', 'now', 'tz', 'vocab', 'todayEvents', 'todayHabits', 'openTowerItems', 'recentPulses', 'mouth'],
+    vocab: ['domains', 'activities', 'people', 'habitAliases'],
+    todayEvents: ['id', 'title', 'calendar', 'start', 'end'],
+    todayHabits: ['id', 'name', 'done'],
+    openTowerItems: ['id', 'text', 'status'],
+    recentPulses: ['text', 'coding'],
+    coding: ['signal', 'domain', 'activity', 'people', 'span', 'links'],
+    span: ['start', 'end', 'approx'],
+    links: ['habitId', 'towerId', 'eventId'],
+  };
+
+  /** Only these object-shaped fields are walked further; activities/habitAliases/domains/people are opaque leaves. */
+  const NESTED = new Set(['vocab', 'todayEvents', 'todayHabits', 'openTowerItems', 'recentPulses', 'coding', 'span', 'links']);
+
+  function assertAllowed(value: unknown, allowKey: string): void {
+    if (Array.isArray(value)) {
+      value.forEach((item) => assertAllowed(item, allowKey));
+      return;
+    }
+    if (typeof value !== 'object' || value === null) return;
+    const allowed = ALLOWED_KEYS[allowKey];
+    if (!allowed) throw new Error(`test bug: no allowlist registered for "${allowKey}"`);
+    for (const key of Object.keys(value as Record<string, unknown>)) {
+      expect(allowed).toContain(key);
+      if (NESTED.has(key)) assertAllowed((value as Record<string, unknown>)[key], key);
+    }
+  }
+
+  it("assembles a payload that is a strict subset of Appendix B's allowlist, and nothing else (fence 5)", async () => {
+    codePulseMock.mockResolvedValue(SAMPLE_CODING);
+    const today = getToday();
+
+    // A calendar event carrying fields the allowlist does not name.
+    await putCachedContent('calendar-data', {
+      path: EVENTS_PATH,
+      sha: 'x',
+      fetchedAt: Date.now(),
+      text: JSON.stringify({
+        generated_at: new Date().toISOString(),
+        window: { start: today, end: today },
+        calendars: ['Family'],
+        events: [
+          {
+            id: 'ev1',
+            calendar: 'Family',
+            title: 'Trip',
+            start: today,
+            end: addDays(today, 1),
+            allDay: true,
+            location: 'Somewhere the allowlist never mentions',
+          },
+        ],
+      }),
+    });
+
+    // A habit, done today — todayHabits must read `name`, not the row's `label`.
+    const habit = await createHabit({ label: 'Strength', category: 'health', description: 'unlisted field' });
+    await toggleCompletion(habit.id, today, true);
+
+    // An open tower item carrying fields the allowlist does not name.
+    await createTowerItem({ text: 'call the plumber', waitingOn: 'a callback', effort: 'quick' });
+
+    // Two prior pulses (one already coded), and the target — via raw events
+    // so `at` ordering is exact rather than depending on wall-clock timing.
+    await enqueue([
+      upsert({
+        id: 'e-prior-1',
+        device: 'a',
+        seq: 1,
+        ts: 100,
+        entityId: 'p-prior-1',
+        fields: { text: 'earlier', at: '2026-08-28T07:00:00.000Z' },
+      }),
+      upsert({
+        id: 'e-prior-2',
+        device: 'a',
+        seq: 2,
+        ts: 200,
+        entityId: 'p-prior-2',
+        fields: { text: 'coded earlier', at: '2026-08-28T08:00:00.000Z', ...SAMPLE_ENRICHMENT },
+      }),
+      upsert({
+        id: 'e-target',
+        device: 'a',
+        seq: 3,
+        ts: 300,
+        entityId: 'p-target',
+        fields: { text: 'the one being coded', at: '2026-08-28T09:00:00.000Z' },
+      }),
+    ]);
+    resetSession();
+
+    await codeUncodedPulses();
+
+    // 'earlier' (p-prior-1) is also uncoded, so the sweep codes it too — this
+    // proves the allowlist property on the pulse we actually care about.
+    const calls = codePulseMock.mock.calls as Array<[string, Record<string, unknown>]>;
+    const call = calls.find(([calledText]) => calledText === 'the one being coded');
+    expect(call).toBeDefined();
+    const [text, context] = call as [string, Record<string, unknown>];
+
+    assertAllowed({ text, ...context }, 'root');
+
+    // Positive checks: the right values under the right names, not merely an
+    // absence of extras.
+    expect(context.mouth).toBe('today');
+    expect(context.todayHabits).toEqual([{ id: habit.id, name: 'Strength', done: true }]);
+    expect((context.todayEvents as unknown[]).length).toBe(1);
+    const recentPulses = context.recentPulses as Array<{ text: string; coding?: unknown }>;
+    expect(recentPulses.map((p) => p.text)).toEqual(['earlier', 'coded earlier']);
+    expect(recentPulses[0].coding).toBeUndefined(); // 'earlier' was uncoded when this context was built
+    expect(recentPulses[1].coding).toEqual(SAMPLE_ENRICHMENT);
+  });
+
+  it('codes an uncoded pulse once — a second sweep after it succeeded makes no further call (P1)', async () => {
+    codePulseMock.mockResolvedValue(SAMPLE_CODING);
+    const created = await createPulse('only pulse today');
+
+    await codeUncodedPulses();
+    expect(codePulseMock).toHaveBeenCalledTimes(1);
+
+    await codeUncodedPulses(); // "re-open"
+    expect(codePulseMock).toHaveBeenCalledTimes(1); // no additional call — it is no longer uncoded
+
+    const rows = await getPulses();
+    expect(rows.find((row) => row.id === created.id)?.signal).toBe('task');
+  });
+
+  it('a coder failure leaves the pulse exactly as it was, and it is retried next sweep rather than wedged (L2, L3)', async () => {
+    // Seeded ahead of time so the vocab seed's own one-time write does not
+    // inflate the outbox delta this test is actually about.
+    await ensurePulseVocabSeeded();
+    codePulseMock.mockRejectedValueOnce(new Error('offline'));
+    const created = await createPulse('will fail once');
+
+    const before = await outboxSize();
+    await codeUncodedPulses();
+    expect(await outboxSize()).toBe(before); // no partial enrichment upsert queued
+
+    let rows = await getPulses();
+    let row = rows.find((r) => r.id === created.id);
+    expect(row?.signal).toBeUndefined();
+    expect(row?.text).toBe('will fail once'); // untouched
+
+    // Nothing marks it "in flight" past the failed call (L3): the very next
+    // sweep retries it rather than skipping it forever.
+    codePulseMock.mockResolvedValueOnce(SAMPLE_CODING);
+    await codeUncodedPulses();
+    expect(codePulseMock).toHaveBeenCalledTimes(2);
+
+    rows = await getPulses();
+    row = rows.find((r) => r.id === created.id);
+    expect(row?.signal).toBe('task');
+  });
+
+  it("a null coding — fence 2's collapsed outcome — leaves the pulse uncoded; asserts the absence of fallback logic", async () => {
+    // Seeded ahead of time so the vocab seed's own one-time write does not
+    // inflate the outbox delta this test is actually about.
+    await ensurePulseVocabSeeded();
+    codePulseMock.mockResolvedValueOnce(null);
+    const created = await createPulse('unusable model output');
+
+    const before = await outboxSize();
+    await codeUncodedPulses();
+
+    // No keyword/heuristic path exists to have produced a different result:
+    // the only observable behaviour is that nothing changed.
+    expect(await outboxSize()).toBe(before);
+    const rows = await getPulses();
+    const row = rows.find((r) => r.id === created.id);
+    expect(row?.signal).toBeUndefined();
+    expect(row?.text).toBe('unusable model output');
   });
 });

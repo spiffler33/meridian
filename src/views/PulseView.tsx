@@ -72,9 +72,22 @@ function PulseStream({
     <ul className="space-y-2">
       {pulses.map((pulse) => (
         <li key={pulse.id} className="flex items-baseline gap-3">
-          <time className="font-mono text-xs tabular-nums text-text-muted">
-            {timeLabel(pulse.at, timeZone)}
-          </time>
+          <span className="flex items-center gap-1.5">
+            {/*
+              Hollow = uncoded, filled = coded. No spinner, no color beyond
+              this: the coder runs invisibly, and uncoded is a calm, valid
+              state rather than a loading one.
+            */}
+            <span
+              aria-hidden="true"
+              className={`h-1.5 w-1.5 rounded-full border border-text-muted ${
+                pulse.signal === undefined ? 'bg-transparent' : 'bg-text-muted'
+              }`}
+            />
+            <time className="font-mono text-xs tabular-nums text-text-muted">
+              {timeLabel(pulse.at, timeZone)}
+            </time>
+          </span>
           <span className="flex-1 font-read text-[14.5px] leading-[1.6] text-text">
             {pulse.text}
           </span>

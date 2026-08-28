@@ -61,6 +61,7 @@ export const ENTITY = {
   packSession: 'packSession',
   readItem: 'readItem',
   pulse: 'pulse',
+  pulseVocab: 'pulseVocab',
 } as const;
 
 // ============================================================================
@@ -191,6 +192,18 @@ export type ReadItemRow = {
 };
 
 /**
+ * The coder's classification of an utterance — Appendix B's `signal` values.
+ * `state`/`note`/`plan` never close a block or carry duration into the ledger.
+ */
+export type PulseSignal = 'block' | 'event' | 'state' | 'plan' | 'task' | 'claim' | 'note';
+
+/** When the coder placed the utterance. `end`/`approx` per Appendix D's closure rules. */
+export type PulseSpan = { start: string; end: string | null; approx: boolean };
+
+/** What a pulse's coding wired to elsewhere in the app. Set by enrichment or a chip apply. */
+export type PulseLinks = { habitId: string | null; towerId: string | null; eventId: string | null };
+
+/**
  * One captured utterance. Verbatim, timestamped, and never edited.
  *
  * `at` is a field rather than the event envelope's `ts`, which the plan's
@@ -200,17 +213,41 @@ export type ReadItemRow = {
  * at capture, alongside `text`, and is what every reader means by "when" —
  * the envelope still orders the fold, as it does for every other entity.
  *
- * Documented, not yet written — the coder fills them in phase 2, as an upsert
- * that must never carry `text`: `signal`, `domain`, `activity`, `people[]`,
- * `span {start, end?, approx?}`, `links {habitId?, towerId?, eventId?}`. They
- * are absent from this row type until something writes them; a field nothing
- * can produce is a field nothing should have to check for.
+ * `signal` through `links` are enrichment: written once, together, by the
+ * coder's own upsert (phase 2) — never by capture, and never carrying `text`
+ * or `at` (fence 1). All five are optional and all five arrive together, so
+ * `signal === undefined` is the one, total test for "uncoded": no separate
+ * in-flight marker exists, and none should — see the coder's own file for why.
  */
 export type PulseRow = {
   id: string;
   text: string;
   /** ISO instant of capture. */
   at: string;
+  signal?: PulseSignal;
+  domain?: string | null;
+  activity?: string | null;
+  people?: string[];
+  span?: PulseSpan;
+  links?: PulseLinks;
+};
+
+/**
+ * The pulse vocabulary: one instance, natural key `vocab`. Never resolved via
+ * `resolveEntityId` — unlike `dailyEntry`/`habitCompletion`/`yearTheme`,
+ * `pulseVocab` never existed in Postgres, so no legacy surrogate id can ever
+ * fork from the sentinel every device writes to from its very first event.
+ * Grows over time via approved `vocabProposal` chips (domain/activity/person/
+ * habitAlias) — this row's seed is a starting point, not the only writer.
+ */
+export type PulseVocabRow = {
+  id: string;
+  domains: string[];
+  /** label -> domain. */
+  activities: Record<string, string>;
+  people: string[];
+  /** alias -> habitId. */
+  habitAliases: Record<string, string>;
 };
 
 // ============================================================================
@@ -231,6 +268,12 @@ const EPOCH_FLOOR = new Date(0).toISOString();
 
 /** The profile's entity id before one has ever been written or seeded. */
 const LOCAL_PROFILE_ID = 'profile';
+
+/**
+ * The pulseVocab entity's one and only id. Fixed, never derived or resolved:
+ * every device that ever writes this entity targets this literal string.
+ */
+export const PULSE_VOCAB_ID = 'vocab';
 
 function str(record: Record_, key: string, fallback: string): string {
   const value = record[key];
@@ -281,6 +324,74 @@ function nullableOneOf<T extends string>(record: Record_, key: string, options: 
     if (value === option) return option;
   }
   return null;
+}
+
+/** An array field, filtered to its string entries. A missing or malformed field is empty. */
+function strArray(record: Record_, key: string): string[] {
+  const value = record[key];
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string');
+}
+
+/** A plain-object field, filtered to its string-valued entries. Never throws on the wrong shape. */
+function strRecord(record: Record_, key: string): Record<string, string> {
+  const value = record[key];
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  const result: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value as Record_)) {
+    if (typeof v === 'string') result[k] = v;
+  }
+  return result;
+}
+
+/**
+ * An enrichment field that is genuinely optional: absent means "not yet
+ * coded", so unlike `oneOf` there is no fallback to a schema default — an
+ * invalid value reads the same as an absent one, never as a guess.
+ */
+function optionalOneOf<T extends string>(record: Record_, key: string, options: readonly T[]): T | undefined {
+  const value = record[key];
+  for (const option of options) {
+    if (value === option) return option;
+  }
+  return undefined;
+}
+
+/** A nullable string field that may simply be absent. Garbage reads as absent, not as null. */
+function optionalNullableStr(record: Record_, key: string): string | null | undefined {
+  if (!(key in record)) return undefined;
+  const value = record[key];
+  if (value === null) return null;
+  return typeof value === 'string' ? value : undefined;
+}
+
+/** An optional array of strings. Garbage reads as absent, never as a partial guess. */
+function optionalStrArray(record: Record_, key: string): string[] | undefined {
+  if (!(key in record)) return undefined;
+  const value = record[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : undefined;
+}
+
+/** The coder's `span`, or undefined when absent or shaped wrong. */
+function optionalSpan(record: Record_, key: string): PulseSpan | undefined {
+  const value = record[key];
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record_;
+  if (typeof obj.start !== 'string') return undefined;
+  return {
+    start: obj.start,
+    end: typeof obj.end === 'string' ? obj.end : null,
+    approx: typeof obj.approx === 'boolean' ? obj.approx : false,
+  };
+}
+
+/** The coder's `links`, or undefined when absent or shaped wrong. */
+function optionalLinks(record: Record_, key: string): PulseLinks | undefined {
+  const value = record[key];
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record_;
+  const pick = (field: string): string | null => (typeof obj[field] === 'string' ? (obj[field] as string) : null);
+  return { habitId: pick('habitId'), towerId: pick('towerId'), eventId: pick('eventId') };
 }
 
 // ============================================================================
@@ -400,8 +511,42 @@ function toReadItemRow(id: string, record: Record_): ReadItemRow {
   return { id, read_at: str(record, 'read_at', EPOCH_FLOOR) };
 }
 
+const PULSE_SIGNALS: readonly PulseSignal[] = ['block', 'event', 'state', 'plan', 'task', 'claim', 'note'];
+
+/**
+ * `signal` through `links` are only ever set together, by one enrichment
+ * upsert, so in practice all five are present or none are. Each is still read
+ * independently and defensively — a hand-edited journal, or a future build's
+ * richer shape, must not throw here, and a value that fails its own shape
+ * check reads as absent rather than as a guess.
+ */
 function toPulseRow(id: string, record: Record_): PulseRow {
-  return { id, text: str(record, 'text', ''), at: str(record, 'at', EPOCH_FLOOR) };
+  const row: PulseRow = { id, text: str(record, 'text', ''), at: str(record, 'at', EPOCH_FLOOR) };
+
+  const signal = optionalOneOf(record, 'signal', PULSE_SIGNALS);
+  if (signal !== undefined) row.signal = signal;
+  const domain = optionalNullableStr(record, 'domain');
+  if (domain !== undefined) row.domain = domain;
+  const activity = optionalNullableStr(record, 'activity');
+  if (activity !== undefined) row.activity = activity;
+  const people = optionalStrArray(record, 'people');
+  if (people !== undefined) row.people = people;
+  const span = optionalSpan(record, 'span');
+  if (span !== undefined) row.span = span;
+  const links = optionalLinks(record, 'links');
+  if (links !== undefined) row.links = links;
+
+  return row;
+}
+
+function toPulseVocabRow(id: string, record: Record_): PulseVocabRow {
+  return {
+    id,
+    domains: strArray(record, 'domains'),
+    activities: strRecord(record, 'activities'),
+    people: strArray(record, 'people'),
+    habitAliases: strRecord(record, 'habitAliases'),
+  };
 }
 
 // ============================================================================
@@ -787,6 +932,16 @@ export function readReadItemRows(): ReadItemRow[] {
 
 export function readPulseRows(): PulseRow[] {
   return rowsOf(ENTITY.pulse, toPulseRow);
+}
+
+/**
+ * The pulse vocabulary, or null on a device that has never seeded or synced
+ * one. A single fixed id, so — unlike `readProfile` — no merge is needed:
+ * nothing can ever fork a second id holding this natural key.
+ */
+export function readPulseVocabRow(): PulseVocabRow | null {
+  const record = bucket(ENTITY.pulseVocab)[PULSE_VOCAB_ID];
+  return record ? toPulseVocabRow(PULSE_VOCAB_ID, record) : null;
 }
 
 /**

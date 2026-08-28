@@ -549,4 +549,26 @@ describe('journal fold engine', () => {
     expect(state.habit).toEqual({ h1: { title: 'Run' } });
     expect(state.pulse).toEqual({ p1: { text: 'wrote the plan', at: '2026-08-27T09:00:00.000Z' } });
   });
+
+  it('criterion 20 — the same compatibility guarantee, restated for pulseVocab: an older build folds it quietly too', () => {
+    // pulseVocab is the second entity phase 2 ships (fence 7: two new entities
+    // exactly). Criteria 18 and 19 pin the general property for readItem and
+    // pulse; this pins it again for pulseVocab specifically.
+    const known = upsert({ id: 'e-1', ts: 100, entity: 'habit', entityId: 'h1', fields: { title: 'Run' } });
+    const unknown = upsert({
+      id: 'e-2',
+      ts: 200,
+      entity: 'pulseVocab',
+      entityId: 'vocab',
+      fields: { domains: ['db', 'self'], activities: { gym: 'self' }, people: ['wife'], habitAliases: {} },
+    });
+
+    const { state, warnings } = fold([known, unknown]);
+
+    expect(warnings).toEqual([]);
+    expect(state.habit).toEqual({ h1: { title: 'Run' } });
+    expect(state.pulseVocab).toEqual({
+      vocab: { domains: ['db', 'self'], activities: { gym: 'self' }, people: ['wife'], habitAliases: {} },
+    });
+  });
 });

@@ -26,7 +26,7 @@ synthesize (ask-the-library, its own future plan). The day-shape briefing is dea
 | Repos touched | `meridian` only. `meridian-data` gains two entities via normal journal writes. |
 | New entities | `pulse` (#11), `pulseVocab` (#12) — Appendix A. Nothing else. |
 | Volume | dozens of pulses/day ≈ a few MB/year of journal — normal compaction rules apply, no special casing. |
-| Coder model | Haiku-class (`claude-haiku-4-5`), via the existing `claude.ts` plumbing (key from `meta`, direct-browser header, error taxonomy). |
+| Coder model | `claude-sonnet-5`, as the named constant `CODER_MODEL` in `coder.ts` — one line to flip at Gate 2. Existing `claude.ts` plumbing (key from `meta`, direct-browser header, error taxonomy). |
 | Depends on | calendar mirror (done) for event context and claims; existing habits & Tower for links. |
 
 ## Hard fences (all phases)
@@ -140,7 +140,7 @@ sitting on the amended shape is still worth having before Phase 2 starts.
 side-effects as proposals, one parser serving two mouths.
 
 Build:
-- **`src/services/coder.ts`** — `codePulse(text, context) → Coding` via one Haiku call
+- **`src/services/coder.ts`** — `codePulse(text, context) → Coding` via one `CODER_MODEL` call
   (existing `claude.ts` request plumbing; strict-JSON system instruction; `max_tokens`
   ≤ 500; nulls over guesses). Contract in Appendix B.
 - **Enrichment write:** upsert the pulse id with derived fields **only** (fence 1).
@@ -163,7 +163,9 @@ Build:
   on the item. The `parseTowerInput` stub is deleted; its seam is finally filled. The
   Pulse mouth (the plan's original "Today mouth" — the page moved at Gate 1) codes
   unbiased: `signal: task` there proposes `spawnTask`.
-- Cost note in code comment: dozens of Haiku calls/day ≈ pennies/month; no caching.
+- Cost note in code comment: 30 pulses/day ≈ $6/month on Sonnet 5 (≈$2 on Haiku), at
+  ~1.6K input + ~150 output tokens a call. No caching: the stable prefix sits under the
+  ~1K-token cacheable minimum and pulses are scattered past the cache TTL anyway.
 
 Tests: context-allowlist subset proof (fence 5), enrichment upsert excludes `text`
 (fence 1), lazy uncoded→coded queue, each chip type apply/dismiss, vocab seed idempotence,
@@ -444,3 +446,24 @@ and asserts it lands inside the `<footer>`, outside `<main>`, and before the bac
 three things that make overlap impossible. A class-name assertion would pass a revert to
 `fixed bottom-0`; this fails it. Checked by mutation: with `Dock` degraded to render in place, the
 test fails on the footer assertion, and passes again restored.
+
+### 2026-08-28 — amendment: the coder runs on Sonnet 5, not Haiku
+
+Priced before deciding, at the owner's outer max of 30 pulses/day and ~1.6K input +
+~150 output tokens a call: Haiku 4.5 ≈ $2/month, Sonnet 5 ≈ $6/month. A 3× multiple on a
+number this small is not the deciding term.
+
+What decided it is the failure mode. A miscoding is **silent** — it renders as a normal
+line, and Phase 3's Spent bars are arithmetic over exactly those calls, so a wrong domain
+becomes a wrong hour with nothing marking it. The expensive resource here is Gate 2: a
+week of the owner's life spent judging 20 real pulses. $4/month against re-running that
+week is not a trade worth thinking about twice.
+
+The part of Appendix B that wants the stronger model is not the strict JSON — small models
+emit that fine. It is the restraint: *nulls over guesses*, *never invent people, habits,
+events, or tasks not present in context*. Filling a field it should have left null is the
+characteristic small-model error, and it is precisely the error that survives review.
+
+So the model is `claude-sonnet-5`, held in `CODER_MODEL` in `coder.ts` — one line, flipped
+at Gate 2 in either direction if the miscoding rate says so. Per doctrine, a weak coder is
+answered by editing vocab, fixing the prompt, or sizing up. Never by a heuristic patch.

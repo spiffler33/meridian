@@ -17,6 +17,7 @@ import {
   hydrate,
   newId,
   profileEntityId,
+  PULSE_VOCAB_ID,
   readDailyEntries,
   readHabitCompletions,
   readHabits,
@@ -27,6 +28,7 @@ import {
   readPackSessionRows,
   readItemKey,
   readPulseRows,
+  readPulseVocabRow,
   readProfile,
   readProfiles,
   readReadItemRows,
@@ -46,12 +48,19 @@ import type {
   HabitCompletion,
   Profile,
   PulseRow,
+  PulseVocabRow,
   ReadItemRow,
   Task,
   TowerItemRow,
   YearTheme,
 } from '../lib/entities';
 import { allCachedFiles } from '../lib/db';
+import { deviceTimeZone, eventsForDay } from '../lib/calendar';
+import { loadCalendar } from '../lib/calendarSync';
+import { compareOldestFirst } from '../lib/pulse';
+import { codePulse } from './coder';
+import type { Coding, CoderContext, PulseEnrichment, RecentPulse } from './coder';
+import { getToday } from '../utils/dates';
 import type { HabitCategory, MitCategory, TowerStatus, TowerEffort, TowerItem, Pack, PackSession, PackWithCount } from '../types';
 
 // ============================================================================
@@ -662,6 +671,231 @@ export async function createPulse(text: string): Promise<PulseRow> {
 export async function deletePulse(id: string): Promise<void> {
   await hydrate();
   await commit([{ entity: ENTITY.pulse, entityId: id, type: 'delete' }]);
+}
+
+/**
+ * Write the coder's derived fields to a pulse.
+ *
+ * Carries neither `text` nor `at` (fence 1): field-level last-writer-wins
+ * then cannot clobber the verbatim line no matter when this lands — including
+ * after the pulse has been deleted. An enrichment landing after a delete
+ * resurrects the pulse carrying only these fields, so `text` falls back to
+ * `''`; that is pinned behaviour in `pulse.test.ts`, not a bug this guards
+ * against (P2), and this function does not check whether the pulse still
+ * exists before writing.
+ *
+ * No read-back. `createPulse`'s read-and-throw-`NOT_FOUND` is a live hazard
+ * here, not a check: a concurrent `resetSession()` (a pull landing mid-call)
+ * can leave this event durably enqueued without applying it to the current
+ * session (L4), and that is fine as-is — the event is safe, and the next read
+ * sees it.
+ */
+export async function enrichPulse(id: string, coding: Coding): Promise<void> {
+  await hydrate();
+  const fields: PulseEnrichment = {
+    signal: coding.signal,
+    domain: coding.domain,
+    activity: coding.activity,
+    people: coding.people,
+    span: coding.span,
+    links: coding.links,
+  };
+  await commit([{ entity: ENTITY.pulse, entityId: id, type: 'upsert', fields }]);
+}
+
+// ============================================================================
+// Pulse vocabulary
+// ============================================================================
+
+const PULSE_VOCAB_SEED_DOMAINS = ['db', 'hoa', 'family', 'home-ops', 'self', 'social', 'transit', 'admin'];
+
+const PULSE_VOCAB_SEED_ACTIVITIES: Record<string, string> = {
+  gym: 'self',
+  read: 'self',
+  'deep-work': 'db',
+  'school-run': 'family',
+  dinner: 'family',
+  drinks: 'social',
+};
+
+const PULSE_VOCAB_SEED_PEOPLE = ['wife', 'kids'];
+
+/**
+ * The one live habit whose label exactly matches `label`, case-insensitively.
+ * Not a keyword search over pulse text — a one-time lookup, at seed time
+ * only, against the owner's own small and closed set of configured habits.
+ */
+function habitIdByLabel(habits: readonly Habit[], label: string): string | undefined {
+  const target = label.trim().toLowerCase();
+  return habits.find((habit) => habit.label.trim().toLowerCase() === target)?.id;
+}
+
+/**
+ * `habitAliases` per Appendix A: `gym`/`lift`/`strength` all point at the
+ * strength habit, `read` at the reading habit. An alias with no matching
+ * habit is omitted rather than guessed — the vocabulary grows via approved
+ * `vocabProposal` chips later, so an incomplete seed is recoverable and a
+ * wrong guess would not be.
+ */
+function seedHabitAliases(habits: readonly Habit[]): Record<string, string> {
+  const aliases: Record<string, string> = {};
+  const strengthId = habitIdByLabel(habits, 'strength');
+  if (strengthId !== undefined) {
+    aliases.gym = strengthId;
+    aliases.lift = strengthId;
+    aliases.strength = strengthId;
+  }
+  const readingId = habitIdByLabel(habits, 'reading');
+  if (readingId !== undefined) aliases.read = readingId;
+  return aliases;
+}
+
+/**
+ * Seed `pulseVocab`, once, iff unset — one journal event. Idempotent: a
+ * device that finds a row already there writes nothing, and two devices
+ * racing to seed both write the same literal content to the same fixed id
+ * (`PULSE_VOCAB_ID`), so the fold converges to one result either way rather
+ * than forking.
+ */
+export async function ensurePulseVocabSeeded(): Promise<PulseVocabRow> {
+  await hydrate();
+  const existing = readPulseVocabRow();
+  if (existing !== null) return existing;
+
+  const habits = await getHabits();
+  const seedFields = {
+    domains: PULSE_VOCAB_SEED_DOMAINS,
+    activities: PULSE_VOCAB_SEED_ACTIVITIES,
+    people: PULSE_VOCAB_SEED_PEOPLE,
+    habitAliases: seedHabitAliases(habits),
+  };
+
+  await commit([{ entity: ENTITY.pulseVocab, entityId: PULSE_VOCAB_ID, type: 'upsert', fields: seedFields }]);
+
+  // A concurrent resetSession() can leave the event enqueued but not applied
+  // to this session (L4) — the same tolerance enrichPulse extends. What is
+  // durably queued is exactly seedFields, so handing that back is not a guess.
+  return readPulseVocabRow() ?? { id: PULSE_VOCAB_ID, ...seedFields };
+}
+
+// ============================================================================
+// Pulse coding (lazy queue)
+// ============================================================================
+
+/**
+ * Ids being coded this session. Memory only, never persisted: if the tab
+ * dies mid-call nothing survives that could wedge a pulse as permanently
+ * in-flight, or make it look coded — a crash must read exactly like "not
+ * started" (L3). This guards only against this session calling the coder
+ * twice at once for the same id (the on-save and on-open triggers landing
+ * together); it is not a lock and needs to be nothing more.
+ */
+const codingInFlight = new Set<string>();
+
+/**
+ * The last five pulses strictly before `row`, oldest first, each carrying its
+ * own coding when it already has one. Scoped to exactly the allowlist's
+ * `recentPulses` shape (fence 5) — never the full row, never `text`/`at`
+ * beyond what a pulse already exposes.
+ */
+function recentPulsesFor(row: PulseRow, allRows: readonly PulseRow[]): RecentPulse[] {
+  return allRows
+    .filter((other) => other.id !== row.id && other.at < row.at)
+    .sort(compareOldestFirst)
+    .slice(-5)
+    .map((other) => ({
+      text: other.text,
+      coding:
+        other.signal === undefined
+          ? undefined
+          : ({
+              signal: other.signal,
+              domain: other.domain ?? null,
+              activity: other.activity ?? null,
+              people: other.people ?? [],
+              span: other.span ?? { start: other.at, end: null, approx: false },
+              links: other.links ?? { habitId: null, towerId: null, eventId: null },
+            } satisfies PulseEnrichment),
+    }));
+}
+
+/**
+ * Assembles exactly the slices Appendix B's allowlist names, and nothing else
+ * (fence 5). `mouth` is always `'today'` here — the Pulse page is the plan's
+ * "Today mouth"; a `'tower'` mouth is Phase 2's later stage, not this one.
+ */
+async function buildCoderContext(row: PulseRow, allRows: readonly PulseRow[]): Promise<CoderContext> {
+  const tz = deviceTimeZone();
+  const today = getToday();
+
+  const [vocab, habits, completions, towerItems, mirror] = await Promise.all([
+    ensurePulseVocabSeeded(),
+    getHabits(),
+    getCompletionsForDate(today),
+    getTowerItems(false),
+    loadCalendar(),
+  ]);
+
+  return {
+    now: new Date().toISOString(),
+    tz,
+    vocab: {
+      domains: vocab.domains,
+      activities: vocab.activities,
+      people: vocab.people,
+      habitAliases: vocab.habitAliases,
+    },
+    todayEvents: eventsForDay(mirror, today, tz).map((event) => ({
+      id: event.id,
+      title: event.title,
+      calendar: event.calendar,
+      start: event.start,
+      end: event.end,
+    })),
+    todayHabits: habits.map((habit) => ({
+      id: habit.id,
+      name: habit.label,
+      done: completions[habit.id] ?? false,
+    })),
+    openTowerItems: towerItems.map((item) => ({ id: item.id, text: item.text, status: item.status })),
+    recentPulses: recentPulsesFor(row, allRows),
+    mouth: 'today',
+  };
+}
+
+/**
+ * Code whatever is currently uncoded, once each.
+ *
+ * "Uncoded" is derived — `signal === undefined` — never a stored flag (see
+ * `PulseRow`'s own doc comment): a pulse already coded is invisible to this
+ * loop by construction, which is what keeps a re-open from re-coding it, and
+ * re-billing it, on every open (P1).
+ *
+ * Sequential, not fanned out: a backlog of uncoded pulses should not become a
+ * burst of concurrent Anthropic calls.
+ *
+ * Never throws. A failure at any step — the coder, the write — leaves the
+ * pulse exactly as it was: uncoded, `text` and `at` untouched (L1, L2).
+ */
+export async function codeUncodedPulses(): Promise<void> {
+  const rows = await getPulses();
+  for (const row of rows) {
+    if (row.signal !== undefined) continue;
+    if (codingInFlight.has(row.id)) continue;
+
+    codingInFlight.add(row.id);
+    try {
+      const context = await buildCoderContext(row, rows);
+      const coding = await codePulse(row.text, context);
+      // A null coding is not a failure to recover from — it is fence 2's
+      // correct, finished outcome, and the pulse simply stays uncoded.
+      if (coding) await enrichPulse(row.id, coding);
+    } catch {
+      // Network, parse, anything at all: nothing here reacts to it.
+    } finally {
+      codingInFlight.delete(row.id);
+    }
+  }
 }
 
 // ============================================================================
