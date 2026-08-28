@@ -433,13 +433,14 @@ otherwise it portals.
 **Untouched on purpose:** the entity, the fold, the journal, `usePulses`, and every fence. This
 was a placement problem, and nothing below the view layer moved.
 
-Green: `vitest` 523 passed / 28 files · `tsc -b` clean · `npm run build` clean ·
+Green: `vitest` 524 passed / 28 files · `tsc -b` clean · `npm run build` clean ·
 `grep -rn "localStorage" src/` → 0 · lint 6 errors, all pre-existing (unchanged count).
 New: `src/views/PulseView.tsx`, `src/components/Dock.tsx`, `src/hooks/useDock.ts`,
 `src/views/PulseView.test.tsx`. Gone: `src/views/TowerView.test.tsx` (its coverage moved with the
 box), `compareNewestFirst`, the `onCapture` shortcut option, and TowerView's `focusCapture` props.
 
-**Not tested, and named rather than quietly skipped:** nothing pins that a docked bar actually
-lands in the footer. `Dock` renders in place when no Layout is above it, which is exactly what
-lets `PulseView` be tested alone — and it means the portal path itself is only proven on the
-device. A Layout test could pin it; it was not written, because the phase did not ask for one.
+**The dock is pinned by position, not by class.** `Layout.test.tsx` renders a bar through `Dock`
+and asserts it lands inside the `<footer>`, outside `<main>`, and before the backup line — the
+three things that make overlap impossible. A class-name assertion would pass a revert to
+`fixed bottom-0`; this fails it. Checked by mutation: with `Dock` degraded to render in place, the
+test fails on the footer assertion, and passes again restored.
