@@ -467,3 +467,42 @@ characteristic small-model error, and it is precisely the error that survives re
 So the model is `claude-sonnet-5`, held in `CODER_MODEL` in `coder.ts` — one line, flipped
 at Gate 2 in either direction if the miscoding rate says so. Per doctrine, a weak coder is
 answered by editing vocab, fixing the prompt, or sizing up. Never by a heuristic patch.
+
+### 2026-08-29 — amendment: `now` is the pulse's own instant; the pulse row stores its proposals
+
+Two readings settled while fixing what an adversarial review of Stage A found. Both stay
+inside the fences; neither is a fence amendment.
+
+**`now` means the pulse's moment, not the sweep's.** Appendix B's allowlist is law and has
+no field for a pulse's `at` — but it has `now`, and nothing in the plan says `now` is the
+wall clock at send time. The queue exists to code a pulse hours or days late, so the first
+implementation, which sent `new Date()` plus today's events and habits, resolved "gym at 6"
+captured Thursday against Saturday: silently wrong, and never revisited, because a coded
+pulse is invisible to the sweep forever (P1). For someone classifying a diary entry, "now"
+is the entry's moment. So `now` is the pulse's `at`, and `todayEvents`/`todayHabits` are
+the pulse's own local day; `tz` stays the device's. The allowlist is unchanged — this
+resolves a contradiction inside it. Recorded as an interpretation on `CoderContext.now`
+so Gate 2 can see it and overrule it.
+
+That also gives Appendix A's "`span.start` defaults to `ts`" something to default *to* at
+parse time. It was defaulting to `''`, which round-trips into a journal that may never be
+compacted and which Phase 3 would read as `Invalid Date`. With the default correct, a
+one-field answer (`{"signal": "note"}`) is a *valid minimal* coding — "nulls over guesses"
+means an all-null answer is legitimate, so there is deliberately no minimum-field gate.
+
+**`effects` and `vocabProposal` are stored on the pulse row.** Appendix A's field table
+listed six enrichment fields and the first implementation parsed the other two, paid for
+them, and dropped them. Because the sweep never revisits a coded pulse, every pulse coded
+before the chip UI ships would then have no proposals at all, unregenerably — and Appendix
+C's "dismiss drops the effect, keeps the coding" needs them to outlive a reload. So the
+pulse row carries eight enrichment fields, not six. This extends Appendix A's table; fence
+7 caps *entities* at two, not fields, so it is inside the fence. `recentPulses[].coding`
+still shows the coder only the six that describe the utterance — proposals awaiting a tap
+are not context for classifying the next line, and fence 5's subset proof is unchanged.
+
+Also from that review, without plan consequences: the sweep is capped at
+`MAX_PULSES_PER_SWEEP` (20) per open and ends when the page that started it unmounts; a
+capture codes its own line rather than re-walking the history; the coder call is aborted at
+30 s and a `stop_reason: 'max_tokens'` response is a failure like any other; `habitAliases`
+is repaired from empty when matching habits appear later, so an owner whose habits are
+named differently does not lose Phase 3's histogram permanently.

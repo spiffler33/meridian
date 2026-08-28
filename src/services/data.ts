@@ -55,12 +55,12 @@ import type {
   YearTheme,
 } from '../lib/entities';
 import { allCachedFiles } from '../lib/db';
-import { deviceTimeZone, eventsForDay } from '../lib/calendar';
+import { dayKey, deviceTimeZone, eventsForDay } from '../lib/calendar';
 import { loadCalendar } from '../lib/calendarSync';
 import { compareOldestFirst } from '../lib/pulse';
+import { scheduleFlush } from '../lib/sync';
 import { codePulse } from './coder';
 import type { Coding, CoderContext, PulseEnrichment, RecentPulse } from './coder';
-import { getToday } from '../utils/dates';
 import type { HabitCategory, MitCategory, TowerStatus, TowerEffort, TowerItem, Pack, PackSession, PackWithCount } from '../types';
 
 // ============================================================================
@@ -692,13 +692,20 @@ export async function deletePulse(id: string): Promise<void> {
  */
 export async function enrichPulse(id: string, coding: Coding): Promise<void> {
   await hydrate();
-  const fields: PulseEnrichment = {
+  // Every field of the coding except the two fence 1 forbids. `effects` and
+  // `vocabProposal` are stored rather than held in memory: a coded pulse is
+  // invisible to the sweep forever, so a proposal that lived only in the
+  // sweep's local variable could never be regenerated, and Appendix C's
+  // "dismiss drops the effect, keeps the coding" needs it to survive a reload.
+  const fields: Coding = {
     signal: coding.signal,
     domain: coding.domain,
     activity: coding.activity,
     people: coding.people,
     span: coding.span,
     links: coding.links,
+    effects: coding.effects,
+    vocabProposal: coding.vocabProposal,
   };
   await commit([{ entity: ENTITY.pulse, entityId: id, type: 'upsert', fields }]);
 }
@@ -751,6 +758,30 @@ function seedHabitAliases(habits: readonly Habit[]): Record<string, string> {
 }
 
 /**
+ * Fill in `habitAliases` when the seed could not.
+ *
+ * The seed resolves aliases against the habits that exist at that moment, and
+ * omits rather than guesses. An owner whose habits are not labelled exactly
+ * `strength`/`reading`, or who creates them after the first pulse is coded,
+ * would otherwise carry `habitAliases: {}` permanently — the seed never runs
+ * again, and phase 3's habit-timing histogram reads nothing but that map.
+ *
+ * Only ever from empty, so it is idempotent and cannot overwrite an alias the
+ * owner approved through a chip: once anything is in there, this is a no-op
+ * forever. Still omits rather than guesses — a habit whose label matches
+ * nothing simply leaves the map empty and the repair re-attempts next time.
+ */
+async function repairHabitAliases(existing: PulseVocabRow): Promise<PulseVocabRow> {
+  if (Object.keys(existing.habitAliases).length > 0) return existing;
+
+  const habitAliases = seedHabitAliases(await getHabits());
+  if (Object.keys(habitAliases).length === 0) return existing;
+
+  await commit([{ entity: ENTITY.pulseVocab, entityId: PULSE_VOCAB_ID, type: 'upsert', fields: { habitAliases } }]);
+  return readPulseVocabRow() ?? { ...existing, habitAliases };
+}
+
+/**
  * Seed `pulseVocab`, once, iff unset — one journal event. Idempotent: a
  * device that finds a row already there writes nothing, and two devices
  * racing to seed both write the same literal content to the same fixed id
@@ -760,7 +791,7 @@ function seedHabitAliases(habits: readonly Habit[]): Record<string, string> {
 export async function ensurePulseVocabSeeded(): Promise<PulseVocabRow> {
   await hydrate();
   const existing = readPulseVocabRow();
-  if (existing !== null) return existing;
+  if (existing !== null) return repairHabitAliases(existing);
 
   const habits = await getHabits();
   const seedFields = {
@@ -826,18 +857,23 @@ function recentPulsesFor(row: PulseRow, allRows: readonly PulseRow[]): RecentPul
  */
 async function buildCoderContext(row: PulseRow, allRows: readonly PulseRow[]): Promise<CoderContext> {
   const tz = deviceTimeZone();
-  const today = getToday();
+  // The pulse's own local day, not the sweep's. The queue is lazy by design,
+  // so this runs hours or days after capture; a Thursday utterance shown
+  // Saturday's calendar and Saturday's habit ticks would be coded against a
+  // day it has nothing to do with. See `CoderContext.now` for the reading of
+  // Appendix B that this follows.
+  const day = dayKey(Date.parse(row.at), tz);
 
   const [vocab, habits, completions, towerItems, mirror] = await Promise.all([
     ensurePulseVocabSeeded(),
     getHabits(),
-    getCompletionsForDate(today),
+    getCompletionsForDate(day),
     getTowerItems(false),
     loadCalendar(),
   ]);
 
   return {
-    now: new Date().toISOString(),
+    now: row.at,
     tz,
     vocab: {
       domains: vocab.domains,
@@ -845,7 +881,7 @@ async function buildCoderContext(row: PulseRow, allRows: readonly PulseRow[]): P
       people: vocab.people,
       habitAliases: vocab.habitAliases,
     },
-    todayEvents: eventsForDay(mirror, today, tz).map((event) => ({
+    todayEvents: eventsForDay(mirror, day, tz).map((event) => ({
       id: event.id,
       title: event.title,
       calendar: event.calendar,
@@ -864,7 +900,64 @@ async function buildCoderContext(row: PulseRow, allRows: readonly PulseRow[]): P
 }
 
 /**
- * Code whatever is currently uncoded, once each.
+ * How many pulses one sweep will code.
+ *
+ * A month away leaves hundreds uncoded, and every one is a paid call; a cap
+ * turns "the app is opened after a long silence" from an unbounded bill into
+ * about a dime. Twenty covers a talkative day (the plan's own 30-pulses/day
+ * estimate) in two opens, and the owner is told nothing about it either way —
+ * uncoded is calm (fence 2), and the rest get coded on the next open.
+ */
+export const MAX_PULSES_PER_SWEEP = 20;
+
+/**
+ * Code one pulse, if it is not already being coded.
+ *
+ * Never throws. A failure at any step — the coder, the write — leaves the
+ * pulse exactly as it was: uncoded, `text` and `at` untouched (L1, L2). The
+ * `has`/`add` pair is the whole in-flight guard, and it is deliberately
+ * synchronous: nothing may await between the two, or the on-save and on-open
+ * triggers can both slip past it for the same pulse and bill it twice.
+ */
+async function codeRow(row: PulseRow, allRows: readonly PulseRow[]): Promise<void> {
+  if (codingInFlight.has(row.id)) return;
+  codingInFlight.add(row.id);
+  try {
+    const context = await buildCoderContext(row, allRows);
+    const coding = await codePulse(row.text, context);
+    // A null coding is not a failure to recover from — it is fence 2's
+    // correct, finished outcome, and the pulse simply stays uncoded.
+    if (coding) {
+      await enrichPulse(row.id, coding);
+      // The enrichment is durable in the outbox either way; this only shortens
+      // the window in which it is invisible to the other device, which would
+      // otherwise re-code the same pulse and bill it a second time.
+      scheduleFlush();
+    }
+  } catch {
+    // Network, parse, anything at all: nothing here reacts to it.
+  } finally {
+    codingInFlight.delete(row.id);
+  }
+}
+
+/**
+ * Code the pulse just captured, and only it.
+ *
+ * "Coding runs on-save when online" — on-save means this one line, not a
+ * re-walk of the whole history on every Enter. The backlog belongs to the
+ * sweep, which runs on open.
+ */
+export async function codeCapturedPulse(id: string): Promise<void> {
+  const rows = await getPulses();
+  const row = rows.find((candidate) => candidate.id === id);
+  if (!row || row.signal !== undefined) return;
+  if (!Number.isFinite(Date.parse(row.at))) return;
+  await codeRow(row, rows);
+}
+
+/**
+ * Code whatever is currently uncoded, up to `MAX_PULSES_PER_SWEEP`.
  *
  * "Uncoded" is derived — `signal === undefined` — never a stored flag (see
  * `PulseRow`'s own doc comment): a pulse already coded is invisible to this
@@ -874,27 +967,29 @@ async function buildCoderContext(row: PulseRow, allRows: readonly PulseRow[]): P
  * Sequential, not fanned out: a backlog of uncoded pulses should not become a
  * burst of concurrent Anthropic calls.
  *
- * Never throws. A failure at any step — the coder, the write — leaves the
- * pulse exactly as it was: uncoded, `text` and `at` untouched (L1, L2).
+ * `signal` ends the sweep when the page it was opened for is gone. It is
+ * checked between pulses and never handed to `fetch`: a call already in flight
+ * has already been paid for, so it is allowed to finish and store its answer.
+ *
+ * A pulse whose `at` is not a readable instant is skipped, not coded. It
+ * belongs to no day — `pulsesForDay` already drops it from the stream for the
+ * same reason — and there is no instant to resolve "at 6" against. Nothing in
+ * the app writes such a row; a hand-edited journal can.
+ *
+ * Never throws.
  */
-export async function codeUncodedPulses(): Promise<void> {
+export async function codeUncodedPulses(signal?: AbortSignal): Promise<void> {
   const rows = await getPulses();
+  let attempts = 0;
   for (const row of rows) {
+    if (signal?.aborted) return;
     if (row.signal !== undefined) continue;
     if (codingInFlight.has(row.id)) continue;
+    if (!Number.isFinite(Date.parse(row.at))) continue;
+    if (attempts >= MAX_PULSES_PER_SWEEP) return;
 
-    codingInFlight.add(row.id);
-    try {
-      const context = await buildCoderContext(row, rows);
-      const coding = await codePulse(row.text, context);
-      // A null coding is not a failure to recover from — it is fence 2's
-      // correct, finished outcome, and the pulse simply stays uncoded.
-      if (coding) await enrichPulse(row.id, coding);
-    } catch {
-      // Network, parse, anything at all: nothing here reacts to it.
-    } finally {
-      codingInFlight.delete(row.id);
-    }
+    attempts += 1;
+    await codeRow(row, rows);
   }
 }
 

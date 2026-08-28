@@ -21,7 +21,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { EVENTS_PATH } from './calendar';
+import { dayKey, deviceTimeZone, EVENTS_PATH } from './calendar';
 import { closeDb, enqueue, outboxSize, peekOutbox, putCachedContent } from './db';
 import type { OutboxRecord } from './db';
 import { ENTITY, resetSession } from './entities';
@@ -31,6 +31,7 @@ import type { JournalEvent } from './journal';
 import { compareOldestFirst, pulsesForDay } from './pulse';
 import { addDays, getToday } from '../utils/dates';
 import {
+  codeCapturedPulse,
   codeUncodedPulses,
   createHabit,
   createPulse,
@@ -39,6 +40,7 @@ import {
   enrichPulse,
   ensurePulseVocabSeeded,
   getPulses,
+  MAX_PULSES_PER_SWEEP,
   toggleCompletion,
 } from '../services/data';
 import type { Coding } from '../services/coder';
@@ -62,11 +64,15 @@ const SAMPLE_CODING: Coding = {
   people: [],
   span: { start: '2026-08-28T09:00:00.000Z', end: null, approx: false },
   links: { habitId: null, towerId: null, eventId: null },
-  effects: [],
-  vocabProposal: null,
+  effects: [{ type: 'spawnTask', text: 'call the plumber' }],
+  vocabProposal: { kind: 'activity', value: 'plumbing', mapsTo: 'home-ops' },
 };
 
-/** The subset of SAMPLE_CODING fence 1 allows onto a pulse — what enrichPulse actually writes. */
+/**
+ * The six fields a coded pulse shows BACK to the coder in `recentPulses`.
+ * Not what `enrichPulse` writes — the row stores the whole coding, proposals
+ * included — but what Appendix B's allowlist permits into the next payload.
+ */
 const SAMPLE_ENRICHMENT = {
   signal: SAMPLE_CODING.signal,
   domain: SAMPLE_CODING.domain,
@@ -257,7 +263,7 @@ function dbReset() {
 describe('enrichPulse', () => {
   dbReset();
 
-  it("writes only the coder's six derived fields — never text, never at, never effects or vocabProposal (fence 1)", async () => {
+  it("writes the coder's derived fields and nothing else — never text, never at (fence 1)", async () => {
     const created = await createPulse('wrote the plan');
 
     await enrichPulse(created.id, SAMPLE_CODING);
@@ -268,12 +274,55 @@ describe('enrichPulse', () => {
         event.type === 'upsert' && event.entityId === created.id && !('text' in event.fields)
     );
     expect(enrichment).toBeDefined();
-    expect(enrichment?.fields).toEqual(SAMPLE_ENRICHMENT);
+    // The whole coding, `effects` and `vocabProposal` included — those two are
+    // stored, not held in memory, because a coded pulse is invisible to the
+    // sweep forever and the chip UI has to be able to render them later.
+    expect(enrichment?.fields).toEqual(SAMPLE_CODING);
+    expect(enrichment?.fields).not.toHaveProperty('text');
+    expect(enrichment?.fields).not.toHaveProperty('at');
 
     const rows = await getPulses();
     const row = rows.find((r) => r.id === created.id);
     expect(row?.text).toBe('wrote the plan'); // untouched
     expect(row?.signal).toBe('task');
+  });
+
+  it('stores effects and the vocab proposal so they survive the fold, not just the sweep that produced them', async () => {
+    const created = await createPulse('sort out the boiler');
+
+    await enrichPulse(created.id, SAMPLE_CODING);
+
+    // A real re-open: the session is dropped and the state rebuilt from the
+    // journal, which is the only place a proposal could have survived to.
+    resetSession();
+
+    const row = (await getPulses()).find((r) => r.id === created.id);
+    expect(row?.effects).toEqual([{ type: 'spawnTask', text: 'call the plumber' }]);
+    expect(row?.vocabProposal).toEqual({ kind: 'activity', value: 'plumbing', mapsTo: 'home-ops' });
+  });
+
+  it('reads a malformed proposal as absent and drops an effect it could not render, rather than throwing', async () => {
+    await enqueue([
+      upsert({
+        id: 'e-hand-edited',
+        device: 'a',
+        seq: 1,
+        ts: 100,
+        entityId: 'p-hand-edited',
+        fields: {
+          text: 'from a hand-edited journal',
+          at: '2026-08-28T09:00:00.000Z',
+          signal: 'note',
+          effects: [{ type: 'spawnTask' }, { type: 'notAnEffect' }, 'nonsense'],
+          vocabProposal: { kind: 'notAKind', value: 'x', mapsTo: null },
+        },
+      }),
+    ]);
+    resetSession();
+
+    const row = (await getPulses()).find((r) => r.id === 'p-hand-edited');
+    expect(row?.effects).toEqual([{ type: 'spawnTask' }]);
+    expect(row?.vocabProposal).toBeUndefined();
   });
 
   it('does not read back or throw when the row is not found afterward — the write still lands (L4)', async () => {
@@ -477,7 +526,13 @@ describe('codeUncodedPulses', () => {
     await codeUncodedPulses();
     expect(codePulseMock).toHaveBeenCalledTimes(1);
 
-    await codeUncodedPulses(); // "re-open"
+    // A real re-open, not a second call against the same live session: the
+    // memoised fold is dropped and rebuilt from journalCache + outbox, which
+    // is the only thing that proves the enrichment is durable rather than
+    // merely present in memory.
+    resetSession();
+
+    await codeUncodedPulses();
     expect(codePulseMock).toHaveBeenCalledTimes(1); // no additional call — it is no longer uncoded
 
     const rows = await getPulses();
@@ -528,5 +583,232 @@ describe('codeUncodedPulses', () => {
     const row = rows.find((r) => r.id === created.id);
     expect(row?.signal).toBeUndefined();
     expect(row?.text).toBe('unusable model output');
+  });
+});
+
+describe("the coder's context is the pulse's own moment, not the sweep's (D1)", () => {
+  dbReset();
+
+  it('codes a pulse captured days ago against its own instant, its own local day, and that day\'s habits', async () => {
+    codePulseMock.mockResolvedValue(SAMPLE_CODING);
+    const zone = deviceTimeZone();
+
+    // Three days back, at midday UTC, and the day derived rather than assumed:
+    // the assertion must hold in whatever zone the machine running it is in.
+    const capturedAt = `${addDays(getToday(), -3)}T12:00:00.000Z`;
+    const pulseDay = dayKey(Date.parse(capturedAt), zone);
+    const sweepDay = getToday();
+    expect(pulseDay).not.toBe(sweepDay);
+
+    // One event on the pulse's day and one on the sweep's, so the assertion
+    // cannot pass by there being nothing to get wrong.
+    await putCachedContent('calendar-data', {
+      path: EVENTS_PATH,
+      sha: 'x',
+      fetchedAt: Date.now(),
+      text: JSON.stringify({
+        generated_at: new Date().toISOString(),
+        window: { start: pulseDay, end: addDays(sweepDay, 1) },
+        calendars: ['Family'],
+        events: [
+          { id: 'then', calendar: 'Family', title: 'The day it was said', start: pulseDay, end: addDays(pulseDay, 1), allDay: true },
+          { id: 'now', calendar: 'Family', title: 'The day it was coded', start: sweepDay, end: addDays(sweepDay, 1), allDay: true },
+        ],
+      }),
+    });
+
+    // Done on the pulse's day, not on the sweep's.
+    const habit = await createHabit({ label: 'Strength', category: 'health' });
+    await toggleCompletion(habit.id, pulseDay, true);
+
+    await enqueue([
+      upsert({
+        id: 'e-late',
+        device: 'a',
+        seq: 1,
+        ts: Date.parse(capturedAt),
+        entityId: 'p-late',
+        fields: { text: 'gym at 6', at: capturedAt },
+      }),
+    ]);
+    resetSession();
+
+    await codeUncodedPulses();
+
+    const [, context] = codePulseMock.mock.calls[0] as [string, Record<string, unknown>];
+    // "now" is the utterance's moment. Resolving "at 6" against the sweep's
+    // clock would put a Thursday line on Saturday, silently and for good.
+    expect(context.now).toBe(capturedAt);
+    expect((context.todayEvents as Array<{ id: string }>).map((event) => event.id)).toEqual(['then']);
+    expect(context.todayHabits).toEqual([{ id: habit.id, name: 'Strength', done: true }]);
+  });
+});
+
+describe('the sweep is bounded (D4)', () => {
+  dbReset();
+
+  it('codes at most MAX_PULSES_PER_SWEEP in one sweep, and the rest on the next one', async () => {
+    codePulseMock.mockResolvedValue(SAMPLE_CODING);
+
+    const overflow = 2;
+    const total = MAX_PULSES_PER_SWEEP + overflow;
+    await enqueue(
+      Array.from({ length: total }, (_, index) =>
+        upsert({
+          id: `e-${index}`,
+          device: 'a',
+          seq: index + 1,
+          ts: 1000 + index,
+          entityId: `p-${index}`,
+          fields: { text: `backlog ${index}`, at: new Date(1000 + index).toISOString() },
+        })
+      )
+    );
+    resetSession();
+
+    await codeUncodedPulses();
+
+    // A month away leaves hundreds uncoded and every one is a paid call. The
+    // owner is told nothing: uncoded is calm, and the rest wait for the next
+    // open.
+    expect(codePulseMock).toHaveBeenCalledTimes(MAX_PULSES_PER_SWEEP);
+    expect((await getPulses()).filter((row) => row.signal === undefined)).toHaveLength(overflow);
+
+    await codeUncodedPulses();
+    expect(codePulseMock).toHaveBeenCalledTimes(total);
+    expect((await getPulses()).filter((row) => row.signal === undefined)).toHaveLength(0);
+  });
+
+  it('stops when the page it was opened for is gone, rather than billing on behind it', async () => {
+    codePulseMock.mockResolvedValue(SAMPLE_CODING);
+    const controller = new AbortController();
+
+    await enqueue(
+      Array.from({ length: 3 }, (_, index) =>
+        upsert({
+          id: `e-${index}`,
+          device: 'a',
+          seq: index + 1,
+          ts: 1000 + index,
+          entityId: `p-${index}`,
+          fields: { text: `backlog ${index}`, at: new Date(1000 + index).toISOString() },
+        })
+      )
+    );
+    resetSession();
+    controller.abort();
+
+    await codeUncodedPulses(controller.signal);
+
+    expect(codePulseMock).not.toHaveBeenCalled();
+  });
+
+  it('skips a pulse whose `at` is not a readable instant rather than coding it against nothing', async () => {
+    codePulseMock.mockResolvedValue(SAMPLE_CODING);
+    await enqueue([
+      upsert({
+        id: 'e-bad',
+        device: 'a',
+        seq: 1,
+        ts: 100,
+        entityId: 'p-bad',
+        fields: { text: 'hand-edited journal line', at: 'not-a-real-instant' },
+      }),
+    ]);
+    resetSession();
+
+    await codeUncodedPulses();
+
+    // It belongs to no day — `pulsesForDay` already drops it from the stream —
+    // and there is no instant for "at 6" to resolve against.
+    expect(codePulseMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('codeCapturedPulse', () => {
+  dbReset();
+
+  it('codes the line just captured and nothing else — the backlog belongs to the sweep', async () => {
+    await enqueue([
+      upsert({
+        id: 'e-old',
+        device: 'a',
+        seq: 1,
+        ts: 100,
+        entityId: 'p-old',
+        fields: { text: 'uncoded from last week', at: '2026-08-20T09:00:00.000Z' },
+      }),
+    ]);
+    resetSession();
+    codePulseMock.mockResolvedValue(SAMPLE_CODING);
+
+    const created = await createPulse('the newest thing');
+    await codeCapturedPulse(created.id);
+
+    expect(codePulseMock).toHaveBeenCalledTimes(1);
+    expect((codePulseMock.mock.calls[0] as [string, unknown])[0]).toBe('the newest thing');
+    expect((await getPulses()).find((row) => row.id === 'p-old')?.signal).toBeUndefined();
+  });
+
+  it('does nothing for a pulse that is already coded', async () => {
+    codePulseMock.mockResolvedValue(SAMPLE_CODING);
+    const created = await createPulse('coded once');
+    await codeCapturedPulse(created.id);
+    expect(codePulseMock).toHaveBeenCalledTimes(1);
+
+    await codeCapturedPulse(created.id);
+    expect(codePulseMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('habitAliases repair (D7)', () => {
+  dbReset();
+
+  it('fills in aliases the seed could not resolve, once the habits exist', async () => {
+    // Seeded before any habit exists — the owner's very first coded pulse on a
+    // fresh device, or an owner whose habits are not labelled the seed's way.
+    const seeded = await ensurePulseVocabSeeded();
+    expect(seeded.habitAliases).toEqual({});
+
+    const strength = await createHabit({ label: 'Strength', category: 'health' });
+
+    const repaired = await ensurePulseVocabSeeded();
+    expect(repaired.habitAliases).toEqual({ gym: strength.id, lift: strength.id, strength: strength.id });
+
+    // And it survives the fold: without this, phase 3's habit-timing histogram
+    // reads an empty map forever, because the seed never runs a second time.
+    resetSession();
+    expect((await ensurePulseVocabSeeded()).habitAliases).toEqual({
+      gym: strength.id,
+      lift: strength.id,
+      strength: strength.id,
+    });
+  });
+
+  it('writes nothing when there is still no habit to point at — omit rather than guess', async () => {
+    await createHabit({ label: 'Meditate', category: 'health' });
+    await ensurePulseVocabSeeded();
+
+    const before = await outboxSize();
+    const again = await ensurePulseVocabSeeded();
+
+    expect(again.habitAliases).toEqual({});
+    expect(await outboxSize()).toBe(before);
+  });
+
+  it('never overwrites what is already there: it repairs from empty only', async () => {
+    const strength = await createHabit({ label: 'Strength', category: 'health' });
+    await ensurePulseVocabSeeded();
+
+    // A habit the seed would now also map. The aliases are no longer empty, so
+    // nothing is rewritten — growth past the seed is the vocabProposal chip's
+    // job, not this function's.
+    await createHabit({ label: 'Reading', category: 'learning' });
+
+    const before = await outboxSize();
+    const again = await ensurePulseVocabSeeded();
+
+    expect(again.habitAliases).toEqual({ gym: strength.id, lift: strength.id, strength: strength.id });
+    expect(await outboxSize()).toBe(before);
   });
 });

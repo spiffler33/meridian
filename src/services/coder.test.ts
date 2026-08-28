@@ -87,6 +87,11 @@ describe('codePulse — request shape', () => {
 
     const payload = JSON.parse(body.messages[0].content);
     expect(payload).toEqual({ text: 'wrote the plan', ...BASE_CONTEXT });
+
+    // Aborted at the same 30 s ceiling as the GitHub write: one connection
+    // that hangs rather than fails must not wedge every pulse behind it in
+    // the sweep until the tab is reloaded.
+    expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
   it('returns null without a network call when no API key is stored', async () => {
@@ -112,6 +117,25 @@ describe('codePulse — every failure collapses to null, no error taxonomy (fenc
 
   it('a non-2xx response — a 401 gets no special handling, same as any other failure', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => textResponse({}, { ok: false, status: 401 })));
+    expect(await codePulse('x', BASE_CONTEXT)).toBeNull();
+  });
+
+  it('a response the model ran out of room to finish (stop_reason: max_tokens)', async () => {
+    // Truncated JSON fails JSON.parse anyway, but only by luck — and a
+    // truncation that happened to parse would look like a usable coding. The
+    // stop reason is machine-defined, so reading it is not a rule over text.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          stop_reason: 'max_tokens',
+          content: [{ type: 'text', text: JSON.stringify(VALID_CODING_JSON) }],
+        }),
+      }))
+    );
+
     expect(await codePulse('x', BASE_CONTEXT)).toBeNull();
   });
 
@@ -187,10 +211,41 @@ describe('codePulse — a valid response degrades missing fields to safe default
       domain: null,
       activity: null,
       people: [],
-      span: { start: '', end: null, approx: false },
+      // Appendix A: "start defaults to `ts`", which `now` carries. Never '':
+      // an empty start round-trips into a journal nothing may ever compact,
+      // and phase 3 reads span.start straight into a Date.
+      span: { start: BASE_CONTEXT.now, end: null, approx: false },
       links: { habitId: null, towerId: null, eventId: null },
       effects: [],
       vocabProposal: null,
+    });
+  });
+
+  it("defaults an empty-string start to the pulse's own instant too, not just an absent span", async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => textResponse({ signal: 'note', span: { start: '', end: null, approx: false } }))
+    );
+
+    expect((await codePulse('x', BASE_CONTEXT))?.span).toEqual({
+      start: BASE_CONTEXT.now,
+      end: null,
+      approx: false,
+    });
+  });
+
+  it('keeps a start the model did give — the default is a fallback, not an override', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        textResponse({ signal: 'block', span: { start: '2026-08-28T06:00:00.000Z', end: null, approx: true } })
+      )
+    );
+
+    expect((await codePulse('x', BASE_CONTEXT))?.span).toEqual({
+      start: '2026-08-28T06:00:00.000Z',
+      end: null,
+      approx: true,
     });
   });
 

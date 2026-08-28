@@ -19,7 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PulseRow } from '../lib/entities';
 import { pulsesForDay } from '../lib/pulse';
 import { scheduleFlush } from '../lib/sync';
-import { codeUncodedPulses, createPulse, deletePulse, getPulses } from '../services/data';
+import { codeCapturedPulse, codeUncodedPulses, createPulse, deletePulse, getPulses } from '../services/data';
 
 export interface Pulses {
   /** The day's pulses, oldest first — the page reads downward into the box. */
@@ -35,45 +35,79 @@ export function usePulses(day: string, timeZone: string): Pulses {
   // Nothing may be set after the view closes: a capture is a write to
   // IndexedDB and its answer outlives whatever the owner typed it into.
   const live = useRef(true);
+  // Ends the backlog sweep when the page it was opened for is gone, so a
+  // glance at Pulse cannot leave a queue of paid calls running behind the app.
+  const sweeper = useRef<AbortController | null>(null);
   useEffect(() => {
     live.current = true;
+    const controller = new AbortController();
+    sweeper.current = controller;
     return () => {
       live.current = false;
+      controller.abort();
     };
   }, []);
 
   /**
-   * Runs the lazy coding queue, then re-reads so a pulse that just went from
-   * uncoded to coded repaints. Never awaited by anything the owner is
-   * waiting on (O1) — both call sites below fire this and move on.
+   * Re-read the store into the list, without losing a line captured while the
+   * read was in flight.
+   *
+   * The store is the answer for every pulse it knows about — a coding that
+   * landed, a delete that stuck. But a capture that resolved after this read
+   * started is only in `previous`, and replacing the list wholesale would take
+   * it off the screen until something else refreshed. "Your line disappeared"
+   * is the one failure capture must not have.
    */
-  const codeThenRefresh = useCallback(async () => {
-    await codeUncodedPulses();
+  const refresh = useCallback(async () => {
+    const stored = await getPulses();
     if (!live.current) return;
+    setRows((previous) => {
+      const known = new Set(stored.map((row) => row.id));
+      const missed = previous.filter((row) => !known.has(row.id));
+      return missed.length === 0 ? stored : [...stored, ...missed];
+    });
+  }, []);
+
+  /**
+   * The backlog sweep, then a re-read so a pulse that just went from uncoded
+   * to coded repaints. Never awaited by anything the owner is waiting on (O1).
+   *
+   * One at a time: a second sweep entered while the first is still walking the
+   * backlog would re-read the same rows and race its own refresh, and the
+   * data layer's per-pulse guard would make every call it managed to start a
+   * no-op anyway.
+   */
+  const sweeping = useRef(false);
+  const sweepThenRefresh = useCallback(async () => {
+    if (sweeping.current) return;
+    sweeping.current = true;
     try {
-      setRows(await getPulses());
+      await codeUncodedPulses(sweeper.current?.signal);
+      await refresh();
     } catch (error) {
       // The rows already on screen stay as they are; the next successful
       // read (another save, another open) catches up.
       if (import.meta.env.DEV) console.error('Failed to refresh pulses after coding:', error);
+    } finally {
+      sweeping.current = false;
     }
-  }, []);
+  }, [refresh]);
 
   useEffect(() => {
     void (async () => {
       try {
-        const stored = await getPulses();
-        if (live.current) setRows(stored);
+        await refresh();
       } catch (error) {
         // A store that cannot be read is an empty stream, which is what an
         // owner with nothing captured today sees anyway.
         if (import.meta.env.DEV) console.error('Failed to read pulses:', error);
       }
-      // "Uncoded pulses are coded on next open" — this is the open. Off the
-      // render path already: the initial read above has already settled.
-      void codeThenRefresh();
+      // "Uncoded pulses are coded on next open" — this is the open, and the
+      // only place the backlog is walked. Off the render path already: the
+      // initial read above has already settled.
+      void sweepThenRefresh();
     })();
-  }, [codeThenRefresh]);
+  }, [refresh, sweepThenRefresh]);
 
   const capture = useCallback(async (text: string): Promise<boolean> => {
     // An empty Enter is a no-op, not an empty pulse.
@@ -84,9 +118,19 @@ export function usePulses(day: string, timeZone: string): Pulses {
       // never sees. The debounce inside collapses a burst into one push.
       scheduleFlush();
       if (live.current) setRows((previous) => [...previous, saved]);
-      // "Coding runs on-save when online." Fired, not awaited: capture has
-      // already resolved by the time this settles, network dead or not (O1).
-      void codeThenRefresh();
+      // "Coding runs on-save when online" — this line, not the whole history.
+      // Fired, not awaited: capture has already resolved by the time this
+      // settles, network dead or not (O1). It is not tied to the mount the way
+      // the sweep is: this is one call, for the line the owner just typed, and
+      // navigating away the same second should not throw its answer away.
+      void (async () => {
+        try {
+          await codeCapturedPulse(saved.id);
+          await refresh();
+        } catch (error) {
+          if (import.meta.env.DEV) console.error('Failed to refresh pulses after coding:', error);
+        }
+      })();
       return true;
     } catch (error) {
       // The line is in no journal and never will be. Saying so is the caller's
@@ -95,7 +139,7 @@ export function usePulses(day: string, timeZone: string): Pulses {
       if (import.meta.env.DEV) console.error('Failed to capture a pulse:', error);
       return false;
     }
-  }, [codeThenRefresh]);
+  }, [refresh]);
 
   const remove = useCallback((id: string) => {
     // Optimistic, and put back on a throw. The delete either happened or it
@@ -111,14 +155,13 @@ export function usePulses(day: string, timeZone: string): Pulses {
         // the store still holds the pulse, and the store is the answer — a copy
         // kept in a closure would also have to be kept correct.
         try {
-          const stored = await getPulses();
-          if (live.current) setRows(stored);
+          await refresh();
         } catch (reread) {
           if (import.meta.env.DEV) console.error('Failed to re-read pulses:', reread);
         }
       }
     })();
-  }, []);
+  }, [refresh]);
 
   const today = useMemo(() => pulsesForDay(rows, day, timeZone), [rows, day, timeZone]);
 

@@ -203,6 +203,17 @@ export type PulseSpan = { start: string; end: string | null; approx: boolean };
 /** What a pulse's coding wired to elsewhere in the app. Set by enrichment or a chip apply. */
 export type PulseLinks = { habitId: string | null; towerId: string | null; eventId: string | null };
 
+/** Appendix C's four side effects. Every one is a proposal; nothing here applies itself. */
+export type PulseEffectType = 'completeHabit' | 'spawnTask' | 'updateTask' | 'claimEvent';
+
+/** One proposed side effect. Shape beyond `type` is proposal-specific and stays untyped. */
+export type PulseEffect = { type: PulseEffectType } & Record<string, unknown>;
+
+export type PulseVocabProposalKind = 'domain' | 'activity' | 'person' | 'habitAlias';
+
+/** A proposed addition to `pulseVocab`. Confirm-only — Appendix C gives it no auto option. */
+export type PulseVocabProposal = { kind: PulseVocabProposalKind; value: string; mapsTo: string | null };
+
 /**
  * One captured utterance. Verbatim, timestamped, and never edited.
  *
@@ -213,11 +224,19 @@ export type PulseLinks = { habitId: string | null; towerId: string | null; event
  * at capture, alongside `text`, and is what every reader means by "when" —
  * the envelope still orders the fold, as it does for every other entity.
  *
- * `signal` through `links` are enrichment: written once, together, by the
- * coder's own upsert (phase 2) — never by capture, and never carrying `text`
- * or `at` (fence 1). All five are optional and all five arrive together, so
+ * `signal` through `vocabProposal` are enrichment: written once, together, by
+ * the coder's own upsert (phase 2) — never by capture, and never carrying
+ * `text` or `at` (fence 1). All are optional and all arrive together, so
  * `signal === undefined` is the one, total test for "uncoded": no separate
  * in-flight marker exists, and none should — see the coder's own file for why.
+ *
+ * `effects` and `vocabProposal` are stored rather than consumed in memory
+ * (amendment 2026-08-29, extending Appendix A's field table). A coded pulse
+ * is invisible to the coding sweep forever, so a proposal that lived only in
+ * the sweep's local variable could never be regenerated: every pulse captured
+ * before the chip UI ships would have no proposals at all, and Appendix C's
+ * "dismiss drops the effect, keeps the coding" needs them to outlive a reload.
+ * Fence 7 caps entities at two, not fields.
  */
 export type PulseRow = {
   id: string;
@@ -230,6 +249,9 @@ export type PulseRow = {
   people?: string[];
   span?: PulseSpan;
   links?: PulseLinks;
+  /** Proposed, never applied. A dismissed chip is a write that removes its effect. */
+  effects?: PulseEffect[];
+  vocabProposal?: PulseVocabProposal | null;
 };
 
 /**
@@ -394,6 +416,50 @@ function optionalLinks(record: Record_, key: string): PulseLinks | undefined {
   return { habitId: pick('habitId'), towerId: pick('towerId'), eventId: pick('eventId') };
 }
 
+const PULSE_EFFECT_TYPES: readonly PulseEffectType[] = ['completeHabit', 'spawnTask', 'updateTask', 'claimEvent'];
+const PULSE_VOCAB_PROPOSAL_KINDS: readonly PulseVocabProposalKind[] = ['domain', 'activity', 'person', 'habitAlias'];
+
+/**
+ * The coder's proposed `effects`. An entry whose `type` is not one of
+ * Appendix C's four is dropped rather than kept as an unrenderable chip; the
+ * rest of the entry is carried through untouched, since each effect type
+ * carries its own payload and this layer is not the place that reads it.
+ */
+function optionalEffects(record: Record_, key: string): PulseEffect[] | undefined {
+  const value = record[key];
+  if (!Array.isArray(value)) return undefined;
+  const effects: PulseEffect[] = [];
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) continue;
+    const type = (item as Record_).type;
+    if (typeof type === 'string' && (PULSE_EFFECT_TYPES as readonly string[]).includes(type)) {
+      effects.push(item as PulseEffect);
+    }
+  }
+  return effects;
+}
+
+/**
+ * The coder's `vocabProposal`. An explicit `null` — "nothing to propose" — is
+ * a real stored value and reads back as `null`; a malformed one reads as
+ * absent rather than as a proposal with guessed parts.
+ */
+function optionalVocabProposal(record: Record_, key: string): PulseVocabProposal | null | undefined {
+  if (!(key in record)) return undefined;
+  const value = record[key];
+  if (value === null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const obj = value as Record_;
+  const kind = obj.kind;
+  if (typeof kind !== 'string' || !(PULSE_VOCAB_PROPOSAL_KINDS as readonly string[]).includes(kind)) return undefined;
+  if (typeof obj.value !== 'string') return undefined;
+  return {
+    kind: kind as PulseVocabProposalKind,
+    value: obj.value,
+    mapsTo: typeof obj.mapsTo === 'string' ? obj.mapsTo : null,
+  };
+}
+
 // ============================================================================
 // Record -> row
 // ============================================================================
@@ -514,11 +580,11 @@ function toReadItemRow(id: string, record: Record_): ReadItemRow {
 const PULSE_SIGNALS: readonly PulseSignal[] = ['block', 'event', 'state', 'plan', 'task', 'claim', 'note'];
 
 /**
- * `signal` through `links` are only ever set together, by one enrichment
- * upsert, so in practice all five are present or none are. Each is still read
- * independently and defensively — a hand-edited journal, or a future build's
- * richer shape, must not throw here, and a value that fails its own shape
- * check reads as absent rather than as a guess.
+ * `signal` through `vocabProposal` are only ever set together, by one
+ * enrichment upsert, so in practice all are present or none are. Each is
+ * still read independently and defensively — a hand-edited journal, or a
+ * future build's richer shape, must not throw here, and a value that fails
+ * its own shape check reads as absent rather than as a guess.
  */
 function toPulseRow(id: string, record: Record_): PulseRow {
   const row: PulseRow = { id, text: str(record, 'text', ''), at: str(record, 'at', EPOCH_FLOOR) };
@@ -535,6 +601,10 @@ function toPulseRow(id: string, record: Record_): PulseRow {
   if (span !== undefined) row.span = span;
   const links = optionalLinks(record, 'links');
   if (links !== undefined) row.links = links;
+  const effects = optionalEffects(record, 'effects');
+  if (effects !== undefined) row.effects = effects;
+  const vocabProposal = optionalVocabProposal(record, 'vocabProposal');
+  if (vocabProposal !== undefined) row.vocabProposal = vocabProposal;
 
   return row;
 }

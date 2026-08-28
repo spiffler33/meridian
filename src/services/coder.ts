@@ -25,13 +25,29 @@
  */
 
 import { loadApiKey } from './claude';
-import type { PulseLinks, PulseSignal, PulseSpan, PulseVocabRow } from '../lib/entities';
+import type {
+  PulseEffect,
+  PulseEffectType,
+  PulseLinks,
+  PulseSignal,
+  PulseSpan,
+  PulseVocabProposal,
+  PulseVocabProposalKind,
+  PulseVocabRow,
+} from '../lib/entities';
 
 /** One line to flip at Gate 2 if the miscoding rate says so. */
 export const CODER_MODEL = 'claude-sonnet-5';
 
 /** Appendix B's ceiling. Typical output is ~150 tokens; this is the cap, not the target. */
 const MAX_OUTPUT_TOKENS = 500;
+
+/**
+ * Same ceiling as the GitHub write (`github.ts`'s `REQUEST_TIMEOUT_MS`), for
+ * the same reason: one connection that hangs rather than fails must not wedge
+ * every pulse behind it in the sweep until the tab is reloaded.
+ */
+const CODER_TIMEOUT_MS = 30_000;
 
 const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
 
@@ -51,6 +67,19 @@ export type RecentPulse = { text: string; coding?: PulseEnrichment };
  * `codePulse`, not a member here, but it rides in the same wire payload.
  */
 export type CoderContext = {
+  /**
+   * The pulse's own instant, not the sweep's wall clock.
+   *
+   * An interpretation, recorded here so Gate 2 can see it: Appendix B's
+   * allowlist is law and has no field for the pulse's `at`, but it does have
+   * `now`, and nothing in the plan says `now` means "when the request was
+   * sent". The queue exists to code a pulse hours or days late, so a coder
+   * resolving "gym at 6" against the sweep's clock would put a Thursday
+   * utterance on Saturday — silently, and permanently, since a coded pulse is
+   * never revisited. For someone classifying a diary entry, "now" is the
+   * entry's moment. Everything time-shaped in the payload follows it:
+   * `todayEvents` and `todayHabits` are the pulse's local day.
+   */
   now: string;
   tz: string;
   vocab: CoderVocab;
@@ -61,12 +90,15 @@ export type CoderContext = {
   mouth: Mouth;
 };
 
-export type EffectType = 'completeHabit' | 'spawnTask' | 'updateTask' | 'claimEvent';
-/** Appendix C's effects. Shape beyond `type` is proposal-specific and untyped here. */
-export type Effect = { type: EffectType } & Record<string, unknown>;
-
-export type VocabProposalKind = 'domain' | 'activity' | 'person' | 'habitAlias';
-export type VocabProposal = { kind: VocabProposalKind; value: string; mapsTo: string | null };
+/**
+ * Appendix C's effects and the vocabulary proposal. Defined in `entities.ts`
+ * with the rest of the pulse row's shape — they are stored on the pulse, not
+ * merely read off the wire (see `PulseRow`'s own note on that amendment).
+ */
+export type EffectType = PulseEffectType;
+export type Effect = PulseEffect;
+export type VocabProposalKind = PulseVocabProposalKind;
+export type VocabProposal = PulseVocabProposal;
 
 /** Appendix B's output schema, in full. */
 export type Coding = {
@@ -81,10 +113,13 @@ export type Coding = {
 };
 
 /**
- * The subset of a `Coding` that fence 1 allows onto a pulse: never `text`,
- * never `at`, and — per Appendix A's pulse row — never `effects` or
- * `vocabProposal` either. Those two are consumed elsewhere; they are not
- * fields of the pulse entity.
+ * What a coded pulse looks like when it is shown BACK to the coder, in
+ * `recentPulses`: the six fields that describe the utterance itself.
+ *
+ * Deliberately not the whole `Coding`. `effects` and `vocabProposal` are
+ * proposals about what to do next, awaiting the owner's tap — they are stored
+ * on the row (see `PulseRow`) but they are not context for classifying the
+ * next line, and Appendix B's allowlist is a subset test, not a maximum.
  */
 export type PulseEnrichment = Pick<Coding, 'signal' | 'domain' | 'activity' | 'people' | 'span' | 'links'>;
 
@@ -130,6 +165,9 @@ export async function codePulse(text: string, context: CoderContext): Promise<Co
 
   const payload = { text, ...context };
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CODER_TIMEOUT_MS);
+
   let response: Response;
   try {
     response = await fetch(ANTHROPIC_MESSAGES_URL, {
@@ -149,10 +187,13 @@ export async function codePulse(text: string, context: CoderContext): Promise<Co
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: JSON.stringify(payload) }],
       }),
+      signal: controller.signal,
     });
   } catch {
-    // Offline, DNS, CORS, aborted — every network failure collapses here.
+    // Offline, DNS, CORS, timed out — every network failure collapses here.
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 
   if (!response.ok) return null;
@@ -164,12 +205,20 @@ export async function codePulse(text: string, context: CoderContext): Promise<Co
     return null;
   }
 
-  return parseCoding(body);
+  return parseCoding(body, context.now);
 }
 
-/** The response's first text content block, JSON-parsed and validated — or null. */
-function parseCoding(body: unknown): Coding | null {
+/**
+ * The response's first text content block, JSON-parsed and validated — or null.
+ *
+ * A `max_tokens` stop is rejected before the text is even looked at. Truncated
+ * JSON fails `JSON.parse` anyway today, but only by luck: this makes "the
+ * model ran out of room" a stated failure rather than an accident of where the
+ * cut landed, and one that cannot be mistaken for a usable partial coding.
+ */
+function parseCoding(body: unknown, fallbackStart: string): Coding | null {
   if (typeof body !== 'object' || body === null) return null;
+  if ((body as { stop_reason?: unknown }).stop_reason === 'max_tokens') return null;
   const content = (body as { content?: unknown }).content;
   if (!Array.isArray(content)) return null;
 
@@ -185,7 +234,7 @@ function parseCoding(body: unknown): Coding | null {
     } catch {
       return null;
     }
-    return toCoding(raw);
+    return toCoding(raw, fallbackStart);
   }
 
   return null;
@@ -198,7 +247,7 @@ function parseCoding(body: unknown): Coding | null {
  * safe default on a shape mismatch, matching the model's own "nulls over
  * guesses" instruction rather than discarding an otherwise-usable coding.
  */
-function toCoding(raw: unknown): Coding | null {
+function toCoding(raw: unknown, fallbackStart: string): Coding | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
   const value = raw as Record<string, unknown>;
 
@@ -210,7 +259,7 @@ function toCoding(raw: unknown): Coding | null {
     domain: nullableString(value.domain),
     activity: nullableString(value.activity),
     people: stringArray(value.people),
-    span: toSpan(value.span),
+    span: toSpan(value.span, fallbackStart),
     links: toLinks(value.links),
     effects: toEffects(value.effects),
     vocabProposal: toVocabProposal(value.vocabProposal),
@@ -225,11 +274,21 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
-function toSpan(value: unknown): PulseSpan {
-  if (typeof value !== 'object' || value === null) return { start: '', end: null, approx: false };
+/**
+ * Appendix A: "start defaults to `ts`". `fallbackStart` is that default — the
+ * pulse's own instant, which `context.now` carries (see `CoderContext.now`).
+ *
+ * It is never `''`. An empty start round-trips into a journal that can never
+ * be compacted, and phase 3's ledger reads `span.start` straight into a
+ * `Date`, where `''` is `Invalid Date` rather than a missing value it could
+ * skip. The same default `recentPulsesFor` already applies when it hands an
+ * older coding back to the model.
+ */
+function toSpan(value: unknown, fallbackStart: string): PulseSpan {
+  if (typeof value !== 'object' || value === null) return { start: fallbackStart, end: null, approx: false };
   const obj = value as Record<string, unknown>;
   return {
-    start: typeof obj.start === 'string' ? obj.start : '',
+    start: typeof obj.start === 'string' && obj.start.length > 0 ? obj.start : fallbackStart,
     end: typeof obj.end === 'string' ? obj.end : null,
     approx: typeof obj.approx === 'boolean' ? obj.approx : false,
   };

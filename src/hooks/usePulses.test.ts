@@ -4,8 +4,9 @@
  * The pulse entity, the fold, and `codeUncodedPulses` itself are pinned in
  * `lib/pulse.test.ts` against the real coder module (with only its network
  * call mocked). This file is about the HOOK's own wiring: that capture never
- * awaits the coder no matter how it behaves (O1), and that the lazy queue
- * actually fires on mount as well as on save.
+ * awaits the coder no matter how it behaves (O1), that the backlog sweep
+ * fires on open while a capture codes only its own line, and that neither
+ * path can take a captured line back off the screen.
  */
 
 import { act, renderHook, waitFor } from '@testing-library/react';
@@ -18,6 +19,29 @@ const codePulseMock = vi.hoisted(() => vi.fn());
 vi.mock('../services/coder', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../services/coder')>();
   return { ...actual, codePulse: codePulseMock };
+});
+
+/**
+ * A gate on the hook's first read of the store, so a test can put a capture
+ * inside the window between a refresh reading the store and that refresh
+ * reaching the list. Everything else in `data` stays real.
+ */
+const readGate = vi.hoisted(() => ({ hold: null as Promise<void> | null, entered: null as (() => void) | null }));
+vi.mock('../services/data', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/data')>();
+  return {
+    ...actual,
+    getPulses: async () => {
+      const rows = await actual.getPulses();
+      const hold = readGate.hold;
+      if (hold) {
+        readGate.hold = null;
+        readGate.entered?.();
+        await hold;
+      }
+      return rows;
+    },
+  };
 });
 
 import { closeDb, enqueue } from '../lib/db';
@@ -44,6 +68,8 @@ beforeEach(() => {
   resetSession();
   scheduleFlushMock.mockClear();
   codePulseMock.mockReset();
+  readGate.hold = null;
+  readGate.entered = null;
 });
 
 afterEach(async () => {
@@ -116,10 +142,12 @@ describe('the lazy coding queue', () => {
       await result.current.capture('needs coding');
     });
 
-    // The dot flips from hollow to filled once the sweep this triggers lands.
+    // The dot flips from hollow to filled once the coding this triggers lands
+    // — one call for this line, not a re-walk of the whole history.
     await waitFor(() => {
       expect(result.current.today.find((row) => row.text === 'needs coding')?.signal).toBe('note');
     });
+    expect(codePulseMock).toHaveBeenCalledTimes(1);
   });
 
   it('codes on open: a pulse left uncoded from a previous session gets coded on mount, with no capture at all', async () => {
@@ -160,11 +188,100 @@ describe('the lazy coding queue', () => {
 
     expect(codePulseMock).toHaveBeenCalledTimes(1);
 
-    // "Re-open": a fresh mount of the same hook, same underlying store.
+    // A real re-open, not just a fresh mount: `resetSession()` drops the
+    // memoised fold so the second mount rebuilds it from journalCache +
+    // outbox. Without it this proves only that a live in-memory row is not
+    // re-coded, which is not what P1 claims.
+    resetSession();
+
     const second = renderHook(() => usePulses(DAY, ZONE));
     await waitFor(() => expect(second.result.current.today.length).toBe(1));
 
     expect(codePulseMock).toHaveBeenCalledTimes(1); // no additional call
     second.unmount();
+  });
+});
+
+describe('a capture is never lost to a refresh that started before it (D8)', () => {
+  it('keeps a line captured while the store was being read, instead of replacing the list with the older read', async () => {
+    // One pulse already in the store, left uncoded, and a coder that never
+    // answers: the mount's sweep parks on it, so nothing after the held read
+    // can quietly repair the list and hide the clobber.
+    await enqueue([
+      {
+        id: 'e1',
+        device: 'a',
+        seq: 1,
+        ts: Date.parse('2026-08-28T08:00:00.000Z'),
+        type: 'upsert',
+        entity: ENTITY.pulse,
+        entityId: 'p1',
+        fields: { text: 'already in the store', at: '2026-08-28T08:00:00.000Z' },
+      } satisfies JournalEvent,
+    ]);
+    const releaseCoder: Array<() => void> = [];
+    codePulseMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseCoder.push(() => resolve(null));
+        })
+    );
+
+    // The mount's read is held open once it has seen the store: it will reach
+    // the list only after the capture below has landed in it.
+    let release: (() => void) | undefined;
+    const entered = new Promise<void>((resolve) => {
+      readGate.entered = resolve;
+    });
+    readGate.hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const { result } = renderHook(() => usePulses(DAY, ZONE));
+    await act(async () => {
+      await entered;
+    });
+
+    await act(async () => {
+      await result.current.capture('the line that must not vanish');
+    });
+    expect(result.current.today.map((row) => row.text)).toEqual(['the line that must not vanish']);
+
+    await act(async () => {
+      release?.();
+      await entered;
+    });
+
+    // "Your line disappeared" is the one failure capture must not have: the
+    // held read predates it, and the store's answer for everything else must
+    // not take it off the screen.
+    await waitFor(() => {
+      expect(result.current.today.map((row) => row.text)).toEqual([
+        'already in the store',
+        'the line that must not vanish',
+      ]);
+    });
+
+    await waitFor(() => expect(codePulseMock).toHaveBeenCalled());
+    releaseCoder.forEach((resolve) => resolve());
+  });
+});
+
+describe('the coding write is pushed, not left sitting in the outbox (D6)', () => {
+  it('schedules a flush after the enrichment lands, not only after the capture', async () => {
+    codePulseMock.mockResolvedValue(SAMPLE_CODING);
+
+    const { result } = renderHook(() => usePulses(DAY, ZONE));
+    await waitFor(() => expect(result.current.today).toEqual([]));
+    scheduleFlushMock.mockClear();
+
+    await act(async () => {
+      await result.current.capture('needs pushing');
+    });
+
+    // One for the capture itself, one for the coding. Without the second, the
+    // enrichment waits for an unrelated edit or a foreground before the other
+    // device can see it — and until then that device re-codes the same pulse.
+    await waitFor(() => expect(scheduleFlushMock).toHaveBeenCalledTimes(2));
   });
 });
