@@ -79,23 +79,14 @@ export function useTowerPulses(): TowerPulses {
 
   const capture = useCallback(async (text: string): Promise<boolean> => {
     if (text.trim().length === 0) return false;
+
+    // Only the durable write is inside the try, and only its failure answers
+    // false. Anything after it throwing would report a write that HAS landed
+    // as lost, and the caller hands the text back: a second Enter then makes a
+    // duplicate item and a duplicate pulse, for one thing the owner said once.
+    let pulseId: string;
     try {
-      const { pulseId } = await captureTowerItem(text);
-      // Same push path as every other write; the debounce collapses a burst.
-      scheduleFlush();
-      // Fired, not awaited (fence 3): the item is already on screen and the
-      // coder is the slowest thing in the app. Not tied to the mount either —
-      // this is one call for the line just typed, and navigating away the same
-      // second should not throw its answer away.
-      void (async () => {
-        try {
-          await codeCapturedPulse(pulseId);
-          await refresh();
-        } catch (error) {
-          if (import.meta.env.DEV) console.error('Failed to code a captured task:', error);
-        }
-      })();
-      return true;
+      ({ pulseId } = await captureTowerItem(text));
     } catch (error) {
       // Neither half landed — that is what the single commit buys. The text is
       // the caller's to hand back; losing it is the one failure capture must
@@ -103,6 +94,22 @@ export function useTowerPulses(): TowerPulses {
       if (import.meta.env.DEV) console.error('Failed to capture a task:', error);
       return false;
     }
+
+    // Same push path as every other write; the debounce collapses a burst.
+    scheduleFlush();
+    // Fired, not awaited (fence 3): the item is already on screen and the
+    // coder is the slowest thing in the app. Not tied to the mount either —
+    // this is one call for the line just typed, and navigating away the same
+    // second should not throw its answer away.
+    void (async () => {
+      try {
+        await codeCapturedPulse(pulseId);
+        await refresh();
+      } catch (error) {
+        if (import.meta.env.DEV) console.error('Failed to code a captured task:', error);
+      }
+    })();
+    return true;
   }, [refresh]);
 
   /**
@@ -130,12 +137,18 @@ export function useTowerPulses(): TowerPulses {
   // Straight through the data layer's own serialized path — the same two
   // arguments the chip on the pulse line passes. One stored proposal, one act,
   // whichever page it was tapped on.
+  //
+  // The effect itself, never a position in the pulse's list. This chip is on
+  // an ITEM, which is exactly where a position rots: applying `status:
+  // 'waiting'` moves the item into another section in the same render, and
+  // until the re-read below repaints — or forever, if it threw — a second tap
+  // would carry a stale position and apply whatever slid into it.
   const apply = useCallback(
-    (proposal: TowerProposal) => act(() => applyPulseEffect(proposal.pulseId, proposal.index)),
+    (proposal: TowerProposal) => act(() => applyPulseEffect(proposal.pulseId, proposal.effect)),
     [act]
   );
   const dismiss = useCallback(
-    (proposal: TowerProposal) => act(() => dismissPulseEffect(proposal.pulseId, proposal.index)),
+    (proposal: TowerProposal) => act(() => dismissPulseEffect(proposal.pulseId, proposal.effect)),
     [act]
   );
 

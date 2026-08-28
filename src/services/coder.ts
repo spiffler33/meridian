@@ -188,11 +188,19 @@ claimEvent: {"type": "claimEvent", "eventId": "<an id from todayEvents>"}`;
  * "the coder later proposes field enrichments on the item — status /
  * waitingOn / expectsBy". Which item it is, is the model's own judgment over
  * `openTowerItems`; the app never matches a proposal to a task by text.
+ *
+ * Conditionally, though. `openTowerItems` excludes `done`, and an item can be
+ * deleted, while the queue is lazy: capture into Tower offline, mark it done
+ * next morning, open Pulse, and the sweep codes this line against a context
+ * the item is absent from. A clause asserting the item IS there would then be
+ * telling the model something false, and inviting exactly what `RULES` forbids
+ * two lines down — inventing a task that is not present in context.
  */
-const TOWER_MOUTH = `With mouth "tower" the utterance was typed into the task list and has ALREADY been \
-saved, verbatim, as one of the openTowerItems. Never propose spawnTask for it. Propose updateTask on \
-that item when the utterance says something about its status, what it is waiting on, or when it is \
-expected — and nothing at all when it does not.`;
+const TOWER_MOUTH = `With mouth "tower" the utterance was typed into the task list and was saved, \
+verbatim, as a task at the moment it was said. Never propose spawnTask for it. If that task is still \
+one of the openTowerItems, propose updateTask on it when the utterance says something about its \
+status, what it is waiting on, or when it is expected — and nothing at all when it does not. If it \
+is not among them it has since been completed or deleted: propose nothing about it.`;
 
 /** Appendix B's rules given to the model, transcribed verbatim. */
 const RULES =

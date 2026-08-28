@@ -7,12 +7,20 @@
  * first test runs it against a coder that never answers at all, and the item
  * still has to be on screen.
  *
- * Nothing below the view is mocked except the one network call: `AppProvider`,
- * `useTowerPulses`, `captureTowerItem` and the fold all run for real against
- * fake-indexeddb, because "the item appears without a reload" is a claim about
- * the wiring between a commit and the reducer, and a stub would prove nothing
- * about it. `syncDown` needs no stubbing either: with no token it returns null,
- * so nothing here can be explained by a pull.
+ * Two things are mocked and nothing else is: the coder's network call, and
+ * `scheduleFlush` — the latter only so no real debounce timer or push outlives
+ * a test, never to assert on. It cannot be asserted on here: `AppContext`
+ * imports it from the same module and fires it on every state change, which
+ * `loadLocalData` guarantees, so a passing assertion would say nothing about
+ * whether capture called it. That claim is pinned in
+ * `hooks/useTowerPulses.test.ts`, where the hook is the only caller.
+ *
+ * Everything else runs for real against fake-indexeddb — `AppProvider`,
+ * `useTowerPulses`, `captureTowerItem`, the fold — because "the item appears
+ * without a reload" is a claim about the wiring between a commit and the
+ * reducer, and a stub would prove nothing about it. `syncDown` needs no
+ * stubbing either: with no token it returns null, so nothing here can be
+ * explained by a pull.
  *
  * Every test captures its OWN line, and the coder answers only for that line.
  * That is not decoration: capture fires the coding without awaiting it (fence
@@ -41,7 +49,6 @@ vi.mock('../services/coder', async (importOriginal) => {
 
 import { closeDb } from '../lib/db';
 import { resetSession } from '../lib/entities';
-import { installSyncTriggers } from '../lib/sync';
 import { getPulses, getTowerItems } from '../services/data';
 import type { CoderContext, Coding } from '../services/coder';
 import { AppProvider } from '../store/AppContext';
@@ -73,12 +80,13 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  // `cleanup()` unmounts the provider, and its effect teardown is what removes
+  // the sync listeners it installed and clears the flush debounce — both live
+  // in the closure `installSyncTriggers` returned to it, which nothing else
+  // can reach. Nothing fires against the database deleted below.
   cleanup();
   vi.useRealTimers();
   scheduleFlushMock.mockClear();
-  // Cancels any trigger the provider left installed, so nothing fires against
-  // a database that is about to be deleted.
-  installSyncTriggers()();
   resetSession();
   await closeDb();
   await new Promise<void>((resolve, reject) => {
@@ -118,19 +126,22 @@ async function onlyPulse() {
 }
 
 /**
- * A coder that proposes `changes` on the item it is shown, for `line` and for
- * nothing else.
+ * A coder that proposes one `updateTask` per entry in `changes` on the item it
+ * is shown, for `line` and for nothing else.
  *
  * The item is resolved by ID out of the `openTowerItems` the model was given,
  * which is the only way an effect can name a task. A call carrying any other
  * line belongs to another test and never answers.
  */
-function proposeFor(line: string, changes: Record<string, unknown>) {
+function proposeFor(line: string, ...changes: Array<Record<string, unknown>>) {
   codePulseMock.mockImplementation(async (text: string, context: CoderContext) => {
     if (text !== line) return NEVER();
     const target = context.openTowerItems.find((item) => item.text === line);
     if (target === undefined) return null;
-    return { ...CODING, effects: [{ type: 'updateTask' as const, towerId: target.id, ...changes }] };
+    return {
+      ...CODING,
+      effects: changes.map((change) => ({ type: 'updateTask' as const, towerId: target.id, ...change })),
+    };
   });
 }
 
@@ -165,7 +176,8 @@ describe('capturing into Tower', () => {
     // Uncoded, and calm about it: the item is the whole outcome.
     expect(pulse.signal).toBeUndefined();
     expect(pulse.links?.towerId).toBe((await getTowerItems())[0].id);
-    expect(scheduleFlushMock).toHaveBeenCalled();
+    // No assertion on `scheduleFlushMock` here — see the module note. It is
+    // pinned in `hooks/useTowerPulses.test.ts`.
   });
 
   it('is one item and one pulse on a double Enter, not two', async () => {
@@ -229,6 +241,56 @@ describe('the proposals the coder puts on an item', () => {
     const pulse = await onlyPulse();
     expect(pulse.signal).toBe('task');
     expect(pulse.effects).toEqual([]);
+  });
+
+  it('stays reachable after Tower has put the item away, in the drawer it went into', async () => {
+    // Two proposals on one item. Applying the first moves the item out of the
+    // active list every other surface on this page is built from — so without
+    // a chip inside the drawer, the second would be neither applicable nor
+    // dismissible from the moment the first was tapped, and unreachable from
+    // the Pulse page too the next morning: that page is today-only, and the
+    // journal is never compacted.
+    const LINE = 'the landlord is coming about the boiler';
+    proposeFor(LINE, { status: 'waiting', waitingOn: 'the landlord' }, { expectsBy: '2026-09-04' });
+    renderTower();
+
+    await capture(LINE);
+    fireEvent.click(await screen.findByText('waiting, waiting on the landlord'));
+
+    // Out of Now and into Follow Up, which is shut — a drawer shows nothing
+    // until it is opened (fence 8: Tower stays a page for what needs doing).
+    const drawer = await screen.findByText(/Follow Up \(1\)/);
+    await waitFor(() => {
+      expect(screen.getByText('Nothing needs attention right now')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('by 2026-09-04')).toBeNull();
+
+    fireEvent.click(drawer);
+
+    // Open, and the surviving proposal is on the item, and still acts.
+    fireEvent.click(await screen.findByText('by 2026-09-04'));
+    await waitFor(async () => {
+      const [item] = await getTowerItems();
+      expect(item.expectsBy).toBe('2026-09-04');
+    });
+    expect((await onlyPulse()).effects).toEqual([]);
+  });
+
+  it('the same is true of an item sent to someday', async () => {
+    const LINE = 'the loft conversion, one day';
+    proposeFor(LINE, { status: 'someday' }, { waitingOn: 'the architect' });
+    renderTower();
+
+    await capture(LINE);
+    fireEvent.click(await screen.findByText('someday'));
+
+    fireEvent.click(await screen.findByText(/Someday \(1\)/));
+
+    fireEvent.click(await screen.findByText('waiting on the architect'));
+    await waitFor(async () => {
+      const [item] = await getTowerItems();
+      expect(item.waitingOn).toBe('the architect');
+    });
   });
 
   it('renders nothing under an item the coder proposed nothing for', async () => {

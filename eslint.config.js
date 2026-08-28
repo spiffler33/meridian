@@ -9,6 +9,11 @@ export default defineConfig([
   globalIgnores(['dist']),
   {
     files: ['**/*.{ts,tsx}'],
+    // ESLint 9 defaults this to `warn`, and `npm run lint` is judged by its
+    // ERROR count — so a suppression left behind by the code it covered would
+    // never move that number. An unused directive is dead weight that also
+    // hides the rule coming back; make it fail like anything else.
+    linterOptions: { reportUnusedDisableDirectives: 'error' },
     extends: [
       js.configs.recommended,
       tseslint.configs.recommended,

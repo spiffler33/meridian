@@ -123,14 +123,21 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
     <div className="space-y-6">
       {/* What the day already has in it, before anything is chosen for it. */}
       {/*
-        `Date.now()` in render is impure and the rule is right about it. It is
-        pre-existing and not this stage's to change: `now` decides which event
-        DayShape lights as next and whether the mirror reads stale, so sampling
-        it at mount instead would freeze both on a page left open. The real fix
-        is DayShape owning its own clock, which is a change to DayShape.
-        Reported rather than silently re-hidden: it was invisible only because
-        the compiler bails out of a component containing `try`, and this file's
-        capture handler no longer needs one.
+        `Date.now()` in render is impure and the rule is right about it. The
+        error is pre-existing — the previous revision of this file lints clean
+        with this identical line — and it surfaced only because the compiler
+        bails out of a component containing `try`, which this file's capture
+        handler no longer needs. Suppressed rather than re-hidden behind one.
+
+        Not deferred: there is no lint-clean way to hand DayShape a fresh
+        reading per render. It takes `now` as a prop from one production caller
+        and ten test call sites, and "DayShape owning its own clock" is a
+        ticker in different words — which the owner has explicitly declined.
+        So this waits on an owner DECISION between the two costs: a timer that
+        re-renders this page on an interval, or `now` sampled once at mount,
+        which freezes both what DayShape lights as next and whether the mirror
+        reads stale on a page left open all day. Neither is this stage's to
+        choose, and the suppression stands until one is chosen.
       */}
       {/* eslint-disable-next-line react-hooks/purity */}
       <DayShape mirror={mirror} date={today} timeZone={timeZone} now={Date.now()} />
@@ -196,6 +203,7 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
         <FollowUpSection
           items={waitingItems}
           onReactivate={handleReactivate}
+          pulses={pulses}
         />
       )}
 
@@ -204,6 +212,7 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
         items={somedayItems}
         onReactivate={handleReactivate}
         onDelete={deleteTowerItemById}
+        pulses={pulses}
       />
 
       {/* Docked at the foot of the screen, above the backup line rather than
@@ -242,11 +251,18 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
  * directly above it, so naming it again is noise here (the pulse line, where
  * the task is not on screen, spells it out instead).
  *
- * Shown on the items this page actually surfaces — Now, the queue, the
- * overflow. A proposal on a followed-up or someday item stays reachable on its
- * own pulse line rather than being buried in a drawer nothing opens; Tower is
- * a quick page for what needs doing, and a chip that is never seen is worse
- * than a chip that lives in one place.
+ * Shown on every item this page can show — Now, the queue, the overflow, and
+ * inside the two drawers. The drawers are not optional: `openTowerItems`
+ * includes `waiting` and `someday`, so the coder is invited to propose on them,
+ * and the Pulse page is today-only, so the line that carried the proposal is
+ * off the stream by the next morning. Without a chip here, such a proposal
+ * would be unreachable — neither applicable nor dismissible — in a journal
+ * that is never compacted. Worse, applying `status: 'waiting'` moves the item
+ * out of the active list in the same render, so a second proposal on it would
+ * vanish the instant the first was tapped.
+ *
+ * They stay quiet (fence 8): a drawer that is shut shows nothing, and Tower
+ * is still a page for what needs doing rather than a feed.
  */
 function ItemProposals({
   itemId,
@@ -443,9 +459,10 @@ function QueueList({ items, onComplete, pulses }: QueueListProps) {
 interface FollowUpSectionProps {
   items: TowerItem[];
   onReactivate: (id: string) => void;
+  pulses: TowerPulses;
 }
 
-function FollowUpSection({ items, onReactivate }: FollowUpSectionProps) {
+function FollowUpSection({ items, onReactivate, pulses }: FollowUpSectionProps) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -461,25 +478,25 @@ function FollowUpSection({ items, onReactivate }: FollowUpSectionProps) {
       {expanded && items.length > 0 && (
         <ul className="mt-3 space-y-2">
           {items.map((item) => (
-            <li
-              key={item.id}
-              className="flex items-center justify-between text-text-muted text-sm group"
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-text-secondary">{item.text}</span>
-                {item.waitingOn && (
-                  <span className="text-xs">· {item.waitingOn}</span>
-                )}
-                {item.expectsBy && (
-                  <span className="text-xs">· {formatDate(item.expectsBy)}</span>
-                )}
+            <li key={item.id} className="text-text-muted text-sm group">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-text-secondary">{item.text}</span>
+                  {item.waitingOn && (
+                    <span className="text-xs">· {item.waitingOn}</span>
+                  )}
+                  {item.expectsBy && (
+                    <span className="text-xs">· {formatDate(item.expectsBy)}</span>
+                  )}
+                </div>
+                <button
+                  onClick={() => onReactivate(item.id)}
+                  className="text-xs opacity-0 group-hover:opacity-100 text-accent hover:underline transition-opacity"
+                >
+                  reactivate
+                </button>
               </div>
-              <button
-                onClick={() => onReactivate(item.id)}
-                className="text-xs opacity-0 group-hover:opacity-100 text-accent hover:underline transition-opacity"
-              >
-                reactivate
-              </button>
+              <ItemProposals itemId={item.id} pulses={pulses} className="mt-2 flex flex-wrap items-center gap-2" />
             </li>
           ))}
         </ul>
@@ -492,9 +509,10 @@ interface SomedaySectionProps {
   items: TowerItem[];
   onReactivate: (id: string) => void;
   onDelete: (id: string) => void;
+  pulses: TowerPulses;
 }
 
-function SomedaySection({ items, onReactivate, onDelete }: SomedaySectionProps) {
+function SomedaySection({ items, onReactivate, onDelete, pulses }: SomedaySectionProps) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -510,25 +528,25 @@ function SomedaySection({ items, onReactivate, onDelete }: SomedaySectionProps) 
       {expanded && items.length > 0 && (
         <ul className="mt-3 space-y-2">
           {items.map((item) => (
-            <li
-              key={item.id}
-              className="flex items-center justify-between text-text-muted text-sm group"
-            >
-              <span>{item.text}</span>
-              <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  onClick={() => onReactivate(item.id)}
-                  className="text-xs text-accent hover:underline"
-                >
-                  activate
-                </button>
-                <button
-                  onClick={() => onDelete(item.id)}
-                  className="text-xs text-red-400 hover:underline"
-                >
-                  delete
-                </button>
+            <li key={item.id} className="text-text-muted text-sm group">
+              <div className="flex items-center justify-between">
+                <span>{item.text}</span>
+                <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    onClick={() => onReactivate(item.id)}
+                    className="text-xs text-accent hover:underline"
+                  >
+                    activate
+                  </button>
+                  <button
+                    onClick={() => onDelete(item.id)}
+                    className="text-xs text-red-400 hover:underline"
+                  >
+                    delete
+                  </button>
+                </div>
               </div>
+              <ItemProposals itemId={item.id} pulses={pulses} className="mt-2 flex flex-wrap items-center gap-2" />
             </li>
           ))}
         </ul>

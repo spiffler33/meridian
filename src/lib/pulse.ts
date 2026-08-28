@@ -192,17 +192,20 @@ export function vocabChipLabel(proposal: PulseVocabProposal, names: PulseChipNam
 /**
  * One `updateTask` proposal, and where to act on it.
  *
- * `pulseId` and `index` are exactly what `applyPulseEffect`/`dismissPulseEffect`
+ * `pulseId` and `effect` are exactly what `applyPulseEffect`/`dismissPulseEffect`
  * take — the same two arguments the chip on the pulse line passes, so both
  * surfaces go through the one serialized path in `data.ts` rather than opening
  * a second one. Acting in either place is the same act, and clears the chip in
  * both, because there is only ever one stored proposal behind them.
+ *
+ * The effect and not its position, deliberately: a position is only true of
+ * the list it was read from, and an apply rewrites that list. Carrying one
+ * across a tap would let a second tap name a proposal the owner never chose.
  */
 export type TowerProposal = {
   /** The pulse whose coding proposed this. */
   pulseId: string;
-  /** Its position in that pulse's `effects` at the moment this was built. */
-  index: number;
+  /** What it proposes — its whole identity (`effectKey`). */
   effect: PulseEffect;
 };
 
@@ -221,14 +224,12 @@ export type TowerProposal = {
 export function towerProposals(pulses: readonly PulseRow[]): Record<string, TowerProposal[]> {
   const byItem: Record<string, TowerProposal[]> = {};
   for (const pulse of [...pulses].sort(compareOldestFirst)) {
-    const effects = pulse.effects ?? [];
-    for (let index = 0; index < effects.length; index += 1) {
-      const effect = effects[index];
+    for (const effect of pulse.effects ?? []) {
       if (effect.type !== 'updateTask') continue;
       const towerId = effectString(effect, 'towerId');
       if (towerId === null) continue;
       const list = byItem[towerId] ?? [];
-      list.push({ pulseId: pulse.id, index, effect });
+      list.push({ pulseId: pulse.id, effect });
       byItem[towerId] = list;
     }
   }

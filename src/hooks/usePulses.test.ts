@@ -7,6 +7,19 @@
  * awaits the coder no matter how it behaves (O1), that the backlog sweep
  * fires on open while a capture codes only its own line, and that neither
  * path can take a captured line back off the screen.
+ *
+ * Every test captures its OWN line, and its coder answers only for that line
+ * (`answerFor`), exactly as `views/TowerView.test.tsx` does it. That is not
+ * decoration: capture and the sweep both fire their coding without awaiting it
+ * (fence 3), so a test ends with a coding still walking `buildCoderContext`,
+ * and it reaches `codePulse` inside a LATER test — against a fresh database,
+ * where the enrichment resurrects a textless ghost pulse (P2) and schedules a
+ * flush for it. Measured: a straggler settling inside the D6 test below makes
+ * its flush count 3 instead of 2. A coder that never settles for a line it was
+ * not set up for cannot write anything, whenever it happens to be called.
+ *
+ * For the same reason nothing here counts the spy's TOTAL calls: a straggler
+ * inflates that too. `codedTimes(line)` is the honest count.
  */
 
 import { act, renderHook, waitFor } from '@testing-library/react';
@@ -70,6 +83,19 @@ const SAMPLE_CODING: Coding = {
   vocabProposal: null,
 };
 
+/** A coder that has been reached and will never answer. It cannot write. */
+const NEVER = () => new Promise<Coding | null>(() => undefined);
+
+/** A coder that answers `coding` for `line`, and never for anything else. */
+function answerFor(line: string, coding: Coding | null = SAMPLE_CODING) {
+  codePulseMock.mockImplementation(async (text: string) => (text === line ? coding : NEVER()));
+}
+
+/** How many coder calls this line drew — never the spy's total (see the note above). */
+function codedTimes(line: string): number {
+  return (codePulseMock.mock.calls as Array<[string]>).filter(([text]) => text === line).length;
+}
+
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
@@ -94,12 +120,14 @@ afterEach(async () => {
 
 describe('capture never blocks on the coder (O1, fence 3)', () => {
   it('resolves and renders even while the coder call is permanently hung', async () => {
+    const LINE = 'captured with the coder stuck';
     let releaseCoder: (() => void) | undefined;
-    codePulseMock.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          releaseCoder = () => resolve(null);
-        })
+    codePulseMock.mockImplementation((text: string) =>
+      text === LINE
+        ? new Promise<Coding | null>((resolve) => {
+            releaseCoder = () => resolve(null);
+          })
+        : NEVER()
     );
 
     const { result } = renderHook(() => usePulses(DAY, ZONE));
@@ -107,59 +135,65 @@ describe('capture never blocks on the coder (O1, fence 3)', () => {
 
     let ok: boolean | undefined;
     await act(async () => {
-      ok = await result.current.capture('captured with the coder stuck');
+      ok = await result.current.capture(LINE);
     });
 
     expect(ok).toBe(true);
-    expect(result.current.today.map((row) => row.text)).toEqual(['captured with the coder stuck']);
+    expect(result.current.today.map((row) => row.text)).toEqual([LINE]);
 
     // buildCoderContext (its own vocab-seed write included) always finishes
     // before codePulse is called, so this proves that write has already
     // landed before releasing the still-hung call and ending the test —
     // otherwise it could dangle into the next test's fresh database.
-    await waitFor(() => expect(codePulseMock).toHaveBeenCalled());
+    await waitFor(() => expect(codedTimes(LINE)).toBe(1));
     releaseCoder?.();
   });
 
   it('resolves and renders even when the coder rejects outright', async () => {
-    codePulseMock.mockRejectedValue(new Error('offline'));
+    const LINE = 'captured while offline';
+    codePulseMock.mockImplementation(async (text: string) => {
+      if (text !== LINE) return NEVER();
+      throw new Error('offline');
+    });
 
     const { result } = renderHook(() => usePulses(DAY, ZONE));
     await waitFor(() => expect(result.current.today).toEqual([]));
 
     let ok: boolean | undefined;
     await act(async () => {
-      ok = await result.current.capture('captured while offline');
+      ok = await result.current.capture(LINE);
     });
 
     expect(ok).toBe(true);
-    expect(result.current.today.map((row) => row.text)).toEqual(['captured while offline']);
+    expect(result.current.today.map((row) => row.text)).toEqual([LINE]);
 
     // Same reasoning: let the vocab-seed write land before this test ends.
-    await waitFor(() => expect(codePulseMock).toHaveBeenCalled());
+    await waitFor(() => expect(codedTimes(LINE)).toBe(1));
   });
 });
 
 describe('the lazy coding queue', () => {
   it('codes on save: a captured pulse goes from uncoded to coded without another capture', async () => {
-    codePulseMock.mockResolvedValue(SAMPLE_CODING);
+    const LINE = 'needs coding';
+    answerFor(LINE);
 
     const { result } = renderHook(() => usePulses(DAY, ZONE));
     await waitFor(() => expect(result.current.today).toEqual([]));
 
     await act(async () => {
-      await result.current.capture('needs coding');
+      await result.current.capture(LINE);
     });
 
     // The dot flips from hollow to filled once the coding this triggers lands
     // — one call for this line, not a re-walk of the whole history.
     await waitFor(() => {
-      expect(result.current.today.find((row) => row.text === 'needs coding')?.signal).toBe('note');
+      expect(result.current.today.find((row) => row.text === LINE)?.signal).toBe('note');
     });
-    expect(codePulseMock).toHaveBeenCalledTimes(1);
+    expect(codedTimes(LINE)).toBe(1);
   });
 
   it('codes on open: a pulse left uncoded from a previous session gets coded on mount, with no capture at all', async () => {
+    const LINE = 'left over from last time';
     await enqueue([
       {
         id: 'e1',
@@ -169,33 +203,34 @@ describe('the lazy coding queue', () => {
         type: 'upsert',
         entity: ENTITY.pulse,
         entityId: 'p1',
-        fields: { text: 'left over from last time', at: '2026-08-28T08:00:00.000Z' },
+        fields: { text: LINE, at: '2026-08-28T08:00:00.000Z' },
       } satisfies JournalEvent,
     ]);
-    codePulseMock.mockResolvedValue(SAMPLE_CODING);
+    answerFor(LINE);
 
     const { result } = renderHook(() => usePulses(DAY, ZONE));
 
     await waitFor(() => {
-      expect(result.current.today.find((row) => row.text === 'left over from last time')?.signal).toBe('note');
+      expect(result.current.today.find((row) => row.text === LINE)?.signal).toBe('note');
     });
-    expect(codePulseMock).toHaveBeenCalledTimes(1);
+    expect(codedTimes(LINE)).toBe(1);
   });
 
   it('once per pulse: re-mounting after a pulse is already coded makes no further coder call (P1)', async () => {
-    codePulseMock.mockResolvedValue(SAMPLE_CODING);
+    const LINE = 'only pulse today';
+    answerFor(LINE);
 
     const first = renderHook(() => usePulses(DAY, ZONE));
     await waitFor(() => expect(first.result.current.today).toEqual([]));
     await act(async () => {
-      await first.result.current.capture('only pulse today');
+      await first.result.current.capture(LINE);
     });
     await waitFor(() => {
-      expect(first.result.current.today.find((row) => row.text === 'only pulse today')?.signal).toBe('note');
+      expect(first.result.current.today.find((row) => row.text === LINE)?.signal).toBe('note');
     });
     first.unmount();
 
-    expect(codePulseMock).toHaveBeenCalledTimes(1);
+    expect(codedTimes(LINE)).toBe(1);
 
     // A real re-open, not just a fresh mount: `resetSession()` drops the
     // memoised fold so the second mount rebuilds it from journalCache +
@@ -206,13 +241,15 @@ describe('the lazy coding queue', () => {
     const second = renderHook(() => usePulses(DAY, ZONE));
     await waitFor(() => expect(second.result.current.today.length).toBe(1));
 
-    expect(codePulseMock).toHaveBeenCalledTimes(1); // no additional call
+    expect(codedTimes(LINE)).toBe(1); // no additional call
     second.unmount();
   });
 });
 
 describe('a capture is never lost to a refresh that started before it (D8)', () => {
   it('keeps a line captured while the store was being read, instead of replacing the list with the older read', async () => {
+    const STORED = 'already in the store';
+    const CAPTURED = 'the line that must not vanish';
     // One pulse already in the store, left uncoded, and a coder that never
     // answers: the mount's sweep parks on it, so nothing after the held read
     // can quietly repair the list and hide the clobber.
@@ -225,15 +262,16 @@ describe('a capture is never lost to a refresh that started before it (D8)', () 
         type: 'upsert',
         entity: ENTITY.pulse,
         entityId: 'p1',
-        fields: { text: 'already in the store', at: '2026-08-28T08:00:00.000Z' },
+        fields: { text: STORED, at: '2026-08-28T08:00:00.000Z' },
       } satisfies JournalEvent,
     ]);
     const releaseCoder: Array<() => void> = [];
-    codePulseMock.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          releaseCoder.push(() => resolve(null));
-        })
+    codePulseMock.mockImplementation((text: string) =>
+      text === STORED || text === CAPTURED
+        ? new Promise<Coding | null>((resolve) => {
+            releaseCoder.push(() => resolve(null));
+          })
+        : NEVER()
     );
 
     // The mount's read is held open once it has seen the store: it will reach
@@ -252,9 +290,9 @@ describe('a capture is never lost to a refresh that started before it (D8)', () 
     });
 
     await act(async () => {
-      await result.current.capture('the line that must not vanish');
+      await result.current.capture(CAPTURED);
     });
-    expect(result.current.today.map((row) => row.text)).toEqual(['the line that must not vanish']);
+    expect(result.current.today.map((row) => row.text)).toEqual([CAPTURED]);
 
     await act(async () => {
       release?.();
@@ -265,27 +303,25 @@ describe('a capture is never lost to a refresh that started before it (D8)', () 
     // held read predates it, and the store's answer for everything else must
     // not take it off the screen.
     await waitFor(() => {
-      expect(result.current.today.map((row) => row.text)).toEqual([
-        'already in the store',
-        'the line that must not vanish',
-      ]);
+      expect(result.current.today.map((row) => row.text)).toEqual([STORED, CAPTURED]);
     });
 
-    await waitFor(() => expect(codePulseMock).toHaveBeenCalled());
+    await waitFor(() => expect(codedTimes(STORED) + codedTimes(CAPTURED)).toBeGreaterThan(0));
     releaseCoder.forEach((resolve) => resolve());
   });
 });
 
 describe('the coding write is pushed, not left sitting in the outbox (D6)', () => {
   it('schedules a flush after the enrichment lands, not only after the capture', async () => {
-    codePulseMock.mockResolvedValue(SAMPLE_CODING);
+    const LINE = 'needs pushing';
+    answerFor(LINE);
 
     const { result } = renderHook(() => usePulses(DAY, ZONE));
     await waitFor(() => expect(result.current.today).toEqual([]));
     scheduleFlushMock.mockClear();
 
     await act(async () => {
-      await result.current.capture('needs pushing');
+      await result.current.capture(LINE);
     });
 
     // One for the capture itself, one for the coding. Without the second, the

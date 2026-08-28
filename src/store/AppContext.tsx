@@ -474,6 +474,12 @@ interface AppContextType {
   getHabitStreak: (habitId: HabitId, fromDate?: string) => number;
   // Tower methods
   getTowerItemsByStatus: (status: TowerStatus) => TowerItem[];
+  /**
+   * Nothing calls this. A line the OWNER typed goes through
+   * `captureTowerItem` (`useTowerPulses`), which writes the item and its pulse
+   * in one commit and reports the write; this writes an item alone, with no
+   * pulse for the coder to reach and no error the caller can see.
+   */
   addTowerItem: (input: TowerItemInput) => Promise<void>;
   updateTowerItemById: (id: string, updates: Partial<TowerItemInput>) => Promise<void>;
   completeTowerItemById: (id: string) => Promise<void>;

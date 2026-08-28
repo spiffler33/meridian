@@ -14,6 +14,14 @@
  *
  * PulseView reads no app state — `useApp` belongs to Tower, not this view —
  * so nothing here mocks it.
+ *
+ * Every test captures its OWN line, and a coder that answers a coding answers
+ * only for that line (`answerFor`), exactly as `TowerView.test.tsx` does it.
+ * Capture fires its coding without awaiting it (fence 3), so a test ends with
+ * one still walking `buildCoderContext` and it reaches `codePulse` inside a
+ * LATER test — against a fresh database, where the enrichment resurrects a
+ * textless ghost pulse (P2). The `null` default in `beforeEach` is safe for
+ * the same reason it is the default: a null coding writes nothing.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -25,7 +33,9 @@ vi.mock('../lib/sync', () => ({ scheduleFlush: scheduleFlushMock }));
 // Coding is lazy and runs in the background after every capture (usePulses).
 // Mocked explicitly rather than left to the coder's own no-API-key fallback,
 // so these tests are not racing an unconfigured default.
-const codePulseMock = vi.hoisted(() => vi.fn(async (): Promise<import('../services/coder').Coding | null> => null));
+const codePulseMock = vi.hoisted(() =>
+  vi.fn<(text: string) => Promise<import('../services/coder').Coding | null>>(async () => null)
+);
 vi.mock('../services/coder', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../services/coder')>();
   return { ...actual, codePulse: codePulseMock };
@@ -51,6 +61,14 @@ const SAMPLE_CODING: Coding = {
   effects: [],
   vocabProposal: null,
 };
+
+/** A coder that has been reached and will never answer. It cannot write. */
+const NEVER = () => new Promise<Coding | null>(() => undefined);
+
+/** A coder that answers `coding` for `line`, and never for anything else. */
+function answerFor(line: string, coding: Coding) {
+  codePulseMock.mockImplementation(async (text: string) => (text === line ? coding : NEVER()));
+}
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -156,7 +174,7 @@ describe('the coding dot', () => {
   });
 
   it('fills once the coder returns a coding', async () => {
-    codePulseMock.mockImplementation(async () => SAMPLE_CODING);
+    answerFor('gets coded', SAMPLE_CODING);
 
     render(<PulseView />);
     const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
@@ -183,7 +201,7 @@ describe('the coding dot', () => {
  */
 describe('effect chips', () => {
   it('renders nothing under a line whose coding proposed nothing', async () => {
-    codePulseMock.mockImplementation(async () => SAMPLE_CODING);
+    answerFor('just a note', SAMPLE_CODING);
 
     render(<PulseView />);
     const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
@@ -200,10 +218,10 @@ describe('effect chips', () => {
 
   it('names the habit a completeHabit chip would tick, resolved by id', async () => {
     const habit = await createHabit({ label: 'strength', category: 'health' });
-    codePulseMock.mockImplementation(async () => ({
+    answerFor('gym done', {
       ...SAMPLE_CODING,
       effects: [{ type: 'completeHabit', habitId: habit.id }],
-    }));
+    });
 
     render(<PulseView />);
     const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
@@ -214,10 +232,10 @@ describe('effect chips', () => {
   });
 
   it('tapping one applies it and takes the chip away', async () => {
-    codePulseMock.mockImplementation(async () => ({
+    answerFor('sort out the boiler', {
       ...SAMPLE_CODING,
       effects: [{ type: 'spawnTask', text: 'call the plumber' }],
-    }));
+    });
 
     render(<PulseView />);
     const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
@@ -233,15 +251,16 @@ describe('effect chips', () => {
   });
 
   it('dismissing one drops the effect and keeps the coding', async () => {
-    codePulseMock.mockImplementation(async () => ({
+    const LINE = 'the boiler is still playing up';
+    answerFor(LINE, {
       ...SAMPLE_CODING,
       signal: 'task',
       effects: [{ type: 'spawnTask', text: 'call the plumber' }],
-    }));
+    });
 
     render(<PulseView />);
     const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
-    fireEvent.change(box, { target: { value: 'sort out the boiler' } });
+    fireEvent.change(box, { target: { value: LINE } });
     fireEvent.keyDown(box, { key: 'Enter' });
 
     fireEvent.click(await screen.findByLabelText('dismiss + call the plumber'));
@@ -250,16 +269,18 @@ describe('effect chips', () => {
     expect(await getTowerItems(true)).toHaveLength(0);
 
     // The line is still coded: the dot stays filled and the signal is still there.
-    const line = screen.getByText('sort out the boiler');
+    const line = screen.getByText(LINE);
     expect(line.closest('li')?.querySelector('[aria-hidden="true"]')).toHaveClass('bg-text-muted');
-    expect((await getPulses())[0].signal).toBe('task');
+    const rows = await getPulses();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].signal).toBe('task');
   });
 
   it('approves a vocabulary proposal on a tap, and it has no other way in', async () => {
-    codePulseMock.mockImplementation(async () => ({
+    answerFor('pruned the hedge', {
       ...SAMPLE_CODING,
       vocabProposal: { kind: 'domain', value: 'garden', mapsTo: null },
-    }));
+    });
 
     render(<PulseView />);
     const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;

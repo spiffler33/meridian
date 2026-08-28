@@ -25,7 +25,7 @@ import { dayKey, deviceTimeZone, EVENTS_PATH } from './calendar';
 import { closeDb, enqueue, outboxSize, peekOutbox, putCachedContent } from './db';
 import type { OutboxRecord } from './db';
 import { ENTITY, readPulseVocabRow, resetSession } from './entities';
-import type { PulseRow } from './entities';
+import type { PulseEffect, PulseRow } from './entities';
 import { fold } from './journal';
 import type { JournalEvent } from './journal';
 import { compareOldestFirst, pulsesForDay, towerProposals, updateTaskChipLabel } from './pulse';
@@ -938,6 +938,31 @@ async function reread(id: string): Promise<PulseRow> {
 }
 
 /**
+ * Tap the chip sitting at `index`: the position is read off the ROW, and what
+ * goes into the data layer is the effect itself.
+ *
+ * That is exactly what both views do, and `applyPulseEffect` takes nothing
+ * else — a position cannot survive a tap, because an apply rewrites the list
+ * every later chip's position is measured against. Reading the stored effect
+ * rather than passing back the literal the test wrote also keeps `effectKey`
+ * honest: it is structural equality over the stored JSON, and both sides come
+ * out of the same line.
+ */
+async function chipAt(pulseId: string, index: number): Promise<PulseEffect> {
+  const effects = (await reread(pulseId)).effects ?? [];
+  expect(effects.length).toBeGreaterThan(index);
+  return effects[index];
+}
+
+async function applyChip(pulseId: string, index = 0): Promise<void> {
+  return applyPulseEffect(pulseId, await chipAt(pulseId, index));
+}
+
+async function dismissChip(pulseId: string, index = 0): Promise<void> {
+  return dismissPulseEffect(pulseId, await chipAt(pulseId, index));
+}
+
+/**
  * Run `work` with `Date.now()` moving a second every time it is read.
  *
  * This is what makes "one commit" observable from the outbox alone. `commit`
@@ -997,7 +1022,7 @@ describe('applying an effect chip', () => {
     const pulse = await createPulse('gym done');
     await enrichPulse(pulse.id, codingWith([{ type: 'completeHabit', habitId: habit.id }]));
 
-    await withTickingClock(() => applyPulseEffect(pulse.id, 0));
+    await withTickingClock(() => applyChip(pulse.id, 0));
 
     const day = dayKey(Date.parse(pulse.at), deviceTimeZone());
     expect((await getCompletionsForDate(day))[habit.id]).toBe(true);
@@ -1018,7 +1043,7 @@ describe('applying an effect chip', () => {
     // The label is right there in the text and in the effect; only the id counts.
     await enrichPulse(pulse.id, codingWith([{ type: 'completeHabit', habitId: 'strength' }]));
 
-    await applyPulseEffect(pulse.id, 0);
+    await applyChip(pulse.id, 0);
 
     const day = dayKey(Date.parse(pulse.at), deviceTimeZone());
     expect(Object.keys(await getCompletionsForDate(day))).toHaveLength(0);
@@ -1030,7 +1055,7 @@ describe('applying an effect chip', () => {
     const pulse = await createPulse('sort out the boiler');
     await enrichPulse(pulse.id, codingWith([{ type: 'spawnTask', text: 'call the plumber' }]));
 
-    await withTickingClock(() => applyPulseEffect(pulse.id, 0));
+    await withTickingClock(() => applyChip(pulse.id, 0));
 
     const items = await getTowerItems();
     expect(items).toHaveLength(1);
@@ -1047,7 +1072,7 @@ describe('applying an effect chip', () => {
     const pulse = await createPulse('renew the passport');
     await enrichPulse(pulse.id, codingWith([{ type: 'spawnTask' }]));
 
-    await applyPulseEffect(pulse.id, 0);
+    await applyChip(pulse.id, 0);
 
     expect((await getTowerItems())[0].text).toBe('renew the passport');
   });
@@ -1056,8 +1081,11 @@ describe('applying an effect chip', () => {
     const pulse = await createPulse('sort out the boiler');
     await enrichPulse(pulse.id, codingWith([{ type: 'spawnTask', text: 'call the plumber' }]));
 
-    await applyPulseEffect(pulse.id, 0);
-    await applyPulseEffect(pulse.id, 0);
+    // The SAME proposal both times, which is what a second tap on a chip the
+    // repaint has not yet cleared actually carries.
+    const chip = await chipAt(pulse.id, 0);
+    await applyPulseEffect(pulse.id, chip);
+    await applyPulseEffect(pulse.id, chip);
 
     expect(await getTowerItems()).toHaveLength(1);
   });
@@ -1066,7 +1094,7 @@ describe('applying an effect chip', () => {
     const pulse = await createPulse('sort out the boiler');
     const effect = { type: 'spawnTask' as const, text: 'call the plumber' };
     await enrichPulse(pulse.id, codingWith([effect]));
-    await applyPulseEffect(pulse.id, 0);
+    await applyChip(pulse.id, 0);
     expect(await getTowerItems()).toHaveLength(1);
 
     // The state the `links.towerId` guard exists for: a write that put the
@@ -1090,7 +1118,7 @@ describe('applying an effect chip', () => {
     // removal is the later writer. The clock is frozen file-wide, so this is
     // the only way to say "and then the owner tapped it".
     vi.setSystemTime(new Date(NOW.getTime() + 2000));
-    await applyPulseEffect(pulse.id, 0);
+    await applyChip(pulse.id, 0);
 
     expect(await getTowerItems()).toHaveLength(1);
     expect((await reread(pulse.id)).effects).toEqual([]);
@@ -1104,7 +1132,7 @@ describe('applying an effect chip', () => {
       codingWith([{ type: 'updateTask', towerId: item.id, status: 'waiting', waitingOn: 'the council' }])
     );
 
-    await withTickingClock(() => applyPulseEffect(pulse.id, 0));
+    await withTickingClock(() => applyChip(pulse.id, 0));
 
     const updated = (await getTowerItems()).find((candidate) => candidate.id === item.id);
     expect(updated?.status).toBe('waiting');
@@ -1117,7 +1145,7 @@ describe('applying an effect chip', () => {
     const pulse = await createPulse('done with that');
     await enrichPulse(pulse.id, codingWith([{ type: 'updateTask', towerId: 'not-an-item', status: 'done' }]));
 
-    await applyPulseEffect(pulse.id, 0);
+    await applyChip(pulse.id, 0);
 
     expect(await getTowerItems(true)).toHaveLength(0);
     expect((await reread(pulse.id)).effects).toEqual([]);
@@ -1128,7 +1156,7 @@ describe('applying an effect chip', () => {
     const pulse = await createPulse('parked that');
     await enrichPulse(pulse.id, codingWith([{ type: 'updateTask', towerId: item.id, status: 'parked' }]));
 
-    await applyPulseEffect(pulse.id, 0);
+    await applyChip(pulse.id, 0);
 
     expect((await getTowerItems()).find((candidate) => candidate.id === item.id)?.status).toBe('active');
   });
@@ -1137,7 +1165,7 @@ describe('applying an effect chip', () => {
     const pulse = await createPulse('that was the school thing');
     await enrichPulse(pulse.id, codingWith([{ type: 'claimEvent', eventId: 'evt-42' }]));
 
-    await applyPulseEffect(pulse.id, 0);
+    await applyChip(pulse.id, 0);
 
     const row = await reread(pulse.id);
     expect(row.links?.eventId).toBe('evt-42');
@@ -1151,19 +1179,21 @@ describe('applying an effect chip', () => {
       codingWith([{ type: 'claimEvent', eventId: 'evt-1' }, { type: 'spawnTask', text: 'call the plumber' }])
     );
 
-    await applyPulseEffect(pulse.id, 1);
+    await applyChip(pulse.id, 1);
 
     const row = await reread(pulse.id);
     expect(row.effects).toEqual([{ type: 'claimEvent', eventId: 'evt-1' }]);
     expect(await getTowerItems()).toHaveLength(1);
   });
 
-  it('writes nothing at all for an index no effect sits at', async () => {
+  it('writes nothing at all for an effect the pulse does not hold', async () => {
     const pulse = await createPulse('nothing proposed here');
     await enrichPulse(pulse.id, codingWith([]));
     const before = await outboxSize();
 
-    await applyPulseEffect(pulse.id, 0);
+    // The state a second tap on a chip the repaint has not cleared arrives in:
+    // the proposal is gone, and the only honest answer is to write nothing.
+    await applyPulseEffect(pulse.id, { type: 'spawnTask', text: 'never proposed' });
 
     expect(await outboxSize()).toBe(before);
   });
@@ -1173,7 +1203,7 @@ describe('applying an effect chip', () => {
     const pulse = await createPulse('council came back, that one is finished');
     await enrichPulse(pulse.id, codingWith([{ type: 'updateTask', towerId: item.id, status: 'done' }]));
 
-    await applyPulseEffect(pulse.id, 0);
+    await applyChip(pulse.id, 0);
 
     const done = (await getTowerItems(true)).find((candidate) => candidate.id === item.id);
     expect(done?.status).toBe('done');
@@ -1196,7 +1226,7 @@ describe('applying an effect chip', () => {
 
     // Two taps, neither waiting for the other — which is exactly what the view
     // does: `act()` fires each on its own chain.
-    await Promise.all([applyPulseEffect(pulse.id, 0), applyPulseEffect(pulse.id, 1)]);
+    await Promise.all([applyChip(pulse.id, 0), applyChip(pulse.id, 1)]);
 
     const items = await getTowerItems();
     expect(items).toHaveLength(1);
@@ -1213,7 +1243,7 @@ describe('applying an effect chip', () => {
   it('a second coding cannot unset a link a chip already recorded (F1b)', async () => {
     const pulse = await createPulse('sort out the boiler');
     await enrichPulse(pulse.id, codingWith([{ type: 'spawnTask', text: 'call the plumber' }]));
-    await applyPulseEffect(pulse.id, 0);
+    await applyChip(pulse.id, 0);
     const item = (await getTowerItems())[0];
     expect((await reread(pulse.id)).links?.towerId).toBe(item.id);
 
@@ -1231,7 +1261,7 @@ describe('applying an effect chip', () => {
     expect(row.links?.eventId).toBe('evt-9');
 
     // And the guard that link is holds, so the restored chip creates nothing.
-    await applyPulseEffect(pulse.id, 0);
+    await applyChip(pulse.id, 0);
     expect(await getTowerItems()).toHaveLength(1);
   });
 });
@@ -1246,7 +1276,7 @@ describe('dismissing a chip', () => {
       codingWith([{ type: 'spawnTask', text: 'call the plumber' }, { type: 'claimEvent', eventId: 'evt-1' }])
     );
 
-    await dismissPulseEffect(pulse.id, 0);
+    await dismissChip(pulse.id, 0);
 
     // A real re-open: the dismissal has to be durable, not a render-time flag.
     resetSession();
@@ -1592,11 +1622,11 @@ describe('proposals on the item they name', () => {
     ]);
 
     expect(grouped['item-1'].map((proposal) => proposal.pulseId)).toEqual(['p-early', 'p-late']);
-    expect(grouped['item-1'][0]).toEqual({ pulseId: 'p-early', index: 0, effect: UPDATE });
+    expect(grouped['item-1'][0]).toEqual({ pulseId: 'p-early', effect: UPDATE });
     expect(grouped['item-2'].map((proposal) => proposal.pulseId)).toEqual(['p-other']);
   });
 
-  it('carries the position the data layer takes, not the position among updateTasks', async () => {
+  it('carries the effect itself, whatever it sat behind in the pulse', async () => {
     const grouped = towerProposals([
       pulseRow('p1', '2026-08-28T09:00:00.000Z', [
         { type: 'completeHabit', habitId: 'h1' },
@@ -1605,7 +1635,10 @@ describe('proposals on the item they name', () => {
       ]),
     ]);
 
-    expect(grouped['item-1']).toEqual([{ pulseId: 'p1', index: 2, effect: UPDATE }]);
+    // The whole proposal, and no position of any kind: the data layer resolves
+    // a chip by what it proposes, and a position taken here would be true only
+    // of the list it was read from.
+    expect(grouped['item-1']).toEqual([{ pulseId: 'p1', effect: UPDATE }]);
   });
 
   it('skips an effect naming no task at all, rather than filing it under nothing', async () => {
@@ -1629,7 +1662,7 @@ describe('proposals on the item they name', () => {
     // Exactly what TowerView taps with: the selector's own answer, straight
     // into the data layer's one serialized apply path.
     const proposal = towerProposals(await getPulses())[towerId][0];
-    await applyPulseEffect(proposal.pulseId, proposal.index);
+    await applyPulseEffect(proposal.pulseId, proposal.effect);
 
     const item = (await getTowerItems()).find((candidate) => candidate.id === towerId);
     expect(item?.status).toBe('waiting');
@@ -1647,7 +1680,7 @@ describe('proposals on the item they name', () => {
     await enrichPulse(pulseId, codingWith([{ ...UPDATE, towerId }]));
 
     const proposal = towerProposals(await getPulses())[towerId][0];
-    await dismissPulseEffect(proposal.pulseId, proposal.index);
+    await dismissPulseEffect(proposal.pulseId, proposal.effect);
 
     const row = await reread(pulseId);
     expect(row.effects).toEqual([]);

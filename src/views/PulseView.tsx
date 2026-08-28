@@ -143,16 +143,17 @@ function PulseChips({ pulse, actions }: { pulse: PulseRow; actions: Pulses }) {
 
   return (
     <div className="col-start-2 col-span-2 flex flex-wrap items-center gap-2">
-      {effects.map((effect, index) => (
+      {effects.map((effect) => (
         <Chip
-          // The effect itself, never its position: an apply removes one and
-          // shifts the rest down, and React would then reuse the node of the
-          // chip that was there — swapping the label under a finger already
-          // on its way to the button.
+          // The effect itself, never its position — as the React key, and as
+          // what the tap carries. An apply removes one and shifts the rest
+          // down: React would reuse the node of the chip that was there,
+          // swapping the label under a finger already on its way to the
+          // button, and a position would name whatever moved into it.
           key={effectKey(effect)}
           label={effectChipLabel(pulse, effect, names)}
-          onApply={() => actions.applyEffect(pulse.id, index)}
-          onDismiss={() => actions.dismissEffect(pulse.id, index)}
+          onApply={() => actions.applyEffect(pulse.id, effect)}
+          onDismiss={() => actions.dismissEffect(pulse.id, effect)}
         />
       ))}
       {proposal !== null && (

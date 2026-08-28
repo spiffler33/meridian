@@ -266,3 +266,69 @@ describe('codePulse — a valid response degrades missing fields to safe default
     expect(await codePulse('x', BASE_CONTEXT)).toEqual(VALID_CODING_JSON);
   });
 });
+
+/**
+ * The system prompt.
+ *
+ * It is the only place the model is ever told what an effect carries or what
+ * the tower mouth means, and the chip code reads exact keys with no fallback:
+ * a coding answering `habit_id` renders a chip whose tap writes nothing and
+ * then drops the proposal. Matching a variant spelling in the chip code is a
+ * string rule over the model's output — the same fence as one over the owner's
+ * text — so the prompt is where this can be fixed, and therefore where it has
+ * to be pinned. Read off the wire rather than off an export: what the model is
+ * sent is the contract, not what a constant happens to hold.
+ */
+describe('the system prompt — the only place the model is told any of this', () => {
+  async function systemPrompt(context: CoderContext = BASE_CONTEXT): Promise<string> {
+    const fetchMock = vi.fn(async () => textResponse(VALID_CODING_JSON));
+    vi.stubGlobal('fetch', fetchMock);
+    await codePulse('the landlord is fixing the boiler', context);
+    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>;
+    return JSON.parse(calls[0][1].body as string).system as string;
+  }
+
+  it('names every effect type and every payload key the chips actually read', async () => {
+    const system = await systemPrompt();
+
+    // The four Appendix C effects, and the exact keys `applyOneEffect` reads
+    // off each one. Add a key to the chip code without adding it here and this
+    // fails, which is the point.
+    for (const name of ['completeHabit', 'spawnTask', 'updateTask', 'claimEvent']) {
+      expect(system).toContain(name);
+    }
+    for (const key of ['habitId', 'towerId', 'status', 'waitingOn', 'expectsBy', 'eventId']) {
+      expect(system).toContain(`"${key}"`);
+    }
+    // And the four statuses Tower has: any other is dropped on apply.
+    expect(system).toContain('active|waiting|someday|done');
+  });
+
+  it('tells the model the shape it must answer in, and the seven signals', async () => {
+    const system = await systemPrompt();
+
+    expect(system).toContain('block|event|state|plan|task|claim|note');
+    for (const key of ['signal', 'domain', 'activity', 'people', 'span', 'links', 'effects', 'vocabProposal']) {
+      expect(system).toContain(`"${key}"`);
+    }
+  });
+
+  it('makes the tower-mouth clause conditional on the item still being in the context', async () => {
+    const system = await systemPrompt({ ...BASE_CONTEXT, mouth: 'tower' });
+
+    // The utterance was saved as a task when it was said — but `openTowerItems`
+    // excludes `done`, and an item can be deleted, while the coding queue is
+    // lazy: capture into Tower offline, mark it done next morning, and the
+    // sweep codes this line against a context the item is absent from.
+    // Asserting presence unconditionally would tell the model something false,
+    // and invite what the rules two lines down forbid.
+    expect(system).toContain('If that task is still one of the openTowerItems');
+    expect(system).toContain('Never propose spawnTask for it');
+    expect(system).toContain('never invent people, habits, events, or tasks not present in context');
+  });
+
+  it('is the same prompt whichever mouth the pulse came from — the mouth travels in the payload', async () => {
+    // The bias is context, not a second prompt: one classifier, two mouths.
+    expect(await systemPrompt({ ...BASE_CONTEXT, mouth: 'tower' })).toBe(await systemPrompt());
+  });
+});

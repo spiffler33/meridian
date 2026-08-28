@@ -421,7 +421,8 @@ describe('a chip applied on the Pulse page', () => {
 
   it('puts the task it spawned into the reducer, without a reload', async () => {
     const pulse = await createPulse('sort out the boiler')
-    await enrichPulse(pulse.id, { ...CODING, effects: [{ type: 'spawnTask', text: 'call the plumber' }] })
+    const effect = { type: 'spawnTask' as const, text: 'call the plumber' }
+    await enrichPulse(pulse.id, { ...CODING, effects: [effect] })
 
     render(createElement(AppProvider, null, createElement(TowerProbe, null)))
     await waitFor(() => {
@@ -429,7 +430,9 @@ describe('a chip applied on the Pulse page', () => {
     })
     expect(screen.getByTestId('tower')).toHaveTextContent('')
 
-    await applyPulseEffect(pulse.id, 0)
+    // By value, as both views tap: the same literal that was stored, which is
+    // what `effectKey` compares.
+    await applyPulseEffect(pulse.id, effect)
 
     await waitFor(() => {
       expect(screen.getByTestId('tower')).toHaveTextContent('call the plumber')
@@ -439,7 +442,8 @@ describe('a chip applied on the Pulse page', () => {
   it('puts the habit it ticked into the reducer, without a reload', async () => {
     const habit = await createHabit({ label: 'strength', category: 'health' })
     const pulse = await createPulse('gym done')
-    await enrichPulse(pulse.id, { ...CODING, effects: [{ type: 'completeHabit', habitId: habit.id }] })
+    const effect = { type: 'completeHabit' as const, habitId: habit.id }
+    await enrichPulse(pulse.id, { ...CODING, effects: [effect] })
 
     render(createElement(AppProvider, null, createElement(DayProbe, null)))
     await waitFor(() => {
@@ -447,7 +451,7 @@ describe('a chip applied on the Pulse page', () => {
     })
     expect(screen.getByTestId('ticked')).toHaveTextContent('')
 
-    await applyPulseEffect(pulse.id, 0)
+    await applyPulseEffect(pulse.id, effect)
 
     await waitFor(() => {
       expect(screen.getByTestId('ticked')).toHaveTextContent(habit.id)

@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import type { PulseRow } from '../lib/entities';
+import type { PulseEffect, PulseRow } from '../lib/entities';
 import { NO_CHIP_NAMES, pulsesForDay } from '../lib/pulse';
 import type { PulseChipNames } from '../lib/pulse';
 import { scheduleFlush } from '../lib/sync';
@@ -42,10 +42,16 @@ export interface Pulses {
   /** Capture one. Resolves false when nothing was saved, so the box can keep the text. */
   capture: (text: string) => Promise<boolean>;
   remove: (id: string) => void;
-  /** Apply the effect at `index` on that pulse, and drop its chip. */
-  applyEffect: (pulseId: string, index: number) => void;
-  /** Drop the chip and keep the coding. */
-  dismissEffect: (pulseId: string, index: number) => void;
+  /**
+   * Apply that proposal on that pulse, and drop its chip.
+   *
+   * The effect itself, never its position: an apply shifts the rest of the
+   * list down, so a second tap landing before the repaint — or after a repaint
+   * that never came — would name a different proposal (see `applyPulseEffect`).
+   */
+  applyEffect: (pulseId: string, effect: PulseEffect) => void;
+  /** Drop the chip and keep the coding. Carried by value, for the same reason. */
+  dismissEffect: (pulseId: string, effect: PulseEffect) => void;
   /** Approve the vocabulary proposal. Always a tap — it has no auto path. */
   applyVocab: (pulseId: string) => void;
   dismissVocab: (pulseId: string) => void;
@@ -227,11 +233,11 @@ export function usePulses(day: string, timeZone: string): Pulses {
   }, [refresh]);
 
   const applyEffect = useCallback(
-    (pulseId: string, index: number) => act(() => applyPulseEffect(pulseId, index)),
+    (pulseId: string, effect: PulseEffect) => act(() => applyPulseEffect(pulseId, effect)),
     [act]
   );
   const dismissEffect = useCallback(
-    (pulseId: string, index: number) => act(() => dismissPulseEffect(pulseId, index)),
+    (pulseId: string, effect: PulseEffect) => act(() => dismissPulseEffect(pulseId, effect)),
     [act]
   );
   const applyVocab = useCallback((pulseId: string) => act(() => approvePulseVocabProposal(pulseId)), [act]);

@@ -1040,26 +1040,25 @@ function updateTaskDraft(effect: PulseEffect): EventDraft | null {
  * Apply one proposed effect: the chip's own write and the chip's removal, in
  * one commit (see this section's opening note).
  *
+ * BY VALUE, never by position. A chip is identified by exactly what it
+ * proposes (`effectKey`), because an apply removes an effect and shifts every
+ * later one down: a caller holding a position taken before that — a second tap
+ * on a chip the repaint has not yet cleared, or a repaint that never came
+ * because the re-read threw — would name a DIFFERENT proposal, and apply one
+ * the owner never tapped. That is worse than applying none at all, and it is
+ * silent. A position cannot survive the queue below either.
+ *
  * The effect always leaves the list, whether or not it could be applied. An
  * effect naming a habit that no longer exists, or a task that was deleted, is
  * not a failure to report — there is nothing to do and nothing that will ever
  * make there be, so the honest outcome is the chip going away. That also
  * keeps the auto-apply pass below finite.
  *
- * Out of range, or a pulse that is gone: nothing at all is written.
+ * An effect the pulse no longer holds, or a pulse that is gone: nothing at all
+ * is written.
  */
-export async function applyPulseEffect(pulseId: string, index: number): Promise<void> {
-  await hydrate();
-  // WHICH effect the caller means is decided here, against the list it was
-  // actually looking at, and carried into the queue as a value rather than a
-  // position. An apply queued ahead of this one removes an effect and shifts
-  // every later one down, so the same index would then name a different
-  // proposal — and applying one the owner never tapped is worse than
-  // applying none at all.
-  const target = readPulseRows().find((candidate) => candidate.id === pulseId)?.effects?.[index];
-  if (target === undefined) return;
-
-  return serializePulseWrite(() => applyOneEffect(pulseId, target));
+export async function applyPulseEffect(pulseId: string, effect: PulseEffect): Promise<void> {
+  return serializePulseWrite(() => applyOneEffect(pulseId, effect));
 }
 
 async function applyOneEffect(pulseId: string, target: PulseEffect): Promise<void> {
@@ -1154,18 +1153,14 @@ async function applyOneEffect(pulseId: string, target: PulseEffect): Promise<voi
  * overwrites it, and a position taken before the queue names the wrong chip
  * after it.
  */
-export async function dismissPulseEffect(pulseId: string, index: number): Promise<void> {
-  await hydrate();
-  const target = readPulseRows().find((candidate) => candidate.id === pulseId)?.effects?.[index];
-  if (target === undefined) return;
-
+export async function dismissPulseEffect(pulseId: string, effect: PulseEffect): Promise<void> {
   return serializePulseWrite(async () => {
-    // Again inside the queue: a pull landing while this waited its turn drops
-    // the session, and the read below would otherwise be against nothing.
+    // Inside the queue: a pull landing while this waited its turn drops the
+    // session, and the read below would otherwise be against nothing.
     await hydrate();
     const row = readPulseRows().find((candidate) => candidate.id === pulseId);
     if (row === undefined) return;
-    const wanted = effectKey(target);
+    const wanted = effectKey(effect);
     const at = (row.effects ?? []).findIndex((candidate) => effectKey(candidate) === wanted);
     if (at === -1) return;
     await commit([{ entity: ENTITY.pulse, entityId: pulseId, type: 'upsert', fields: withoutEffect(row, at) }]);
@@ -1254,8 +1249,8 @@ export async function dismissPulseVocabProposal(pulseId: string): Promise<void> 
  * items for proposals that have been sitting there; a sweep over the store
  * would give exactly that, and there is deliberately no code path that could.
  *
- * The list is re-read each time round because every apply rewrites it, so an
- * index taken before the first one would point at the wrong effect after it.
+ * The list is re-read each time round because every apply rewrites it, and the
+ * effect found in it is carried by value, as every other caller carries one.
  * The loop is bounded by the effects the coding produced, and terminates
  * because an apply always removes its effect, applicable or not.
  *
@@ -1273,9 +1268,9 @@ async function autoApplyEffects(pulseId: string): Promise<void> {
     const initial = readPulseRows().find((row) => row.id === pulseId)?.effects?.length ?? 0;
     for (let remaining = initial; remaining > 0; remaining -= 1) {
       const effects = readPulseRows().find((row) => row.id === pulseId)?.effects ?? [];
-      const index = effects.findIndex((effect) => enabled.has(effect.type));
-      if (index === -1) return;
-      await applyPulseEffect(pulseId, index);
+      const effect = effects.find((candidate) => enabled.has(candidate.type));
+      if (effect === undefined) return;
+      await applyPulseEffect(pulseId, effect);
     }
   } catch {
     // Same shape as every other failure on this path: nothing happened.
