@@ -11,7 +11,7 @@ of the owner's utterances. Authored-AI prose returns only where there is content
 synthesize (ask-the-library, its own future plan). The day-shape briefing is dead
 (see PLAN_CALENDAR amendment).
 
-## Status — Phases 0–4 built and deployed; Phase 5 written and gated, 2026-08-29
+## Status — all six phases built and deployed, 2026-08-29
 
 Phases 0, 1, 2 and 3 are on `main` and live at meridian.spiffler.xyz. What is left of them
 is the owner's: **Gate 0** (does Read feel cleaner without Week as a view?), **Gate 2** (a
@@ -30,10 +30,14 @@ owner lifted that gate the same day and ordered it built — *"i dont like this 
 choose - this is my decision not yours"* — so it shipped with Gate 3 still open, and the
 same call governs what follows. **Gate 4 is now open and is the owner's.**
 
-**Phase 5 is next, by the owner's instruction, with Gate 3 still unrun.** The addendum
-gates it behind Gate 3; that gate is the owner's to lift and they have lifted it. Nothing
-in `src/` implements Phase 5 yet; where the appendices below carry a Phase 5 shape they say
-so inline, and the shipped code still matches the pre-Phase-5 shape.
+**Phase 5 is built and deployed, 2026-08-29**, by the owner's instruction and with Gate 3
+still unrun — the addendum gated it behind Gate 3, that gate is the owner's to lift, and
+they lifted it. The nutrition ledger, the Today line, the weekly kcal bars and the
+owner-invoked backfill are all on `main`. **Gate 5 is now open and is the owner's**: run
+the backfill, then a calibration week.
+
+**The plan is complete.** Every phase is built; what remains of it is five gates, all of
+them the owner's, each verdict an amendment to this file.
 
 ## How to execute this plan
 
@@ -303,9 +307,10 @@ and vocab chips left, is the stream calmer? STOP.
 
 ## Phase 5 — Nutrition ledger (calories + protein; arithmetic only)
 
-**NEXT. Unbuilt.** Added 2026-08-29 by the owner, who lifted its Gate 3 gate the same day
-and ordered it built next — Gate 3 is still unrun, and Gate 5's calibration week is what
-will judge this phase instead. Nothing in `src/` implements any of it.
+**STATUS: built and deployed 2026-08-29.** Added 2026-08-29 by the owner, who lifted its
+Gate 3 gate the same day and ordered it built next — Gate 3 is still unrun, and Gate 5's
+calibration week is what will judge this phase instead. See the run log for what shipped
+and the two things it changed along the way.
 
 **Goal:** daily kcal and protein totals from ordinary food pulses. Stated numbers win,
 estimates are marked, vague items are visibly uncounted. The ledger reads like something
@@ -368,7 +373,7 @@ protein sum), target line on/off, weekly two-tone bars + value-outside, backfill
 targeting, backfill effect suppression, backfill idempotent rerun, per-pulse failure
 isolation, ambient-sweep-ignores-rev regression.
 
-**GATE 5:** run the backfill first, then a calibration week. Spot-check ~15 food pulses
+**GATE 5 — OPEN, 2026-08-29.** Run the backfill first, then a calibration week. Spot-check ~15 food pulses
 against your own knowledge of what you ate: are estimates in believable range, and is
 uncounted rare enough that the total means something? Then the parked decision:
 finalize the target display — keep the plain `· of` text, change it, or drop it. STOP.
@@ -1025,3 +1030,87 @@ arithmetic tests, three rendering ones, and `trailingWindow` restored). `tsc -b`
 **No gate of its own.** It reports to Gate 4's question (c), which is no longer "should this
 be rebuilt" but "do the coder's activity labels hold still enough, across twelve weeks, for
 the strip to mean anything" — a question only real coded weeks can answer.
+
+### 2026-08-29 — Phase 5: the nutrition ledger, closed. Gate 5 is open and is the owner's.
+
+Green: `vitest` 688 passed / 33 files (was 649 / 33), three consecutive clean runs ·
+`tsc -b` clean · `npm run build` clean · `grep -rn "localStorage" src/` → 0 · lint 6
+errors, all pre-existing and unchanged for four phases.
+
+Built as specified. `pulse` gained two enrichment fields — `nutrition` and `coderRev`,
+fields and not entities, so fence 7 is intact. The coder's prompt gained the nutrition
+rules and nothing else; `NUTRITION_RULES` in `coder.ts` is the whole of the extraction,
+and there is no food list, no portion table and no unit parser anywhere in `src/` (fence
+2). Today shows a mono line between the stream and the box; Energy shows seven daily kcal
+bars; Settings gained a calorie target and the backfill tool.
+
+**The context allowlist did not grow, and there is now a test that says so** — it asserts
+the assembled payload's top-level keys are exactly Appendix B's six. Appendix B's sentence
+about not "helpfully" enriching the context was written for a future session; this makes
+it fail a build rather than a review.
+
+**Three interpretations, each recorded because each could have gone the other way.**
+
+**1. `coderRev` is stamped locally, never read off the model's answer.** Appendix B's
+schema shows `"coderRev": 2` and it is transcribed into the prompt verbatim, but
+`toCoding` ignores whatever comes back and writes `CODER_REV`. The rev describes the
+schema *this build parses against* — a fact about the code, not about the answer. A model
+that echoed `1`, omitted the key, or wrote `"two"` would leave that pulse permanently in
+the backfill's sights, re-coded and re-billed on every run. Pinned by a test.
+
+**2. The backfill omits `effects` and `vocabProposal` from its event entirely, rather than
+writing them empty.** The plan says a backfill produces "no chips about last Tuesday",
+which is a rule about not CREATING proposals. Writing `[]` and `null` would have gone
+further and destroyed a proposal already sitting there unanswered — a re-code that quietly
+clears the owner's inbox. Field-level last-writer-wins leaves an unmentioned field exactly
+as it was, so `enrichPulse` gained a `scope` argument (`'full' | 'codingOnly'`) and the
+backfill path is the second. A test captures a pulse with a pending chip, backfills it, and
+asserts the chip is still there and the backfill's own proposal is not.
+
+**3. Uncoded pulses are in the backfill's scope.** The plan's target is "pulses since
+`PULSE_EPOCH` with `coderRev` absent or `< CODER_REV`", and an uncoded pulse has no
+`coderRev` either — the literal reading. It is also the right one: the ambient sweep does
+at most twenty per open, so a long backlog would otherwise never be finished by anything.
+
+**One bug found and fixed while testing the weekly chart.** A week in which every logged
+meal was uncounted rendered "nothing eaten was logged this week" — the chart telling the
+owner they had not eaten. "Nothing was logged" and "nothing that was logged could be
+counted" are different weeks and only the first is empty; the empty state now also requires
+`uncounted === 0`.
+
+**The ambient sweep still knows nothing about `coderRev`**, and its own describe block says
+so: three simulated opens plus the on-save path against a pulse coded at rev 1, asserting
+the coder is never called, and that the pulse is still the backfill's business afterwards.
+Ambient re-coding is a billing bug by definition — it would look completely correct on
+screen, which is why it is pinned as a regression test rather than left to review.
+
+Other decisions worth naming:
+
+- **`kcal: null` versus an absent `nutrition` survives end to end** — parser, row reader,
+  ledger and both surfaces. A figure that is not a finite non-negative number reads as
+  uncounted rather than as zero: a silent zero drags a day's total down while still looking
+  like a total.
+- **`kcalSource` falls back to `estimated`, never to `stated`.** Dressing the coder's guess
+  up as the owner's measurement is the single error that field exists to prevent.
+- **The day boundary is `pulsesForDay`'s, imported rather than restated.** The line sits
+  directly above the box and must add up exactly the lines visible above it, so it buckets
+  by `at` and not by `span.start`, which can be back-dated.
+- **`kcalLabel` pins `en-US`.** It is the only place in `ledger.ts` a number is rendered
+  rather than compared, and an unpinned locale would print the same journal differently on
+  the phone and the laptop.
+- **`PulseView.test.tsx` now renders inside the real `AppProvider`**, as `TowerView`'s
+  tests already did: the target is profile state, and a stubbed context would prove nothing
+  about the wiring between a profile write and what the line prints. Its file comment said
+  the view read no app state; that is no longer true and the comment was corrected.
+- **The target's display is provisional, as the plan says.** It reads `620 kcal · of 1,800`
+  — attached to the figure it qualifies, which is the only unambiguous placement, and one
+  array entry to move or delete at the gate.
+- **The vocabulary seed gained `eating → self`.** Seeding is once-ever and idempotent, so a
+  device that seeded before this line existed never gains it, and nothing needs it to —
+  extraction is not gated on the label.
+
+**GATE 5 is open.** Run the backfill first (Settings → re-code history: `count`, then the
+run button, which shows the price before it does anything). Then a calibration week:
+spot-check ~15 food pulses against your own knowledge of what you ate — are the estimates
+in believable range, and is uncounted rare enough that the total means something? Then the
+parked decision: finalize the target display — keep the plain `· of`, change it, or drop it.

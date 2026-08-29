@@ -12,8 +12,10 @@
  * write rather than inventing its own — and so no real timer or network
  * survives the test.
  *
- * PulseView reads no app state — `useApp` belongs to Tower, not this view —
- * so nothing here mocks it.
+ * The real `AppProvider` wraps every render, as `TowerView.test.tsx` does it
+ * and for the same reason: the profile is app state, the phase 5 calorie line
+ * reads a field off it, and a stubbed context would prove nothing about the
+ * wiring between a profile write and what the line prints.
  *
  * Every test captures its OWN line, and a coder that answers a coding answers
  * only for that line (`answerFor`), exactly as `TowerView.test.tsx` does it.
@@ -28,7 +30,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 const scheduleFlushMock = vi.hoisted(() => vi.fn());
-vi.mock('../lib/sync', () => ({ scheduleFlush: scheduleFlushMock }));
+vi.mock('../lib/sync', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/sync')>();
+  return { ...actual, scheduleFlush: scheduleFlushMock };
+});
 
 // Coding is lazy and runs in the background after every capture (usePulses).
 // Mocked explicitly rather than left to the coder's own no-API-key fallback,
@@ -46,10 +51,20 @@ import type { OutboxRecord } from '../lib/db';
 import { ENTITY, readPulseVocabRow, resetSession } from '../lib/entities';
 import type { JournalEvent } from '../lib/journal';
 import { PulseView } from './PulseView';
-import { getPulses } from '../services/data';
+import { AppProvider } from '../store/AppContext';
+import { getPulses, updateProfile } from '../services/data';
+import { CODER_REV } from '../services/coder';
 import type { Coding } from '../services/coder';
 
 const NOW = new Date('2026-08-27T12:00:00.000Z');
+
+function renderPulse() {
+  render(
+    <AppProvider>
+      <PulseView />
+    </AppProvider>
+  );
+}
 
 const SAMPLE_CODING: Coding = {
   signal: 'note',
@@ -58,6 +73,8 @@ const SAMPLE_CODING: Coding = {
   people: [],
   span: { start: '2026-08-27T12:00:00.000Z', end: null, approx: false },
   links: { eventId: null },
+  nutrition: null,
+  coderRev: CODER_REV,
   effects: [],
   vocabProposal: null,
 };
@@ -94,13 +111,13 @@ afterEach(async () => {
 
 describe('the capture box', () => {
   it('autofocuses on mount', async () => {
-    render(<PulseView />);
+    renderPulse();
 
     expect(await screen.findByLabelText('capture a pulse')).toHaveFocus();
   });
 
   it('escape blurs it', async () => {
-    render(<PulseView />);
+    renderPulse();
     const box = await screen.findByLabelText('capture a pulse');
     expect(box).toHaveFocus();
 
@@ -112,7 +129,7 @@ describe('the capture box', () => {
 
 describe('capture', () => {
   it('renders optimistically, clears the field, and reuses the outbox/flush path', async () => {
-    render(<PulseView />);
+    renderPulse();
     const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
 
     fireEvent.change(box, { target: { value: '  wrote the plan  ' } });
@@ -141,8 +158,12 @@ describe('capture', () => {
   });
 
   it('does nothing on an empty enter', async () => {
-    render(<PulseView />);
+    renderPulse();
     const box = await screen.findByLabelText('capture a pulse');
+    // Cleared after mount: `AppProvider` pushes on its own startup writes, and
+    // the claim under test is about what the EMPTY ENTER did, not about what
+    // the page did to come up.
+    scheduleFlushMock.mockClear();
 
     fireEvent.keyDown(box, { key: 'Enter' });
 
@@ -153,7 +174,7 @@ describe('capture', () => {
 
 describe('the coding dot', () => {
   it('is hollow for an uncoded pulse, and stays hollow when the coder has nothing to offer', async () => {
-    render(<PulseView />);
+    renderPulse();
     const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
 
     fireEvent.change(box, { target: { value: 'stays uncoded' } });
@@ -176,7 +197,7 @@ describe('the coding dot', () => {
   it('fills once the coder returns a coding', async () => {
     answerFor('gets coded', SAMPLE_CODING);
 
-    render(<PulseView />);
+    renderPulse();
     const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
 
     fireEvent.change(box, { target: { value: 'gets coded' } });
@@ -203,7 +224,7 @@ describe('effect chips', () => {
   it('renders nothing under a line whose coding proposed nothing', async () => {
     answerFor('just a note', SAMPLE_CODING);
 
-    render(<PulseView />);
+    renderPulse();
     const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
     fireEvent.change(box, { target: { value: 'just a note' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -222,7 +243,7 @@ describe('effect chips', () => {
       effects: [{ type: 'claimEvent', eventId: 'evt-1' }],
     });
 
-    render(<PulseView />);
+    renderPulse();
     const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
     fireEvent.change(box, { target: { value: 'that was the school thing' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -241,7 +262,7 @@ describe('effect chips', () => {
       effects: [{ type: 'claimEvent', eventId: 'evt-1' }],
     });
 
-    render(<PulseView />);
+    renderPulse();
     const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
     fireEvent.change(box, { target: { value: LINE } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -265,7 +286,7 @@ describe('effect chips', () => {
       vocabProposal: { kind: 'domain', value: 'garden', mapsTo: null },
     });
 
-    render(<PulseView />);
+    renderPulse();
     const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
     fireEvent.change(box, { target: { value: 'pruned the hedge' } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -281,5 +302,94 @@ describe('effect chips', () => {
 
     await waitFor(() => expect(readPulseVocabRow()?.domains).toContain('garden'));
     expect(screen.queryByText('+ domain garden')).toBeNull();
+  });
+});
+
+/**
+ * The nutrition line (phase 5): an instrument, not a message.
+ *
+ * What is pinned is what it PRINTS, not how it is styled — the four numbers,
+ * the parts that disappear rather than showing a zero, and the target that
+ * only appears when the owner has set one. And that it says nothing else:
+ * fence 6 is a claim about the words on the screen, and this is the screen.
+ */
+describe('the nutrition line', () => {
+  /**
+   * What the coder will answer, by the line it is asked about.
+   *
+   * One implementation for the whole test, registered before any capture.
+   * Coding is fired and not awaited (fence 3), so a call for the FIRST line
+   * can still be in flight when the second is typed — and a mock reassigned
+   * per capture would answer that late call with the wrong line's food, or
+   * with null.
+   */
+  const menu = new Map<string, Coding['nutrition']>();
+
+  beforeEach(() => {
+    menu.clear();
+    codePulseMock.mockImplementation(async (captured: string) => {
+      const nutrition = menu.get(captured);
+      return nutrition === undefined ? null : { ...SAMPLE_CODING, nutrition };
+    });
+  });
+
+  /** One coded pulse carrying nutrition, captured through the real path. */
+  async function captureFood(text: string, nutrition: Coding['nutrition']): Promise<void> {
+    menu.set(text, nutrition);
+    const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
+    fireEvent.change(box, { target: { value: text } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    // The line renders optimistically; the dot fills only once the coding has
+    // landed and the list has been re-read, which is what the totals read.
+    const line = await screen.findByText(text);
+    const row = line.closest('li');
+    await waitFor(() => expect(row?.querySelector('.bg-text-muted')).not.toBeNull());
+  }
+
+  it('is absent on a day with no food logged — an empty instrument is not a fact', async () => {
+    renderPulse();
+    await screen.findByLabelText('capture a pulse');
+
+    expect(screen.queryByText(/kcal/)).not.toBeInTheDocument();
+  });
+
+  it('prints the total, the estimated share, the uncounted count and protein, separated', async () => {
+    renderPulse();
+    await captureFood('620 kcal burrito', { kcal: 620, kcalSource: 'stated', proteinG: 42, proteinSource: 'stated' });
+    await captureFood('two eggs on toast', { kcal: 300, kcalSource: 'estimated', proteinG: 18, proteinSource: 'estimated' });
+    await captureFood('ate something at the buffet', { kcal: null, kcalSource: 'estimated' });
+
+    // 920 counted, 300 of it estimated, one recognised and unsizeable.
+    expect(await screen.findByText('920 kcal · 300 est · 1 uncounted')).toBeInTheDocument();
+    expect(screen.getByText('60 g protein')).toBeInTheDocument();
+  });
+
+  it('drops the estimated and uncounted parts when there are none, rather than printing zeros', async () => {
+    renderPulse();
+    await captureFood('620 kcal burrito', { kcal: 620, kcalSource: 'stated' });
+
+    // "0 uncounted" is noise on the ordinary day, and the tally only means
+    // something because it is unusual enough to notice.
+    expect(await screen.findByText('620 kcal')).toBeInTheDocument();
+    expect(screen.queryByText(/est/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/uncounted/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/protein/)).not.toBeInTheDocument();
+  });
+
+  it('appends the target only when the owner has set one, as a plain number', async () => {
+    renderPulse();
+    await captureFood('620 kcal burrito', { kcal: 620, kcalSource: 'stated' });
+    expect(await screen.findByText('620 kcal')).toBeInTheDocument();
+
+    cleanup();
+    await updateProfile({ kcal_target: 1800 });
+    resetSession();
+    renderPulse();
+
+    // A number beside a number. No comparison, no verdict, no colour that
+    // changes with the total, and nothing about the gap (fence 6).
+    const line = await screen.findByText('620 kcal · of 1,800');
+    expect(line).toBeInTheDocument();
+    expect(line.textContent).not.toMatch(/over|under|left|remaining|good|goal/i);
   });
 });

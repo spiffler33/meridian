@@ -21,7 +21,9 @@ import {
   activityTiming,
   claimedEventIds,
   closeSpans,
+  dayNutrition,
   endOfLocalDayMs,
+  kcalLabel,
   ledgerHonesty,
   localHour,
   neededByCalendar,
@@ -31,6 +33,7 @@ import {
   startOfLocalDayMs,
   TIMING_ROWS,
   trailingWindow,
+  weekNutrition,
   weekWindow,
 } from './ledger';
 
@@ -521,5 +524,105 @@ describe('the honesty line', () => {
       uncoded: 0,
       captured: 0,
     });
+  });
+});
+
+// ============================================================================
+// Nutrition (phase 5)
+// ============================================================================
+
+/** A pulse that says the owner ate something. `nutrition` is the only field any of these assert on. */
+function ate(
+  id: string,
+  at: string,
+  nutrition: PulseRow['nutrition'],
+  extra: Partial<PulseRow> = {}
+): PulseRow {
+  return { ...coded(id, 'note', at), nutrition, ...extra };
+}
+
+describe('dayNutrition', () => {
+  it('splits a day into counted, estimated-within-counted, and uncounted, and sums protein across all of it', () => {
+    const day = [
+      // Stated: the owner's own figure, copied. It counts, and none of it is estimated.
+      ate('breakfast', '2026-08-28T15:00:00.000Z', { kcal: 420, kcalSource: 'stated', proteinG: 30, proteinSource: 'stated' }),
+      // Estimated: counted in full, and ALSO reported as the estimated share —
+      // it is one number with a note about its provenance, not two numbers.
+      ate('lunch', '2026-08-28T19:00:00.000Z', { kcal: 700, kcalSource: 'estimated', proteinG: 40, proteinSource: 'estimated' }),
+      // Recognised and unsizeable: adds nothing to the total, counted separately.
+      ate('buffet', '2026-08-28T22:00:00.000Z', { kcal: null, kcalSource: 'estimated' }),
+      // Not food at all. Contributes to nothing, not even the uncounted tally.
+      coded('meeting', 'block', '2026-08-28T17:00:00.000Z'),
+    ];
+
+    expect(dayNutrition(day, '2026-08-28', LA)).toEqual({
+      kcal: 1120,
+      estimatedKcal: 700,
+      uncounted: 1,
+      proteinG: 70,
+    });
+  });
+
+  it('counts protein from a pulse whose calories are uncounted — the two figures are independent', () => {
+    const day = [ate('shake', '2026-08-28T16:00:00.000Z', { kcal: null, kcalSource: 'estimated', proteinG: 25, proteinSource: 'stated' })];
+    expect(dayNutrition(day, '2026-08-28', LA)).toEqual({ kcal: 0, estimatedKcal: 0, uncounted: 1, proteinG: 25 });
+  });
+
+  it('buckets by the LOCAL day: 23:59 belongs to the day it was eaten on, 00:01 to the next', () => {
+    // 06:59Z and 07:01Z on the 29th are 23:59 on the 28th and 00:01 on the
+    // 29th in LA. A UTC `slice(0, 10)` puts both on the 29th, which silently
+    // moves every late dinner west of Greenwich onto tomorrow's total.
+    const lateDinner = ate('dinner', '2026-08-29T06:59:00.000Z', { kcal: 800, kcalSource: 'stated' });
+    const midnightSnack = ate('snack', '2026-08-29T07:01:00.000Z', { kcal: 200, kcalSource: 'stated' });
+    const both = [lateDinner, midnightSnack];
+
+    expect(dayNutrition(both, '2026-08-28', LA).kcal).toBe(800);
+    expect(dayNutrition(both, '2026-08-29', LA).kcal).toBe(200);
+
+    // The same two instants, east of Greenwich, land on different days again —
+    // the boundary is the zone's, never UTC's.
+    expect(dayNutrition(both, '2026-08-29', SGT).kcal).toBe(1000);
+  });
+
+  it('is all zeros for a day with nothing eaten, so the view can tell "no food" from "no calories"', () => {
+    expect(dayNutrition([coded('work', 'block', '2026-08-28T17:00:00.000Z')], '2026-08-28', LA)).toEqual({
+      kcal: 0,
+      estimatedKcal: 0,
+      uncounted: 0,
+      proteinG: 0,
+    });
+  });
+});
+
+describe('weekNutrition', () => {
+  it('returns seven days including the empty ones, and sums the week\'s uncounted as one footnote', () => {
+    const pulses = [
+      ate('mon', '2026-08-24T19:00:00.000Z', { kcal: 900, kcalSource: 'stated' }),
+      ate('wed', '2026-08-26T19:00:00.000Z', { kcal: 600, kcalSource: 'estimated' }),
+      ate('wed-vague', '2026-08-26T21:00:00.000Z', { kcal: null, kcalSource: 'estimated' }),
+      ate('sun', '2026-08-30T19:00:00.000Z', { kcal: null, kcalSource: 'estimated' }),
+    ];
+
+    const week = weekNutrition(pulses, '2026-08-26', LA, 1);
+
+    // Seven bars, always. A blank Wednesday is a fact about the week; a chart
+    // that dropped its empty days would draw a different shape every week.
+    expect(week.days).toHaveLength(7);
+    expect(week.days.map(day => day.date)).toEqual([
+      '2026-08-24', '2026-08-25', '2026-08-26', '2026-08-27', '2026-08-28', '2026-08-29', '2026-08-30',
+    ]);
+    expect(week.days.map(day => day.kcal)).toEqual([900, 0, 600, 0, 0, 0, 0]);
+    // Only Wednesday's was an estimate; Monday's was the owner's own number.
+    expect(week.days.map(day => day.estimatedKcal)).toEqual([0, 0, 600, 0, 0, 0, 0]);
+    // Both uncounted items, on two different days, in one tally.
+    expect(week.uncounted).toBe(2);
+  });
+});
+
+describe('kcalLabel', () => {
+  it('separates thousands and rounds to whole calories, the same way on every device', () => {
+    expect(kcalLabel(1240)).toBe('1,240');
+    expect(kcalLabel(830.4)).toBe('830');
+    expect(kcalLabel(0)).toBe('0');
   });
 });

@@ -26,9 +26,11 @@
 
 import { loadApiKey } from './claude';
 import type {
+  NutritionSource,
   PulseEffect,
   PulseEffectType,
   PulseLinks,
+  PulseNutrition,
   PulseSignal,
   PulseSpan,
   PulseVocabProposal,
@@ -38,6 +40,31 @@ import type {
 
 /** One line to flip at Gate 2 if the miscoding rate says so. */
 export const CODER_MODEL = 'claude-sonnet-5';
+
+/**
+ * The revision of the coding schema this build produces.
+ *
+ * Rev 2 is the one that carries `nutrition`. It exists for exactly one reader:
+ * the owner-invoked backfill, which selects pulses coded at a lower rev and
+ * re-codes them. Nothing else may branch on it — in particular the ambient
+ * sweep must not, or every re-open would re-code the entire history at the
+ * owner's expense (a regression test pins that).
+ *
+ * Bump it when a schema change makes an older coding worth redoing, and only
+ * then: a bump is a bill.
+ */
+export const CODER_REV = 2;
+
+/**
+ * A rough per-pulse cost, in US dollars, for the backfill's confirmation line.
+ *
+ * Sonnet 5 at $3/$15 per million tokens, against this file's own measured
+ * shape: ~1.8K input (the system prompt, the vocabulary, a day of events and
+ * five recent pulses) and ~150 output. That is ~$0.0075, rounded up here —
+ * the number's job is to stop the owner spending more than they meant to, so
+ * it should never read low. It is not billing; it is a warning label.
+ */
+export const APPROX_COST_PER_PULSE_USD = 0.01;
 
 /** Appendix B's ceiling. Typical output is ~150 tokens; this is the cap, not the target. */
 const MAX_OUTPUT_TOKENS = 500;
@@ -90,6 +117,19 @@ export type Coding = {
   people: string[];
   span: PulseSpan;
   links: PulseLinks;
+  /**
+   * What the owner consumed, or `null` for an utterance that is not about
+   * them consuming anything.
+   *
+   * `null` here is a written value, not an omission: a re-code that decides a
+   * pulse was never food has to be able to CLEAR a nutrition block an earlier
+   * revision wrote, and field-level last-writer-wins only clears what is
+   * explicitly written. The distinction the ledger reads — no food at all
+   * versus food it could not count — lives one level down, in `kcal`.
+   */
+  nutrition: PulseNutrition | null;
+  /** Always `CODER_REV`. See `toCoding` for why the model's own answer is not trusted. */
+  coderRev: number;
   effects: PulseEffect[];
   vocabProposal: PulseVocabProposal | null;
 };
@@ -118,6 +158,9 @@ const OUTPUT_SCHEMA = `{
   "domain": null, "activity": null, "people": [],
   "span": {"start": "...", "end": null, "approx": false},
   "links": {"eventId": null},
+  "nutrition": {"kcal": null, "kcalSource": "stated|estimated",
+                "proteinG": null, "proteinSource": "stated|estimated"},
+  "coderRev": 2,
   "effects": [{"type": "claimEvent", "...": "..."}],
   "vocabProposal": {"kind": "domain|activity|person", "value": "...", "mapsTo": null}
 }`;
@@ -158,6 +201,45 @@ const RULES =
   'nulls over guesses; signal always set (note when unsure); never invent people or ' +
   'events not present in context; time expressions resolved against now and tz.';
 
+/**
+ * Phase 5's nutrition rules, given to the model — the whole of the feature.
+ *
+ * Extraction is model-side and nowhere else (fence 2): there is no food list,
+ * no portion table, no unit parser anywhere in this codebase, and there must
+ * never be one. What the app does with the answer is arithmetic; deciding
+ * that "two eggs on toast" is about 300 kcal is judgment, and judgment lives
+ * here in prose the model reads.
+ *
+ * Four distinctions carry the feature, and each is a sentence below:
+ *
+ * - **Whose mouth.** Only the owner's consumption counts. "kids had pizza" is
+ *   a real pulse about a real dinner and contributes nothing.
+ * - **Stated beats estimated, always.** A number the owner said is copied
+ *   verbatim and marked `stated`. The coder never second-guesses it, never
+ *   rounds it, never substitutes its own idea of what that meal weighs — the
+ *   owner logging "620 kcal" has already done the measuring.
+ * - **Recognised but uncountable is `kcal: null`, not a guess.** The buffet
+ *   plate nobody could size gets a nutrition block with no number, which is
+ *   what puts it in the visible "uncounted" tally rather than silently into
+ *   or out of the total.
+ * - **Not food at all is no block.** Absent and `kcal: null` are different
+ *   facts and the ledger reads them differently.
+ *
+ * Deliberately NOT gated on the `eating` activity label, or on any domain:
+ * the label is for the ledger's own rows, the extraction is unconditional on
+ * consumption. A drink at a work dinner is `domain: social` and still food.
+ */
+const NUTRITION_RULES =
+  'nutrition: fill it whenever the text describes the OWNER consuming food or drink, ' +
+  'whatever the domain or activity label — beverages count, alcohol counts. Never for ' +
+  "anyone else's consumption (\"kids had pizza\", \"wife's dessert\") — omit nutrition " +
+  'entirely there. If the owner states a calorie figure, copy it verbatim with ' +
+  'kcalSource "stated" and do not second-guess it; same for a stated protein figure. ' +
+  'With no stated figure, give a typical-portion point estimate and mark it "estimated". ' +
+  'If the consumption is real but genuinely too vague to size ("ate something at the ' +
+  'buffet"), return nutrition with kcal null — recognized, uncounted. Omit nutrition ' +
+  'only when the utterance is not about the owner consuming anything.';
+
 const SYSTEM_PROMPT = `You classify one captured utterance (pulse) for Meridian, the way a time-use \
 survey's trained coders classify a diary entry — judgment over the utterance and the context you \
 are given, never string matching. Respond with strict JSON only, matching exactly this shape — no \
@@ -169,7 +251,9 @@ An effect carries exactly the keys listed for its type and no others, spelled ex
 
 ${EFFECT_PAYLOADS}
 
-Rules given to the model: ${RULES}`;
+Rules given to the model: ${RULES}
+
+${NUTRITION_RULES}`;
 
 /**
  * One Anthropic call: classify `text` against `context`. Returns the coding,
@@ -280,9 +364,61 @@ function toCoding(raw: unknown, fallbackStart: string): Coding | null {
     people: stringArray(value.people),
     span: toSpan(value.span, fallbackStart),
     links: toLinks(value.links),
+    nutrition: toNutrition(value.nutrition),
+    // Stamped, never read off the response. The rev describes the schema THIS
+    // build parses against, which is a fact about the code and not about the
+    // answer — and a model that echoed `1` (or omitted the key, or wrote
+    // "two") would leave the pulse permanently in the backfill's sights, to
+    // be re-coded and re-billed on every run. It is in the prompt's schema so
+    // the transcription of Appendix B stays faithful; it is ignored here so
+    // the loop terminates.
+    coderRev: CODER_REV,
     effects: toEffects(value.effects),
     vocabProposal: toVocabProposal(value.vocabProposal),
   };
+}
+
+/**
+ * The coder's `nutrition`, or `null` for an utterance it said nothing about.
+ *
+ * Absent, malformed and explicitly null all collapse to `null` — "no
+ * nutrition block" — and the one thing that survives is a block the model
+ * really wrote. Inside a real block, a missing or unreadable `kcal` becomes
+ * `null` rather than dropping the block: that is exactly the
+ * recognised-but-uncountable case the rules ask for, and turning it into "not
+ * food" would hide a meal instead of counting it as uncounted.
+ *
+ * A number that is not finite, or negative, is not a calorie count. It reads
+ * as uncounted rather than as zero — zero would be a claim the coder never
+ * made, and would drag a day's total down silently.
+ */
+function toNutrition(value: unknown): PulseNutrition | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const obj = value as Record<string, unknown>;
+
+  const nutrition: PulseNutrition = {
+    kcal: nonNegativeNumber(obj.kcal),
+    kcalSource: nutritionSource(obj.kcalSource),
+  };
+  const proteinG = nonNegativeNumber(obj.proteinG);
+  if (proteinG !== null) {
+    nutrition.proteinG = proteinG;
+    nutrition.proteinSource = nutritionSource(obj.proteinSource);
+  }
+  return nutrition;
+}
+
+function nonNegativeNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/**
+ * `estimated` is the fallback, and the direction matters: calling the coder's
+ * own guess "stated" would dress a guess up as the owner's measurement, which
+ * is the one error this field exists to prevent.
+ */
+function nutritionSource(value: unknown): NutritionSource {
+  return value === 'stated' ? 'stated' : 'estimated';
 }
 
 function nullableString(value: unknown): string | null {

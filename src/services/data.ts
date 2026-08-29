@@ -66,7 +66,7 @@ import { dayKey, deviceTimeZone, eventsForDay } from '../lib/calendar';
 import { loadCalendar } from '../lib/calendarSync';
 import { compareOldestFirst, effectKey, effectString } from '../lib/pulse';
 import { scheduleFlush } from '../lib/sync';
-import { codePulse } from './coder';
+import { APPROX_COST_PER_PULSE_USD, CODER_REV, codePulse } from './coder';
 import type { Coding, CoderContext, PulseEnrichment, RecentPulse } from './coder';
 import type { HabitCategory, MitCategory, TowerStatus, TowerEffort, TowerItem, Pack, PackSession, PackWithCount } from '../types';
 
@@ -701,7 +701,7 @@ export async function deletePulse(id: string): Promise<void> {
  * and the read it needs is why this queues with the chip applies: the same
  * field is read-modify-written on both paths.
  */
-export async function enrichPulse(id: string, coding: Coding): Promise<void> {
+export async function enrichPulse(id: string, coding: Coding, scope: EnrichmentScope = 'full'): Promise<void> {
   return serializePulseWrite(async () => {
     await hydrate();
     // Every field of the coding except the two fence 1 forbids. `effects` and
@@ -709,19 +709,40 @@ export async function enrichPulse(id: string, coding: Coding): Promise<void> {
     // invisible to the sweep forever, so a proposal that lived only in the
     // sweep's local variable could never be regenerated, and Appendix C's
     // "dismiss drops the effect, keeps the coding" needs it to survive a reload.
-    const fields: Coding = {
+    const coded: Omit<Coding, 'effects' | 'vocabProposal'> = {
       signal: coding.signal,
       domain: coding.domain,
       activity: coding.activity,
       people: coding.people,
       span: coding.span,
       links: mergeLinks(readPulseRows().find((row) => row.id === id)?.links, coding.links),
-      effects: coding.effects,
-      vocabProposal: coding.vocabProposal,
+      nutrition: coding.nutrition,
+      coderRev: coding.coderRev,
     };
+    const fields: Record<string, unknown> =
+      scope === 'full'
+        ? { ...coded, effects: coding.effects, vocabProposal: coding.vocabProposal }
+        : { ...coded };
     await commit([{ entity: ENTITY.pulse, entityId: id, type: 'upsert', fields }]);
   });
 }
+
+/**
+ * How much of a coding an enrichment writes.
+ *
+ * `full` is the ambient path: the coding plus the proposals it produced, which
+ * become the chips under the line.
+ *
+ * `codingOnly` is the backfill's, and it omits `effects` and `vocabProposal`
+ * from the event ENTIRELY rather than writing them empty. Two different
+ * things, and the difference is visible on screen: the plan says a backfill
+ * produces "no chips about last Tuesday", which is a rule about not creating
+ * proposals — writing `[]` and `null` would go further and silently destroy a
+ * proposal already sitting there unanswered, turning a re-code into a sweep
+ * that clears the owner's inbox. A field this never mentions is a field
+ * last-writer-wins leaves exactly as it was.
+ */
+export type EnrichmentScope = 'full' | 'codingOnly';
 
 /**
  * The coder's `links`, with anything already recorded on the row left alone.
@@ -758,6 +779,11 @@ const PULSE_VOCAB_SEED_ACTIVITIES: Record<string, string> = {
   'school-run': 'family',
   dinner: 'family',
   drinks: 'social',
+  // Phase 5. The label is for the ledger's own rows; nutrition extraction is
+  // NOT gated on it — a drink at a work dinner is `social` and still food.
+  // Seeding is once-ever and idempotent, so a device that seeded before this
+  // line existed never gains it, and nothing needs it to.
+  eating: 'self',
 };
 
 const PULSE_VOCAB_SEED_PEOPLE = ['wife', 'kids'];
@@ -1308,6 +1334,124 @@ export async function codeUncodedPulses(signal?: AbortSignal): Promise<void> {
     attempts += 1;
     await codeRow(row, rows);
   }
+}
+
+// ============================================================================
+// Pulse coding backfill (owner-invoked)
+// ============================================================================
+
+/**
+ * The Phase 1 ship date — the first day a pulse could exist.
+ *
+ * The backfill's floor, and the reason it has one: it bounds the work to
+ * pulses this app actually wrote, so a hand-restored journal carrying rows
+ * from some earlier life cannot turn one tap into an unbounded bill.
+ */
+export const PULSE_EPOCH = '2026-08-27T00:00:00.000Z';
+
+/** What the backfill has done so far, and what is left. */
+export type BackfillProgress = {
+  done: number;
+  failed: number;
+  total: number;
+};
+
+/**
+ * The pulses a backfill would re-code: captured at or after `PULSE_EPOCH`,
+ * and coded at a revision older than this build's — `coderRev` absent counts
+ * as older, which is every pulse coded before phase 5 shipped.
+ *
+ * Uncoded pulses are in scope too, and that is the plan's own wording read
+ * literally: an uncoded pulse has no `coderRev` either. It is also the right
+ * answer — the ambient sweep codes at most twenty per open, so a long backlog
+ * would otherwise never be finished by anything, and the tool that exists to
+ * catch history up is the natural place for it.
+ *
+ * Oldest first, so a run that is stopped halfway has done the oldest half and
+ * a rerun picks up where the eye left off. A row whose `at` cannot be read as
+ * an instant is skipped for the reason the sweep skips it: there is no moment
+ * to resolve the utterance against.
+ */
+export function pulsesToBackfill(rows: readonly PulseRow[]): PulseRow[] {
+  const floorMs = Date.parse(PULSE_EPOCH);
+  return rows
+    .filter((row) => {
+      const atMs = Date.parse(row.at);
+      if (!Number.isFinite(atMs) || atMs < floorMs) return false;
+      return (row.coderRev ?? 0) < CODER_REV;
+    })
+    .sort(compareOldestFirst);
+}
+
+/** How many pulses a backfill would re-code right now, and what it would roughly cost. */
+export async function countPulsesToBackfill(): Promise<{ count: number; approxCostUsd: number }> {
+  const count = pulsesToBackfill(await getPulses()).length;
+  return { count, approxCostUsd: count * APPROX_COST_PER_PULSE_USD };
+}
+
+/**
+ * Re-code one pulse at the current revision, keeping only the coding.
+ *
+ * Deliberately NOT `codeRow`. That one returns early when the pulse is
+ * already coded — which is right for the ambient sweep and exactly wrong
+ * here, since re-coding an already-coded pulse is the entire job. It also
+ * runs `autoApplyEffects`, and this path has no effects to apply: a backfill
+ * that could tick something in the app would be a fortnight of history
+ * reaching forward into today.
+ *
+ * What it does share is `codingInFlight`, so a backfill and an ambient sweep
+ * that overlap cannot bill the same pulse twice.
+ *
+ * Never throws: a failure of any shape leaves the pulse at its old revision,
+ * where the next run will find it again. That is the whole retry story —
+ * there is no ladder (fence 2).
+ */
+async function recodeRow(row: PulseRow, allRows: readonly PulseRow[]): Promise<boolean> {
+  if (codingInFlight.has(row.id)) return false;
+  codingInFlight.add(row.id);
+  try {
+    const context = await buildCoderContext(row, allRows);
+    const coding = await codePulse(row.text, context);
+    if (!coding) return false;
+    await enrichPulse(row.id, coding, 'codingOnly');
+    scheduleFlush();
+    return true;
+  } catch {
+    return false;
+  } finally {
+    codingInFlight.delete(row.id);
+  }
+}
+
+/**
+ * Re-code every pulse below the current revision, one at a time.
+ *
+ * Owner-invoked, one-shot in spirit and idempotent in mechanism: each success
+ * writes `coderRev`, so the same pulse is out of scope on the next run and a
+ * stopped or half-failed run is resumed simply by pressing the button again.
+ *
+ * Sequential for the reason the sweep is: a backlog should not become a burst
+ * of concurrent paid calls. `signal` stops it between pulses — a call already
+ * in flight has been paid for and is allowed to store its answer.
+ *
+ * `onProgress` is called after every pulse, success or not, so the count on
+ * screen moves even through a run that is failing.
+ */
+export async function backfillPulseCoding(
+  onProgress?: (progress: BackfillProgress) => void,
+  signal?: AbortSignal
+): Promise<BackfillProgress> {
+  const rows = await getPulses();
+  const targets = pulsesToBackfill(rows);
+
+  const progress: BackfillProgress = { done: 0, failed: 0, total: targets.length };
+  for (const row of targets) {
+    if (signal?.aborted) return progress;
+    if (await recodeRow(row, rows)) progress.done += 1;
+    else progress.failed += 1;
+    onProgress?.({ ...progress });
+  }
+  return progress;
 }
 
 // ============================================================================

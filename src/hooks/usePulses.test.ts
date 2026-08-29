@@ -61,6 +61,7 @@ import { closeDb, enqueue } from '../lib/db';
 import { ENTITY, resetSession } from '../lib/entities';
 import type { JournalEvent } from '../lib/journal';
 import { usePulses } from './usePulses';
+import { CODER_REV } from '../services/coder';
 import type { Coding } from '../services/coder';
 import { getPulses } from '../services/data';
 
@@ -80,6 +81,8 @@ const SAMPLE_CODING: Coding = {
   people: [],
   span: { start: '2026-08-28T09:00:00.000Z', end: null, approx: false },
   links: { eventId: null },
+  nutrition: null,
+  coderRev: CODER_REV,
   effects: [],
   vocabProposal: null,
 };

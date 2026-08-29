@@ -230,3 +230,71 @@ describe('the energy section', () => {
     expect(onNextWeek).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * The weekly calorie bars (phase 5).
+ *
+ * `ledger.test.ts` pins the sums; what is pinned here is that the drawing
+ * does not lie about them. Three ways it could: a value printed inside the
+ * bar disappears on the short days, an estimated share drawn as its own bar
+ * double-counts a day, and a week's uncounted items vanishing entirely would
+ * make a week that lost three meals read as a light one.
+ */
+describe('calories by day', () => {
+  /** A pulse that says the owner ate something. Wednesday of the SGT week under test. */
+  function ate(id: string, at: string, nutrition: PulseRow['nutrition']): PulseRow {
+    return coded(id, 'note', at, { nutrition });
+  }
+
+  it('draws a bar per day with its total OUTSIDE the bar, so a short day still reads', async () => {
+    mocks.pulses = [
+      ate('mon', '2026-08-24T04:00:00.000Z', { kcal: 2100, kcalSource: 'stated' }),
+      ate('wed', '2026-08-26T04:00:00.000Z', { kcal: 640, kcalSource: 'estimated' }),
+    ];
+
+    show();
+
+    expect(await screen.findByText('calories by day')).toBeInTheDocument();
+    expect(screen.getByText('2,100')).toBeInTheDocument();
+    // The short day. Inside a bar this width it would be invisible.
+    expect(screen.getByText('640')).toBeInTheDocument();
+    // Seven rows, empty days included: the shape of the week is the point.
+    for (const day of ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']) {
+      expect(screen.getByText(day)).toBeInTheDocument();
+    }
+  });
+
+  it('marks a day\'s estimated share without adding it to the day again', async () => {
+    mocks.pulses = [
+      ate('stated', '2026-08-26T04:00:00.000Z', { kcal: 400, kcalSource: 'stated' }),
+      ate('guessed', '2026-08-26T06:00:00.000Z', { kcal: 600, kcalSource: 'estimated' }),
+    ];
+
+    show();
+
+    // One bar of 1,000, not a 400 and a 600 — an estimated calorie is still a
+    // counted calorie, and the fainter segment is a share OF the bar.
+    expect(await screen.findByText('1,000')).toBeInTheDocument();
+    expect(screen.queryByText('600')).not.toBeInTheDocument();
+    expect(screen.getByTitle('600 kcal estimated')).toBeInTheDocument();
+  });
+
+  it('footnotes the week\'s uncounted items, so a week that lost meals does not read as a light one', async () => {
+    mocks.pulses = [
+      ate('buffet', '2026-08-26T04:00:00.000Z', { kcal: null, kcalSource: 'estimated' }),
+      ate('party', '2026-08-28T04:00:00.000Z', { kcal: null, kcalSource: 'estimated' }),
+    ];
+
+    show();
+
+    expect(await screen.findByText('2 items eaten, not counted')).toBeInTheDocument();
+  });
+
+  it('says so plainly when nothing eaten was logged, rather than drawing seven empty bars', async () => {
+    mocks.pulses = [block('work', 'db', '2026-08-26T01:00:00.000Z', '2026-08-26T03:00:00.000Z')];
+
+    show();
+
+    expect(await screen.findByText('nothing eaten was logged this week')).toBeInTheDocument();
+  });
+});

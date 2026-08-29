@@ -33,8 +33,10 @@ import { addDays, getToday } from '../utils/dates';
 import {
   applyPulseEffect,
   approvePulseVocabProposal,
+  backfillPulseCoding,
   codeCapturedPulse,
   codeUncodedPulses,
+  countPulsesToBackfill,
   createHabit,
   createPulse,
   createTowerItem,
@@ -47,9 +49,12 @@ import {
   getPulseEffectAutoApply,
   getTowerItems,
   MAX_PULSES_PER_SWEEP,
+  PULSE_EPOCH,
+  pulsesToBackfill,
   setPulseEffectAutoApply,
   toggleCompletion,
 } from '../services/data';
+import { CODER_REV } from '../services/coder';
 import type { Coding } from '../services/coder';
 
 /**
@@ -71,6 +76,8 @@ const SAMPLE_CODING: Coding = {
   people: [],
   span: { start: '2026-08-28T09:00:00.000Z', end: null, approx: false },
   links: { eventId: null },
+  nutrition: null,
+  coderRev: CODER_REV,
   effects: [{ type: 'claimEvent', eventId: 'evt-sample' }],
   vocabProposal: { kind: 'activity', value: 'plumbing', mapsTo: 'home-ops' },
 };
@@ -419,6 +426,9 @@ describe('ensurePulseVocabSeeded', () => {
       'school-run': 'family',
       dinner: 'family',
       drinks: 'social',
+      // Phase 5's one addition. Nutrition extraction is NOT gated on it —
+      // the label is for the ledger's rows.
+      eating: 'self',
     });
     expect(first.people).toEqual(['wife', 'kids']);
 
@@ -1207,3 +1217,225 @@ describe('auto-apply', () => {
 // ============================================================================
 // One parser, two mouths — Tower's box
 // ============================================================================
+
+/**
+ * The backfill: the one path that re-codes an already-coded pulse, and the
+ * only place `coderRev` is ever read.
+ *
+ * Two failure shapes are what these pin, and both are expensive rather than
+ * merely wrong. A run that is not idempotent bills the whole history again on
+ * every press. And a rev bound that leaked into the AMBIENT sweep would bill
+ * the whole history on every open of the app, silently, forever — which is
+ * why the last test here is a regression test and not a feature test.
+ */
+describe('pulsesToBackfill', () => {
+  const epochMs = Date.parse(PULSE_EPOCH);
+
+  function row(id: string, at: string, coderRev?: number): PulseRow {
+    const base: PulseRow = { id, text: id, at, signal: 'note' };
+    return coderRev === undefined ? base : { ...base, coderRev };
+  }
+
+  it('selects a pulse coded at an older rev, and one never coded at all, and skips a current one', () => {
+    const at = new Date(epochMs + 86_400_000).toISOString();
+    const targets = pulsesToBackfill([
+      row('old-rev', at, 1),
+      row('no-rev', at),
+      row('current', at, CODER_REV),
+      // Uncoded, so it has no rev either. The plan's wording is literal, and
+      // it is also the right answer: the ambient sweep does twenty per open,
+      // so a long backlog would otherwise never be finished by anything.
+      { id: 'uncoded', text: 'uncoded', at },
+    ]);
+
+    expect(targets.map(target => target.id)).toEqual(['no-rev', 'old-rev', 'uncoded']);
+  });
+
+  it('skips anything older than PULSE_EPOCH, so a restored journal cannot turn one tap into an unbounded bill', () => {
+    const before = new Date(epochMs - 1).toISOString();
+    const after = new Date(epochMs + 1).toISOString();
+    expect(pulsesToBackfill([row('ancient', before), row('mine', after)]).map(r => r.id)).toEqual(['mine']);
+  });
+
+  it('skips a row whose `at` is not a readable instant — there is no moment to code it against', () => {
+    expect(pulsesToBackfill([row('broken', 'not-a-date')])).toEqual([]);
+  });
+
+  it('returns oldest first, so a stopped run has done the oldest half', () => {
+    const first = new Date(epochMs + 1000).toISOString();
+    const second = new Date(epochMs + 2000).toISOString();
+    expect(pulsesToBackfill([row('b', second), row('a', first)]).map(r => r.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('backfillPulseCoding', () => {
+  dbReset();
+
+  /** A pulse coded by an older build: the coding landed, `coderRev` did not. */
+  async function codedAtOldRev(text: string): Promise<PulseRow> {
+    const created = await createPulse(text);
+    await enrichPulse(created.id, { ...SAMPLE_CODING, coderRev: 1 });
+    return created;
+  }
+
+  const WITH_FOOD: Coding = {
+    ...SAMPLE_CODING,
+    nutrition: { kcal: 620, kcalSource: 'stated' },
+    effects: [{ type: 'claimEvent', eventId: 'evt-from-backfill' }],
+    vocabProposal: { kind: 'person', value: 'barista', mapsTo: null },
+  };
+
+  it('re-codes a pulse below the current rev and writes the fields it was missing', async () => {
+    const created = await codedAtOldRev('620 kcal burrito');
+    codePulseMock.mockResolvedValue(WITH_FOOD);
+
+    expect(await backfillPulseCoding()).toEqual({ done: 1, failed: 0, total: 1 });
+
+    // Read back through a real re-open, not the live session: what matters is
+    // that the enrichment is durable, not that it is in memory.
+    resetSession();
+    const row = (await getPulses()).find(candidate => candidate.id === created.id);
+    expect(row?.nutrition).toEqual({ kcal: 620, kcalSource: 'stated' });
+    expect(row?.coderRev).toBe(CODER_REV);
+  });
+
+  it('writes coding only — never the text (fence 1), and no chips about last Tuesday', async () => {
+    const created = await codedAtOldRev('620 kcal burrito');
+    // A proposal already sitting under the line, unanswered, before the run.
+    const before = (await getPulses()).find(candidate => candidate.id === created.id);
+    expect(before?.vocabProposal).toEqual(SAMPLE_CODING.vocabProposal);
+
+    codePulseMock.mockResolvedValue(WITH_FOOD);
+    await backfillPulseCoding();
+
+    resetSession();
+    const row = (await getPulses()).find(candidate => candidate.id === created.id);
+    // The verbatim line, untouched.
+    expect(row?.text).toBe('620 kcal burrito');
+    // Nothing the backfill's own output proposed reached the row: no new chip
+    // about a Tuesday two weeks gone.
+    expect(row?.effects).toEqual(SAMPLE_CODING.effects);
+    expect(row?.vocabProposal).toEqual(SAMPLE_CODING.vocabProposal);
+    // And the one that was already there survived. Writing `[]`/`null` would
+    // have cleared the owner's inbox as a side effect of a re-code.
+    expect(row?.effects?.some(effect => effect.eventId === 'evt-from-backfill')).toBe(false);
+  });
+
+  it('is idempotent: a rerun after a clean run makes no further call and costs nothing', async () => {
+    await codedAtOldRev('620 kcal burrito');
+    codePulseMock.mockResolvedValue(WITH_FOOD);
+
+    await backfillPulseCoding();
+    expect(codePulseMock).toHaveBeenCalledTimes(1);
+
+    resetSession();
+    expect(await backfillPulseCoding()).toEqual({ done: 0, failed: 0, total: 0 });
+    expect(codePulseMock).toHaveBeenCalledTimes(1);
+    expect((await countPulsesToBackfill()).count).toBe(0);
+  });
+
+  it('isolates a per-pulse failure: the rest land, the failure is counted, and a rerun picks up only it', async () => {
+    const doomed = await codedAtOldRev('will fail once');
+    // A second apart, so the two have different instants. The clock is frozen
+    // file-wide, and two pulses sharing an `at` are ordered by id — which
+    // would decide which of these is attempted first by how a UUID happened
+    // to come out.
+    vi.setSystemTime(new Date(NOW.getTime() + 1000));
+    const fine = await codedAtOldRev('will succeed');
+
+    // Oldest first, so `doomed` is attempted first.
+    codePulseMock.mockRejectedValueOnce(new Error('offline'));
+    codePulseMock.mockResolvedValue(WITH_FOOD);
+
+    expect(await backfillPulseCoding()).toEqual({ done: 1, failed: 1, total: 2 });
+
+    resetSession();
+    let rows = await getPulses();
+    // The failure kept its old rev — which is the whole retry story.
+    expect(rows.find(row => row.id === doomed.id)?.coderRev).toBe(1);
+    expect(rows.find(row => row.id === fine.id)?.coderRev).toBe(CODER_REV);
+
+    // "run again" does exactly that, and only for what is still behind.
+    expect(await backfillPulseCoding()).toEqual({ done: 1, failed: 0, total: 1 });
+    resetSession();
+    rows = await getPulses();
+    expect(rows.find(row => row.id === doomed.id)?.coderRev).toBe(CODER_REV);
+  });
+
+  it('counts a null coding as a failure rather than marking the pulse current (fence 2)', async () => {
+    const created = await codedAtOldRev('unusable model output');
+    codePulseMock.mockResolvedValue(null);
+
+    expect(await backfillPulseCoding()).toEqual({ done: 0, failed: 1, total: 1 });
+
+    resetSession();
+    // Not stamped. A pulse the coder could not answer for must stay findable.
+    expect((await getPulses()).find(row => row.id === created.id)?.coderRev).toBe(1);
+  });
+
+  it('reports progress after every pulse, success or not, so a failing run still moves', async () => {
+    await codedAtOldRev('one');
+    await codedAtOldRev('two');
+    codePulseMock.mockRejectedValueOnce(new Error('offline'));
+    codePulseMock.mockResolvedValue(WITH_FOOD);
+
+    const seen: string[] = [];
+    await backfillPulseCoding(progress => seen.push(`${progress.done}/${progress.failed}/${progress.total}`));
+
+    expect(seen).toEqual(['0/1/2', '1/1/2']);
+  });
+
+  it('stops between pulses when the owner presses stop, leaving the rest for a rerun', async () => {
+    await codedAtOldRev('one');
+    await codedAtOldRev('two');
+    codePulseMock.mockResolvedValue(WITH_FOOD);
+
+    const controller = new AbortController();
+    const progress = await backfillPulseCoding(() => controller.abort(), controller.signal);
+
+    // The first was paid for and stored; the second was never started.
+    expect(progress).toEqual({ done: 1, failed: 0, total: 2 });
+    expect(codePulseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('quotes a cost that scales with the work, so the confirmation is about the bill', async () => {
+    await codedAtOldRev('one');
+    await codedAtOldRev('two');
+
+    const scope = await countPulsesToBackfill();
+    expect(scope.count).toBe(2);
+    expect(scope.approxCostUsd).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The regression this phase is most likely to reintroduce, pinned as its own
+ * test because it is a BILLING bug and not a correctness one: it would look
+ * completely fine on screen.
+ */
+describe('the ambient sweep never considers coderRev', () => {
+  dbReset();
+
+  it('leaves a pulse coded at an older rev alone, forever — re-coding on open is a bill, not a feature', async () => {
+    const created = await createPulse('coded by an older build');
+    await enrichPulse(created.id, { ...SAMPLE_CODING, coderRev: 1 });
+    codePulseMock.mockClear();
+    codePulseMock.mockResolvedValue(SAMPLE_CODING);
+
+    // Three opens of the app. `signal` present is the sweep's one and only
+    // test for "already coded", and it must stay that way.
+    for (let open = 0; open < 3; open += 1) {
+      resetSession();
+      await codeUncodedPulses();
+    }
+    expect(codePulseMock).not.toHaveBeenCalled();
+
+    // Same for the on-save path.
+    await codeCapturedPulse(created.id);
+    expect(codePulseMock).not.toHaveBeenCalled();
+
+    // The pulse is still behind, and still the backfill's business — the
+    // owner's tap is the only thing that re-codes it.
+    expect(pulsesToBackfill(await getPulses()).map(row => row.id)).toEqual([created.id]);
+  });
+});

@@ -25,14 +25,16 @@ import {
   claimedEventIds,
   closeSpans,
   HISTOGRAM_WEEKS,
+  kcalLabel,
   ledgerHonesty,
   neededByCalendar,
   pairNeededSpent,
   spentByDomain,
   trailingWindow,
+  weekNutrition,
   weekWindow,
 } from '../lib/ledger';
-import type { ActivityTiming, CalendarHours, DomainHours } from '../lib/ledger';
+import type { ActivityTiming, CalendarHours, DayKcal, DomainHours, WeekNutrition } from '../lib/ledger';
 import { getPulses } from '../services/data';
 import { getWeekNumber } from '../utils/dates';
 
@@ -206,6 +208,85 @@ function TimingRow({ row }: { row: ActivityTiming }) {
   );
 }
 
+/**
+ * One day's calories, as a two-tone bar.
+ *
+ * Its own component rather than a use of `Bar` above: that one is shaped for
+ * hours — it prints `toFixed(1)` and draws its second quantity as a ghost
+ * BEHIND the bar, for a total the owner did not log. Here the second quantity
+ * is a share OF the bar, in the same accent at lower opacity, because an
+ * estimated calorie is still a counted calorie and the eye should read one
+ * bar with a soft half rather than two competing ones.
+ *
+ * Estimated is drawn first and full-width-of-its-share, with the stated part
+ * laid over the left of it: the boundary between them lands where stated ends,
+ * which is the only place it means anything.
+ *
+ * The value sits outside the bar, as everywhere on this page — inside, it is
+ * unreadable at the short end and invisible on a day with nothing logged, and
+ * an empty day is exactly the day the chart has to be able to show.
+ */
+function KcalBar({ day, widest }: { day: DayKcal; widest: number }) {
+  const scale = (amount: number) => (widest <= 0 ? 0 : Math.min(100, (amount / widest) * 100));
+  const stated = day.kcal - day.estimatedKcal;
+  return (
+    <div className="grid grid-cols-[76px_1fr_44px] items-center gap-[10px] py-[3px] sm:grid-cols-[108px_1fr_52px]">
+      <span className="truncate font-mono text-[11.5px] text-text-secondary">{weekdayLabel(day.date)}</span>
+      <span className="relative block h-3 overflow-hidden rounded-[3px] bg-bg-hover">
+        <span
+          className={`absolute inset-y-0 left-0 rounded-[3px] ${SPENT_TONE} opacity-40`}
+          style={{ width: `${scale(day.kcal)}%` }}
+        />
+        <span
+          className={`absolute inset-y-0 left-0 rounded-[3px] ${SPENT_TONE}`}
+          style={{ width: `${scale(stated)}%` }}
+        />
+      </span>
+      <span
+        className="text-right font-mono text-[11.5px] tabular-nums text-text"
+        title={day.estimatedKcal > 0 ? `${kcalLabel(day.estimatedKcal)} kcal estimated` : undefined}
+      >
+        {day.kcal > 0 ? kcalLabel(day.kcal) : ''}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Three letters of the weekday, from the date string itself.
+ *
+ * `YYYY-MM-DD` is a machine-defined format and splitting one is explicitly
+ * allowed (fence 1); the parts are handed to `Date.UTC` and read back in UTC,
+ * so the label can never slide a day the way `new Date('2026-08-29')` read in
+ * a local zone west of Greenwich would.
+ */
+function weekdayLabel(date: string): string {
+  const [year, month, day] = date.split('-').map(Number);
+  const at = Date.UTC(year, month - 1, day);
+  return new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'UTC' }).format(at).toLowerCase();
+}
+
+function KcalChart({ nutrition }: { nutrition: WeekNutrition }) {
+  const widest = widestOf(nutrition.days.map(day => day.kcal));
+  // "Nothing was logged" and "nothing that was logged could be counted" are
+  // different weeks, and only the first is empty. A week of unsizeable meals
+  // has to say so — reporting it as an empty week would be the chart telling
+  // the owner they did not eat.
+  if (widest <= 0 && nutrition.uncounted === 0) return <Empty>nothing eaten was logged this week</Empty>;
+  return (
+    <div>
+      {nutrition.days.map(day => (
+        <KcalBar key={day.date} day={day} widest={widest} />
+      ))}
+      {nutrition.uncounted > 0 && (
+        <p className="pt-1 font-mono text-[11px] text-text-muted">
+          {nutrition.uncounted} {nutrition.uncounted === 1 ? 'item' : 'items'} eaten, not counted
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function EnergySection({
   mirror,
   selectedDate,
@@ -241,6 +322,9 @@ export function EnergySection({
       // week cannot say when something usually happens. The stepper still moves
       // it — this is the twelve weeks ENDING with the week on screen.
       timing: activityTiming(pulses, trailingWindow(window, HISTOGRAM_WEEKS, timeZone), timeZone),
+      // By local day rather than by the window's instants: a bar under a
+      // weekday's name has to hold exactly what that weekday held.
+      nutrition: weekNutrition(pulses, selectedDate, timeZone, weekStartsOn),
     };
   }, [data.value, mirror, selectedDate, timeZone, weekStartsOn]);
 
@@ -299,6 +383,11 @@ export function EnergySection({
               <PairedChart paired={ledger.pairs.paired} />
             </div>
           )}
+
+          <div className="space-y-2">
+            <Label>calories by day</Label>
+            <KcalChart nutrition={ledger.nutrition} />
+          </div>
 
           <div className="space-y-3">
             <div className="flex items-baseline justify-between gap-3">

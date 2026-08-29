@@ -19,8 +19,11 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { Chip } from '../components/Chip';
 import { Dock } from '../components/Dock';
 import { deviceTimeZone, timeLabel } from '../lib/calendar';
+import { useApp } from '../store/AppContext';
 import { usePulses } from '../hooks/usePulses';
 import type { Pulses } from '../hooks/usePulses';
+import { dayNutrition, kcalLabel } from '../lib/ledger';
+import type { DayNutrition } from '../lib/ledger';
 import { effectChipLabel, effectKey, vocabChipLabel } from '../lib/pulse';
 import { getToday } from '../utils/dates';
 import type { PulseRow } from '../lib/entities';
@@ -29,6 +32,7 @@ export function PulseView() {
   const today = getToday();
   const timeZone = deviceTimeZone();
   const pulses = usePulses(today, timeZone);
+  const { profile } = useApp();
 
   // Pinned to the bottom: arriving shows the newest, and a captured line
   // scrolls itself into view rather than landing under the fold. Before paint,
@@ -41,6 +45,10 @@ export function PulseView() {
     <>
       <PulseStream pulses={pulses.today} timeZone={timeZone} actions={pulses} />
       <Dock>
+        <NutritionLine
+          total={dayNutrition(pulses.today, today, timeZone)}
+          target={profile?.kcal_target ?? null}
+        />
         <PulseCapture onCapture={pulses.capture} />
       </Dock>
     </>
@@ -162,6 +170,44 @@ function PulseChips({ pulse, actions }: { pulse: PulseRow; actions: Pulses }) {
         />
       )}
     </div>
+  );
+}
+
+/**
+ * The day's eating, on one line above the box.
+ *
+ * An instrument, not a message. It reports four numbers and says nothing
+ * about any of them — no color that changes with the total, no word for over
+ * or under, no encouragement (fence 6). The target, when the owner has set
+ * one, is printed in the same face and weight as everything else: a number
+ * beside a number.
+ *
+ * Nothing renders on a day with no food logged. An empty instrument above the
+ * box every morning would turn the capture page into a form with a blank
+ * field at the top of it, and a zero is not a fact here — it is the absence
+ * of one.
+ *
+ * The parts after the total are each conditional, and each disappears rather
+ * than showing a zero: "0 uncounted" is noise on the ordinary day, and the
+ * whole point of the uncounted tally is that it is unusual enough to notice.
+ */
+function NutritionLine({ total, target }: { total: DayNutrition; target: number | null }) {
+  const logged = total.kcal > 0 || total.uncounted > 0 || total.proteinG > 0;
+  if (!logged) return null;
+
+  const calories = [`${kcalLabel(total.kcal)} kcal`];
+  // Attached to the figure it qualifies, before the breakdown of that figure.
+  // Provisional by the plan's own words — the shape of this is Gate 5's to
+  // settle, and it is one array entry to move or delete.
+  if (target !== null) calories.push(`of ${kcalLabel(target)}`);
+  if (total.estimatedKcal > 0) calories.push(`${kcalLabel(total.estimatedKcal)} est`);
+  if (total.uncounted > 0) calories.push(`${total.uncounted} uncounted`);
+
+  return (
+    <p className="flex flex-wrap items-baseline gap-x-4 pt-3 font-mono text-[11.5px] tabular-nums text-text-muted">
+      <span>{calories.join(' · ')}</span>
+      {total.proteinG > 0 && <span>{`${kcalLabel(total.proteinG)} g protein`}</span>}
+    </p>
   );
 }
 

@@ -4,7 +4,7 @@
  * Configuration. Theme, habits, data.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useApp } from '../store/AppContext';
 import { useTheme, THEMES } from '../store/ThemeContext';
 import type { HabitDefinition, HabitCategory } from '../types';
@@ -12,12 +12,15 @@ import { DEFAULT_HABITS } from '../types';
 import { saveApiKey, loadApiKey, clearApiKey } from '../services/claude';
 import type { AiTone } from '../services/claude';
 import {
+  backfillPulseCoding,
+  countPulsesToBackfill,
   createHabit,
   updateHabit as updateHabitInDb,
   deleteHabit as deleteHabitInDb,
   getPulseEffectAutoApply,
   setPulseEffectAutoApply,
 } from '../services/data';
+import type { BackfillProgress } from '../services/data';
 import { PULSE_EFFECT_TYPES } from '../lib/entities';
 import type { PulseEffectType } from '../lib/entities';
 import { clearToken, getDeviceId, getToken, requestPersistence, setMeta, setToken } from '../lib/db';
@@ -191,6 +194,13 @@ export function SettingsView() {
   // Null means "not edited yet", so the field follows the profile until it is.
   const [usernameDraft, setUsernameDraft] = useState<string | null>(null);
   const [displayNameDraft, setDisplayNameDraft] = useState<string | null>(null);
+  const [kcalTargetDraft, setKcalTargetDraft] = useState<string | null>(null);
+  // The whole backfill UI is four pieces of state: what a run would cost, what
+  // it has done so far, whether one is running, and the controller that stops it.
+  const [backfillScope, setBackfillScope] = useState<{ count: number; approxCostUsd: number } | null>(null);
+  const [backfillProgress, setBackfillProgress] = useState<BackfillProgress | null>(null);
+  const [backfilling, setBackfilling] = useState(false);
+  const backfillStop = useRef<AbortController | null>(null);
 
   const username = usernameDraft ?? profile?.username ?? '';
   const displayName = displayNameDraft ?? profile?.display_name ?? '';
@@ -255,6 +265,63 @@ export function SettingsView() {
 
   const handleContextSave = () => {
     updateProfile({ personal_context: personalContext });
+  };
+
+  /**
+   * Save the calorie target, or clear it.
+   *
+   * Blank means off, and so does anything that is not a positive number: the
+   * field is one box and there is no error state for it, because a target the
+   * app could not read is the same as no target — the line simply stops
+   * printing "of ...". Stored as a number so nothing downstream has to parse
+   * a string the owner typed.
+   */
+  const handleKcalTargetSave = () => {
+    if (kcalTargetDraft === null) return;
+    const parsed = Number(kcalTargetDraft.trim());
+    const next = kcalTargetDraft.trim().length > 0 && Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+    setKcalTargetDraft(null);
+    updateProfile({ kcal_target: next });
+  };
+
+  /**
+   * Ask how much work a backfill would be, and show it. Answering this costs
+   * nothing — it is a read of the local store — so it is safe to offer as the
+   * first tap, and it is what turns the run itself into a confirmation.
+   */
+  const handleBackfillCount = async () => {
+    setBackfillProgress(null);
+    try {
+      setBackfillScope(await countPulsesToBackfill());
+    } catch {
+      setBackfillScope(null);
+    }
+  };
+
+  /**
+   * Run it. Sequential inside, so this awaits the whole run; the progress
+   * callback is what moves the number on screen while it does.
+   *
+   * A run that fails partway is not an error state here — the tool reports
+   * how many failed and the button says run again, which is the entire retry
+   * story (each success wrote its rev, so a rerun skips what landed).
+   */
+  const handleBackfillRun = async () => {
+    const controller = new AbortController();
+    backfillStop.current = controller;
+    setBackfilling(true);
+    try {
+      const final = await backfillPulseCoding(setBackfillProgress, controller.signal);
+      setBackfillProgress(final);
+      setBackfillScope(await countPulsesToBackfill());
+    } catch {
+      // Nothing here throws in practice — every per-pulse failure is counted
+      // rather than raised — and if one ever does, the numbers on screen are
+      // still the truth about what landed.
+    } finally {
+      setBackfilling(false);
+      backfillStop.current = null;
+    }
   };
 
   /**
@@ -799,6 +866,84 @@ export function SettingsView() {
               rows={3}
             />
           </div>
+        </div>
+      </section>
+
+      {/* Nutrition */}
+      <section className="bg-bg-card rounded border border-border p-4">
+        <div className="text-xs text-text-muted uppercase tracking-wide mb-3">nutrition</div>
+        <div className="text-xs text-text-muted mb-3 leading-relaxed">
+          a daily calorie target, printed beside today's total. nothing compares against it and
+          nothing is said about the gap — it is a number next to a number. blank turns it off.
+        </div>
+        <input
+          type="number"
+          inputMode="numeric"
+          min={0}
+          value={kcalTargetDraft ?? (profile?.kcal_target === null || profile?.kcal_target === undefined ? '' : String(profile.kcal_target))}
+          onChange={e => setKcalTargetDraft(e.target.value)}
+          onBlur={handleKcalTargetSave}
+          placeholder="daily kcal target"
+          aria-label="daily kcal target"
+          className="w-full px-2 py-1.5 text-sm font-mono rounded border border-border bg-transparent text-text focus:border-accent outline-none"
+        />
+      </section>
+
+      {/* Re-code history */}
+      <section className="bg-bg-card rounded border border-border p-4">
+        <div className="text-xs text-text-muted uppercase tracking-wide mb-3">re-code history</div>
+        <div className="text-xs text-text-muted mb-3 leading-relaxed">
+          re-reads past pulses through the current coder, so older ones gain the fields newer ones
+          have. it writes coding only — never the text you typed, and no chips about last tuesday.
+          it costs one api call per pulse. resume by pressing it again.
+        </div>
+
+        {backfillScope !== null && backfillProgress === null && (
+          <div className="text-sm text-text font-mono mb-3">
+            {backfillScope.count === 0
+              ? 'nothing to re-code — every pulse is current'
+              : `${backfillScope.count} ${backfillScope.count === 1 ? 'pulse' : 'pulses'}, roughly $${backfillScope.approxCostUsd.toFixed(2)}`}
+          </div>
+        )}
+
+        {backfillProgress !== null && (
+          <div className="text-sm text-text font-mono mb-3">
+            {`${backfillProgress.done + backfillProgress.failed} of ${backfillProgress.total} done`}
+            {backfillProgress.failed > 0 && ` · ${backfillProgress.failed} failed, run again`}
+          </div>
+        )}
+
+        <div className="flex items-center gap-2">
+          {/*
+            Two taps, always: the first one only counts, and its answer IS the
+            confirmation — a run button that appears next to a price is a
+            confirmation the owner has already read, which a modal asking "are
+            you sure" is not.
+          */}
+          {!backfilling && (
+            <button
+              onClick={() => void handleBackfillCount()}
+              className="px-3 py-1.5 text-sm rounded border border-border text-text hover:border-accent transition-colors"
+            >
+              count
+            </button>
+          )}
+          {!backfilling && backfillScope !== null && backfillScope.count > 0 && (
+            <button
+              onClick={() => void handleBackfillRun()}
+              className="px-3 py-1.5 text-sm rounded border border-accent text-accent hover:bg-bg-hover transition-colors"
+            >
+              re-code {backfillScope.count}
+            </button>
+          )}
+          {backfilling && (
+            <button
+              onClick={() => backfillStop.current?.abort()}
+              className="px-3 py-1.5 text-sm rounded border border-border text-error hover:border-error transition-colors"
+            >
+              stop
+            </button>
+          )}
         </div>
       </section>
 

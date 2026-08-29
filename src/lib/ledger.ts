@@ -21,6 +21,7 @@
 import { dayKey } from './calendar';
 import type { CalendarEvent, CalendarMirror } from './calendar';
 import type { PulseRow, PulseSignal } from './entities';
+import { pulsesForDay } from './pulse';
 import { addDays, getWeekDates } from '../utils/dates';
 
 const MS_PER_HOUR = 60 * 60 * 1000;
@@ -538,4 +539,121 @@ export function ledgerHonesty(pulses: readonly PulseRow[], window: LedgerWindow)
     if (pulse.signal === undefined) uncoded += 1;
   }
   return { uncoded, captured };
+}
+
+// ============================================================================
+// Nutrition (phase 5)
+// ============================================================================
+
+/**
+ * One day's eating, added up. Arithmetic and nothing else — no target
+ * comparison, no verdict, no word about any of it (fence 6). The target, when
+ * the owner has set one, is printed beside these numbers by the view; nothing
+ * here knows it exists.
+ */
+export type DayNutrition = {
+  /** Every counted calorie, stated and estimated together — the headline number. */
+  kcal: number;
+  /** How much of `kcal` came from a coder estimate rather than the owner's own figure. */
+  estimatedKcal: number;
+  /** Pulses the coder recognised as consumption and could not put a number on. */
+  uncounted: number;
+  /** One best-effort total. Sources are stored per pulse but not surfaced in v1. */
+  proteinG: number;
+};
+
+const NO_NUTRITION: DayNutrition = { kcal: 0, estimatedKcal: 0, uncounted: 0, proteinG: 0 };
+
+/**
+ * Sum one local day's nutrition.
+ *
+ * Bucketed by `at` through `pulsesForDay`, which is the same rule the stream
+ * itself uses — the line sits directly above the box and must add up exactly
+ * the lines visible above it. Not `span.start`: a span can be back-dated
+ * ("had lunch at noon" said at four), and a total that silently disagrees
+ * with the day it is printed on is worse than one that is merely coarse.
+ *
+ * `kcal: null` is the uncounted case and adds nothing to the total — the
+ * count of them is returned instead, so a day that dropped two meals reads as
+ * a day that dropped two meals rather than as a light one. A pulse with no
+ * `nutrition` at all contributes nothing anywhere: it is not food, and it is
+ * not an omission either.
+ */
+export function dayNutrition(
+  pulses: readonly PulseRow[],
+  day: string,
+  timeZone: string
+): DayNutrition {
+  return sumNutrition(pulsesForDay(pulses, day, timeZone));
+}
+
+/** The same sum over an already-chosen set of pulses. */
+function sumNutrition(pulses: readonly PulseRow[]): DayNutrition {
+  const total = { ...NO_NUTRITION };
+  for (const pulse of pulses) {
+    const nutrition = pulse.nutrition;
+    if (nutrition === undefined) continue;
+    if (nutrition.kcal === null) {
+      total.uncounted += 1;
+    } else {
+      total.kcal += nutrition.kcal;
+      if (nutrition.kcalSource === 'estimated') total.estimatedKcal += nutrition.kcal;
+    }
+    // Independent of kcal: a stated protein figure with no calorie figure is a
+    // real thing to say, and so is a plate whose protein nobody guessed at.
+    if (nutrition.proteinG !== undefined) total.proteinG += nutrition.proteinG;
+  }
+  return total;
+}
+
+/** One day's bar in the weekly chart. */
+export type DayKcal = { date: string; kcal: number; estimatedKcal: number };
+
+/** Seven bars and the week's uncounted tally, which is a footnote and not a bar. */
+export type WeekNutrition = { days: DayKcal[]; uncounted: number };
+
+/**
+ * The week's seven daily kcal bars.
+ *
+ * Always seven, including the days with nothing on them: a blank Wednesday is
+ * a fact the chart should show, and a chart that silently omits its empty
+ * days is a chart whose shape lies about the week.
+ *
+ * The uncounted tally is the week's, summed once here rather than per bar —
+ * it is a footnote under the chart, because a bar cannot draw a meal whose
+ * size nobody knows without inventing one.
+ */
+export function weekNutrition(
+  pulses: readonly PulseRow[],
+  date: string,
+  timeZone: string,
+  weekStartsOn: 0 | 1 = 1
+): WeekNutrition {
+  let uncounted = 0;
+  const days = getWeekDates(date, weekStartsOn).map((day) => {
+    const total = dayNutrition(pulses, day, timeZone);
+    uncounted += total.uncounted;
+    return { date: day, kcal: total.kcal, estimatedKcal: total.estimatedKcal };
+  });
+  return { days, uncounted };
+}
+
+/**
+ * A calorie figure as it is printed, everywhere it is printed.
+ *
+ * One definition because two surfaces show these numbers — the Today line and
+ * the weekly bars — and a thousands separator that appeared on one and not
+ * the other would read as two different quantities.
+ *
+ * The locale is pinned rather than taken from the device. Every other number
+ * in this file is compared or summed, never rendered, so this is the only
+ * place a locale could get in; pinning it keeps the same journal rendering
+ * the same way on the phone and the laptop, and keeps a test from asserting
+ * against whatever locale the machine running it happens to have.
+ *
+ * Rounded to whole calories. A tenth of a calorie is noise from an estimate
+ * that was never that precise.
+ */
+export function kcalLabel(value: number): string {
+  return Math.round(value).toLocaleString('en-US');
 }

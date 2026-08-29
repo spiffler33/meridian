@@ -95,6 +95,17 @@ export type Profile = {
    * field would be the only one.
    */
   reading_baseline_at: string | null;
+  /**
+   * The daily calorie target the Today line reads against, or null for off
+   * (phase 5). Snake_case for the same reason `reading_baseline_at` is: this
+   * row is a ported Postgres row, and one camelCase field would be the only
+   * one.
+   *
+   * A target is a number the owner set, never one the app inferred, and
+   * nothing anywhere compares against it or says anything about the gap —
+   * it is printed beside the total and that is all (fence 6).
+   */
+  kcal_target: number | null;
 };
 
 export type Habit = {
@@ -225,6 +236,33 @@ export type PulseVocabProposalKind = 'domain' | 'activity' | 'person';
 /** A proposed addition to `pulseVocab`. Confirm-only — Appendix C gives it no auto option. */
 export type PulseVocabProposal = { kind: PulseVocabProposalKind; value: string; mapsTo: string | null };
 
+/** Whether a nutrition figure is the owner's own number or the coder's estimate of a typical portion. */
+export type NutritionSource = 'stated' | 'estimated';
+
+/**
+ * What one pulse says the owner consumed (phase 5).
+ *
+ * Three states, and the difference between the last two is the whole point:
+ *
+ * - the field is **absent** — the utterance is not about the owner consuming
+ *   anything. Someone else's dinner lands here too.
+ * - the field is present with **`kcal: null`** — consumption the coder
+ *   recognised and could not put a number on ("ate something at the buffet").
+ *   Counted as uncounted, and shown as such, because a day that quietly drops
+ *   a meal reads lower than it was.
+ * - the field is present with a **number** — counted, and `kcalSource` says
+ *   whether the owner stated it or the coder estimated a typical portion.
+ *
+ * `proteinG` is optional independently of `kcal`: a stated protein figure with
+ * no calorie figure is a real thing to say, and so is the reverse.
+ */
+export type PulseNutrition = {
+  kcal: number | null;
+  kcalSource: NutritionSource;
+  proteinG?: number;
+  proteinSource?: NutritionSource;
+};
+
 /**
  * One captured utterance. Verbatim, timestamped, and never edited.
  *
@@ -263,6 +301,16 @@ export type PulseRow = {
   /** Proposed, never applied. A dismissed chip is a write that removes its effect. */
   effects?: PulseEffect[];
   vocabProposal?: PulseVocabProposal | null;
+  /** What the owner consumed, when the utterance says they consumed something. */
+  nutrition?: PulseNutrition;
+  /**
+   * Which revision of the coding schema produced these fields. Absent means
+   * pre-rev-2 — coded before nutrition existed — which is what the backfill
+   * tool selects on. Only the backfill reads it; the ambient sweep must never
+   * consider it, or every re-open re-codes the whole history at the owner's
+   * expense.
+   */
+  coderRev?: number;
 };
 
 /**
@@ -424,6 +472,45 @@ function optionalLinks(record: Record_, key: string): PulseLinks | undefined {
   return { eventId: typeof obj.eventId === 'string' ? obj.eventId : null };
 }
 
+const NUTRITION_SOURCES: readonly NutritionSource[] = ['stated', 'estimated'];
+
+/** An optional number field. Garbage — a string, a NaN, an Infinity — reads as absent, never as zero. */
+function optionalNum(record: Record_, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * The coder's `nutrition`, or undefined when absent, cleared, or shaped wrong.
+ *
+ * A stored `null` reads as absent on purpose: `null` is what a re-code writes
+ * to clear a nutrition block it no longer stands behind, and "the coder says
+ * this is not food" and "the coder never said anything" are the same fact for
+ * every reader. The distinction the ledger cares about is the other one —
+ * absent versus present-with-`kcal: null` — and that one survives here.
+ *
+ * `kcalSource` falls back to `estimated` rather than dropping the block. A
+ * figure whose provenance failed its shape check is still a figure, and
+ * calling it an estimate understates the app's confidence, which is the safe
+ * direction. `proteinG` and `proteinSource` are independently optional.
+ */
+function optionalNutrition(record: Record_, key: string): PulseNutrition | undefined {
+  const value = record[key];
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record_;
+  const kcal = optionalNum(obj, 'kcal');
+  const nutrition: PulseNutrition = {
+    kcal: kcal ?? null,
+    kcalSource: optionalOneOf(obj, 'kcalSource', NUTRITION_SOURCES) ?? 'estimated',
+  };
+  const proteinG = optionalNum(obj, 'proteinG');
+  if (proteinG !== undefined) {
+    nutrition.proteinG = proteinG;
+    nutrition.proteinSource = optionalOneOf(obj, 'proteinSource', NUTRITION_SOURCES) ?? 'estimated';
+  }
+  return nutrition;
+}
+
 export const PULSE_EFFECT_TYPES: readonly PulseEffectType[] = ['claimEvent'];
 const PULSE_VOCAB_PROPOSAL_KINDS: readonly PulseVocabProposalKind[] = ['domain', 'activity', 'person'];
 
@@ -491,6 +578,7 @@ export function toProfile(id: string, record: Record_): Profile {
     ai_tone: oneOf(record, 'ai_tone', AI_TONES, 'stoic'),
     claude_api_key: nullableStr(record, 'claude_api_key'),
     reading_baseline_at: nullableTimestamp(record, 'reading_baseline_at', null),
+    kcal_target: optionalNum(record, 'kcal_target') ?? null,
   };
 }
 
@@ -619,6 +707,10 @@ function toPulseRow(id: string, record: Record_): PulseRow {
   if (effects !== undefined) row.effects = effects;
   const vocabProposal = optionalVocabProposal(record, 'vocabProposal');
   if (vocabProposal !== undefined) row.vocabProposal = vocabProposal;
+  const nutrition = optionalNutrition(record, 'nutrition');
+  if (nutrition !== undefined) row.nutrition = nutrition;
+  const coderRev = optionalNum(record, 'coderRev');
+  if (coderRev !== undefined) row.coderRev = coderRev;
 
   return row;
 }

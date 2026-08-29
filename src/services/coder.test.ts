@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { clearApiKey, clearApiKeyCache, saveApiKey } from './claude';
 import { closeDb } from '../lib/db';
-import { CODER_MODEL, codePulse } from './coder';
+import { CODER_MODEL, CODER_REV, codePulse } from './coder';
 import type { CoderContext } from './coder';
 
 const BASE_CONTEXT: CoderContext = {
@@ -37,6 +37,8 @@ const VALID_CODING_JSON = {
   people: [],
   span: { start: '2026-08-28T12:00:00.000Z', end: null, approx: false },
   links: { eventId: null },
+  nutrition: null,
+  coderRev: 2,
   effects: [],
   vocabProposal: null,
 };
@@ -213,6 +215,11 @@ describe('codePulse — a valid response degrades missing fields to safe default
       // and phase 3 reads span.start straight into a Date.
       span: { start: BASE_CONTEXT.now, end: null, approx: false },
       links: { eventId: null },
+      // A response that says nothing about food is a response about something
+      // that is not food. `null` here, rather than an empty block, is what
+      // makes a re-code able to CLEAR one an earlier revision wrote.
+      nutrition: null,
+      coderRev: CODER_REV,
       effects: [],
       vocabProposal: null,
     });
@@ -316,9 +323,144 @@ describe('the system prompt — the only place the model is told any of this', (
     const system = await systemPrompt();
 
     expect(system).toContain('block|event|state|plan|task|claim|note');
-    for (const key of ['signal', 'domain', 'activity', 'people', 'span', 'links', 'effects', 'vocabProposal']) {
+    for (const key of ['signal', 'domain', 'activity', 'people', 'span', 'links', 'nutrition', 'coderRev', 'effects', 'vocabProposal']) {
       expect(system).toContain(`"${key}"`);
     }
   });
 
+  it('carries the four nutrition distinctions the feature rests on — the extraction lives here or nowhere', async () => {
+    const system = await systemPrompt();
+
+    // Whose mouth, stated-beats-estimated, uncountable-is-null, and the shape
+    // of the answer. If any of these leaves the prompt the feature quietly
+    // becomes something else, and no other test would notice.
+    expect(system).toContain('OWNER consuming');
+    expect(system).toContain('kcalSource "stated"');
+    expect(system).toContain('kcal null');
+    expect(system).toContain('typical-portion point estimate');
+  });
+
+  it('does not gate nutrition on the eating label — Appendix B says the text already carries everything', async () => {
+    const system = await systemPrompt();
+    // The label is for the ledger's own rows. A drink at a work dinner is
+    // `domain: social` and still food, and this sentence is what says so.
+    expect(system).toContain('whatever the domain or activity label');
+  });
+
+  it('sends no new context slice for nutrition — the allowlist did not grow (fence 5)', async () => {
+    const fetchMock = vi.fn(async () => textResponse(VALID_CODING_JSON));
+    vi.stubGlobal('fetch', fetchMock);
+    await codePulse('two eggs on toast', BASE_CONTEXT);
+
+    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>;
+    const payload = JSON.parse(JSON.parse(calls[0][1].body as string).messages[0].content as string);
+
+    // Appendix B's own sentence, made checkable: the nutrition feature adds
+    // nothing to the payload. A future session "helpfully" attaching a food
+    // log, a weight, or yesterday's totals fails right here.
+    expect(Object.keys(payload).sort()).toEqual(
+      ['now', 'recentPulses', 'text', 'todayEvents', 'tz', 'vocab'].sort()
+    );
+  });
+
+});
+
+/**
+ * The nutrition half of the contract (phase 5).
+ *
+ * Every case here is a fixture of what the MODEL answered, put through the
+ * parser — never a test that the model gets it right, which only a live call
+ * and Gate 5's calibration week can say. What is pinned is that each of the
+ * four states the rules ask for survives the trip into a row, distinctly:
+ * stated, estimated, recognised-but-uncountable, and not-food.
+ *
+ * There is no extraction logic here to test. There is no food list, no
+ * portion table, no unit parser anywhere in this codebase and there must
+ * never be one (fence 2) — deciding a plate's size is judgment, and the only
+ * thing on this side of the wire is arithmetic on the answer.
+ */
+describe('codePulse — nutrition', () => {
+  async function nutritionOf(json: Record<string, unknown>) {
+    vi.stubGlobal('fetch', vi.fn(async () => textResponse({ signal: 'note', ...json })));
+    return (await codePulse('x', BASE_CONTEXT))?.nutrition;
+  }
+
+  it('keeps a stated calorie figure verbatim, marked as the owner\'s own', async () => {
+    // "620 kcal burrito". The owner has already done the measuring; the coder
+    // copying it is the whole rule, and nothing downstream may round it.
+    expect(await nutritionOf({ nutrition: { kcal: 620, kcalSource: 'stated' } })).toEqual({
+      kcal: 620,
+      kcalSource: 'stated',
+    });
+  });
+
+  it('keeps stated calories and stated protein together, each with its own provenance', async () => {
+    expect(
+      await nutritionOf({
+        nutrition: { kcal: 620, kcalSource: 'stated', proteinG: 42, proteinSource: 'stated' },
+      })
+    ).toEqual({ kcal: 620, kcalSource: 'stated', proteinG: 42, proteinSource: 'stated' });
+  });
+
+  it('carries an estimate through as an estimate, so the ledger can show what it rests on', async () => {
+    // "two eggs on toast" — a number the coder produced, not one the owner said.
+    expect(await nutritionOf({ nutrition: { kcal: 300, kcalSource: 'estimated' } })).toEqual({
+      kcal: 300,
+      kcalSource: 'estimated',
+    });
+  });
+
+  it('carries an estimated drink through the same way — alcohol is food (a beverage counts)', async () => {
+    expect(await nutritionOf({ nutrition: { kcal: 180, kcalSource: 'estimated' } })).toEqual({
+      kcal: 180,
+      kcalSource: 'estimated',
+    });
+  });
+
+  it('keeps a vague meal as recognised-but-uncounted rather than dropping it or guessing at it', async () => {
+    // "ate something at the buffet". `kcal: null` is what puts this in the
+    // visible uncounted tally; a zero would drag the day's total down while
+    // looking like a total, which is the failure this state exists to prevent.
+    expect(await nutritionOf({ nutrition: { kcal: null, kcalSource: 'estimated' } })).toEqual({
+      kcal: null,
+      kcalSource: 'estimated',
+    });
+  });
+
+  it("returns null for someone else's food — an omitted block is the not-food answer", async () => {
+    // "kids had pizza" is a real pulse about a real dinner and contributes
+    // nothing. Absent and `kcal: null` are different facts; this is absent.
+    expect(await nutritionOf({})).toBeNull();
+    expect(await nutritionOf({ nutrition: null })).toBeNull();
+  });
+
+  it('reads a nonsense figure as uncounted rather than as zero calories', async () => {
+    // A guess the app makes on the model's behalf is still a guess. Uncounted
+    // is visible; a silent zero is a day that reads lighter than it was.
+    expect(await nutritionOf({ nutrition: { kcal: 'lots', kcalSource: 'stated' } })).toEqual({
+      kcal: null,
+      kcalSource: 'stated',
+    });
+    expect(await nutritionOf({ nutrition: { kcal: -50, kcalSource: 'estimated' } })).toEqual({
+      kcal: null,
+      kcalSource: 'estimated',
+    });
+  });
+
+  it('calls an unreadable provenance an estimate, never the owner\'s own figure', async () => {
+    // The safe direction: dressing the coder's guess up as the owner's
+    // measurement is the one error this field exists to prevent.
+    expect(await nutritionOf({ nutrition: { kcal: 400 } })).toEqual({ kcal: 400, kcalSource: 'estimated' });
+    expect(await nutritionOf({ nutrition: { kcal: 400, kcalSource: 'measured' } })).toEqual({
+      kcal: 400,
+      kcalSource: 'estimated',
+    });
+  });
+
+  it('stamps the build\'s own coderRev and ignores whatever the model claimed', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => textResponse({ signal: 'note', coderRev: 1 })));
+    // A model echoing an older rev would leave the pulse permanently in the
+    // backfill's sights — re-coded, and re-billed, on every single run.
+    expect((await codePulse('x', BASE_CONTEXT))?.coderRev).toBe(CODER_REV);
+  });
 });
