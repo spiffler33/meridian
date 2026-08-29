@@ -11,14 +11,21 @@ of the owner's utterances. Authored-AI prose returns only where there is content
 synthesize (ask-the-library, its own future plan). The day-shape briefing is dead
 (see PLAN_CALENDAR amendment).
 
-## Status — all four phases built and deployed, 2026-08-29
+## Status — Phases 0–3 built and deployed; Phases 4 & 5 added and gated, 2026-08-29
 
-Phases 0, 1, 2 and 3 are on `main` and live at meridian.spiffler.xyz. **No coding work
-remains in this plan.** What is left is the owner's: **Gate 0** (does Read feel cleaner
-without Week as a view?), **Gate 2** (a week of coded living, then judge 20 pulses like an
-ATUS supervisor), and **Gate 3** (two weeks of ledger). Gate 2 was not run before Phase 3
-was built — recorded, with the reason, in that phase's run-log entry. Each gate's verdict
-is an amendment to this file, not a new plan.
+Phases 0, 1, 2 and 3 are on `main` and live at meridian.spiffler.xyz. What is left of them
+is the owner's: **Gate 0** (does Read feel cleaner without Week as a view?), **Gate 2** (a
+week of coded living, then judge 20 pulses like an ATUS supervisor), and **Gate 3** (two
+weeks of ledger). Gate 2 was not run before Phase 3 was built — recorded, with the reason,
+in that phase's run-log entry. Each gate's verdict is an amendment to this file, not a new
+plan.
+
+**Phases 4 and 5 were added 2026-08-29 by the owner**, integrated from the addendum
+`calendar/PLAN_PULSE_PHASES_4_5.md`, together with **hard fence 9**. Phase 4 retires the
+coder's actuator effects; Phase 5 adds the nutrition ledger. **Neither phase begins until
+Gate 3 has passed**, by the addendum's own terms. Nothing in `src/` implements either yet:
+where the appendices below carry a Phase 4 or Phase 5 shape they say so inline, and the
+shipped code still matches the pre-amendment shape.
 
 ## How to execute this plan
 
@@ -68,6 +75,12 @@ is an amendment to this file, not a new plan.
 8. Design: setpoint tokens. Timestamps and instruments mono; pulse text in the reading
    face at small size. Chips are quiet (hairline, muted). No streaks, no confetti, no
    gamification — the stream is a ledger, not a game.
+9. **Habits and Tower are manual, intentional spaces.** No AI reads them, writes them,
+   proposes about them, or receives them as context. Habit creation/edit/tick and Tower
+   item creation/edit happen through their own UIs only, forever. The coder observes
+   and classifies the owner's utterances; it is not an actuator.
+   *Added 2026-08-29 with the Phases 4 & 5 addendum; Phase 4 is what carries it out, so
+   the shipped build does not satisfy it yet.*
 
 ---
 
@@ -219,7 +232,132 @@ histogram bucketing (tz-correct), uncoded exclusion + count.
 **GATE 3:** two weeks of ledger. Does Spent match felt reality? Is the 4h cap producing
 honest numbers? Does the Needed/Spent gap say anything the owner acts on? If the section
 is wallpaper after a month, delete it without sentimentality — the stream and coder stand
-on their own. STOP. Plan complete.
+on their own. ~~STOP. Plan complete.~~ **STOP.** *Amended 2026-08-29: the plan continues.
+Phases 4 and 5 follow, and both are gated on this gate.*
+
+---
+
+## Phase 4 — Decommission actuator effects (the coder becomes a pure observer)
+
+**GATED: does not begin until GATE 3 has passed.** Added 2026-08-29 by the owner.
+
+**Goal:** habits and Tower return to fully manual ritual spaces. The coder keeps
+classifying (including `signal: task` — the utterance is still worth recording); it
+stops *doing*. This deletes the negative-habit bug class outright instead of fixing it:
+no habit effect exists, so no habit chip can misfire.
+
+Build:
+- **Delete effects `completeHabit`, `spawnTask`, `updateTask`:** chip components, apply
+  handlers, their Settings auto-apply toggles, their coder-prompt instructions, their
+  output-schema entries, their tests. Surviving effects: `claimEvent`, `vocabProposal`.
+- **Unknown effect types in coder output are discarded silently** (the model may still
+  hallucinate a retired type; dropping is the whole handling — no error, no log noise).
+- **`links` shrinks to `{eventId?}`.** `habitId`/`towerId` leave the type and docs.
+  Historical journal events carrying them are untouched and simply ignored by the app
+  (append-only log; no data migration).
+- **`pulseVocab` drops `habitAliases`** from type and seed. The historical vocab event
+  retains the field; the app ignores it. No migration, no explicit removal.
+- **Tower reverts to fully manual:** input creates the item from raw text directly; no
+  coder call, no pulse recorded from Tower submissions, no enrichment chips on items.
+  Pulse box = journal; Tower box = commitments. Clean separation.
+- **Coder context shrinks** (fence 5 + new fence 9): remove `todayHabits`,
+  `openTowerItems`, and `mouth` from the allowlist and the assembly. One mouth remains.
+- Amend Appendices B and C per the blocks below.
+
+Tests: chips absent (assert non-existence), unknown-effect-type discard, Tower manual
+path (item from raw text, no pulse written, no coder call), context payload contains no
+habit/tower slices (allowlist subset test updated), vocab seed idempotence without
+`habitAliases`, existing coded pulses with legacy `links` fields fold without warnings.
+
+*Integration note, 2026-08-29 — an unresolved collision with shipped Phase 3, for the
+owner, not for the builder to decide.* Dropping `habitAliases` also removes what the
+**habit timing strip** reads: `ledger.ts` builds its 24-cell histogram from
+`vocab.habitAliases` (`src/lib/ledger.ts:462`) to know which habits a pulse span belongs
+to. That strip is arithmetic, not AI — fence 9 does not forbid it — but Phase 4 as written
+deletes its only input. Three ways out, none chosen here: **(a)** keep `habitAliases` as a
+read-only vocab field the ledger uses and the coder never receives, and drop only the
+`habitAlias` *proposal kind* (proposing about habits is the part fence 9 forbids) —
+recommended, smallest, keeps Phase 3 whole; **(b)** delete the timing strip with it, one
+fewer thing; **(c)** move the mapping off `pulseVocab` entirely. Decide at Gate 3 or at the
+top of Phase 4; whichever way, amend this bullet before building.
+
+**GATE 4:** live with it several days. Two questions, both real: (a) do you miss "done
+with the deck" closing the item from the box, or does walking to Tower feel right — is
+the intentionality tax worth it in practice, not just in principle? (b) with only claim
+and vocab chips left, is the stream calmer? STOP.
+
+---
+
+## Phase 5 — Nutrition ledger (calories + protein; arithmetic only)
+
+**GATED: does not begin until GATE 3 has passed.** Added 2026-08-29 by the owner.
+
+**Goal:** daily kcal and protein totals from ordinary food pulses. Stated numbers win,
+estimates are marked, vague items are visibly uncounted. The ledger reads like something
+an accountant would sign — and it never, ever comments on the eating.
+
+Build:
+- **`pulse` gains enrichment fields** (fields, not entities — fence 7 intact):
+  - `nutrition?: {kcal: number|null, kcalSource: 'stated'|'estimated', proteinG?: number,
+    proteinSource?: 'stated'|'estimated'}`
+  - `coderRev: number` on every enrichment from now on. `CODER_REV = 2`; absent ⇒
+    treated as `< 2`.
+- **Coder prompt rules** (model-side extraction only — fence 2):
+  - Populate `nutrition` whenever the text describes **the owner** consuming food or
+    drink — regardless of domain/activity label. Beverages count; alcohol counts.
+  - Other people's consumption never counts ("kids had pizza", "wife's dessert" ⇒ no
+    `nutrition`).
+  - Owner-stated kcal ⇒ `kcalSource: 'stated'` and the stated number verbatim — the
+    coder never second-guesses the owner's figures. Same rule for stated protein.
+  - No stated number ⇒ typical-portion point estimate, `'estimated'`.
+  - Genuinely vague ("ate something at the buffet") ⇒ `nutrition` present with
+    `kcal: null` — recognized consumption, uncounted. Nulls over guesses, as ever.
+  - `nutrition` absent ⇒ not a consumption pulse. (`kcal: null` vs absent is the
+    uncounted-vs-not-food distinction; Appendix B records it.)
+- **Today instrument:** one small mono line between capture box and stream:
+  `1,240 kcal · 830 est · 1 uncounted   ·   82 g protein` — protein is a single
+  best-effort total (sources stored, not surfaced in v1). If `profile.kcalTarget` is
+  set: append plain `· of 1,800`. **No colors by state, no words, no messages** —
+  fence 6. Day boundary: **local midnight**, device tz.
+- **`profile.kcalTarget`:** optional numeric field on the existing `profile` entity
+  (precedent: `readingBaselineAt`), set via Settings, blank = off. Display treatment is
+  provisional by owner decision — finalized at the gate.
+- **YearView Energy:** seven daily kcal bars beside the existing charts — single bar
+  per day, estimated share as a fainter segment of the same accent, total value outside
+  the bar (house rule). Week's uncounted count as a mono footnote when > 0. Protein
+  stays on Today in v1.
+- **Backfill tool (Settings, owner-invoked, one-shot in spirit / idempotent in
+  mechanism):**
+  - Targets: pulses since `PULSE_EPOCH` (the Phase 1 ship date, a named constant) with
+    `coderRev` absent or `< CODER_REV`.
+  - Shows count and a rough cost line, requires confirmation, runs sequentially with
+    progress and a stop button. Resume = rerun; the rev bound makes it idempotent.
+  - Each re-code is one normal enrichment upsert — **fields only, never `text`**
+    (fence 1). **All effects and vocabProposals from backfill output are discarded** —
+    coding fields only; no chips about last Tuesday.
+  - Per-pulse failure ⇒ that pulse keeps its old rev; the tool reports `n failed,
+    run again`. Failure has one shape (uncoded/old-rev); no retry ladder.
+  - **The ambient lazy sweep MUST NOT consider `coderRev`.** It still skips any pulse
+    with `signal` present, permanently. Ambient re-coding is a billing bug by
+    definition. A regression test pins this.
+- Vocab seed amendment: `eating → self` added to `activities`. Nutrition extraction is
+  **not** gated on this label — the label is for the ledger, the extraction is
+  unconditional on consumption.
+- No new services, no second model call — nutrition rides the existing single coder
+  call. Amend Appendices A and B per the blocks below.
+
+Tests: prompt-contract fixtures (stated kcal; stated kcal+protein; estimated; vague ⇒
+`kcal: null` uncounted; other-people's food ⇒ absent; alcohol estimated), day-boundary
+edges (23:59 / 00:01 local), Today totals selector (stated/estimated/uncounted split +
+protein sum), target line on/off, weekly two-tone bars + value-outside, backfill rev
+targeting, backfill effect suppression, backfill idempotent rerun, per-pulse failure
+isolation, ambient-sweep-ignores-rev regression.
+
+**GATE 5:** run the backfill first, then a calibration week. Spot-check ~15 food pulses
+against your own knowledge of what you ate: are estimates in believable range, and is
+uncounted rare enough that the total means something? Then the parked decision:
+finalize the target display — keep the plain `· of` text, change it, or drop it. STOP.
+Plan complete.
 
 ---
 
@@ -243,16 +381,18 @@ hand-rolled one, for nothing.
 | `activity` | enrichment | coder — short label |
 | `people[]` | enrichment | coder — aliases from vocab |
 | `span` | enrichment | coder — `{start, end?, approx?}`; start defaults to `ts`, back-dated when stated ("this morning" ⇒ approx) |
-| `links` | enrichment / chip apply | `{habitId?, towerId?, eventId?}` |
+| `links` | enrichment / chip apply | `{eventId?}`. *Amended 2026-08-29 (Phase 4), was `{habitId?, towerId?, eventId?}`; the two retired keys survive in historical journal events and are ignored.* |
+| `nutrition` | enrichment | coder — `{kcal, kcalSource, proteinG?, proteinSource?}`; `kcal: null` = recognized consumption, uncounted; absent = not food. *Added 2026-08-29 (Phase 5).* |
+| `coderRev` | enrichment | coder — schema revision of the coding; absent ⇒ pre-rev-2. *Added 2026-08-29 (Phase 5).* |
 
 **#12 `pulseVocab`** — natural key `vocab`, one instance.
 
 | field | shape |
 |---|---|
 | `domains[]` | seed: `db · hoa · family · home-ops · self · social · transit · admin` |
-| `activities` | `{label → domain}` seed: `gym→self, read→self, deep-work→db, school-run→family, dinner→family, drinks→social` |
+| `activities` | `{label → domain}` seed: `gym→self, read→self, deep-work→db, school-run→family, dinner→family, drinks→social, eating→self`. *`eating→self` added 2026-08-29 (Phase 5); nutrition extraction is **not** gated on this label.* |
 | `people[]` | seed: `wife, kids` (grows via proposals) |
-| `habitAliases` | `{alias → habitId}` seed mapping `gym/lift/strength` → strength habit id, `read` → reading habit id (resolve real ids at seed time) |
+| ~~`habitAliases`~~ | *Removed 2026-08-29 (Phase 4), from type and seed. The historical vocab event keeps the field; the app ignores it. No migration, no explicit removal. Was: `{alias → habitId}` seeding `gym/lift/strength` → strength habit id, `read` → reading habit id.* |
 
 Seeding: first Phase 2 run, iff unset — one journal event, idempotent across devices.
 
@@ -260,8 +400,13 @@ Seeding: first Phase 2 run, iff unset — one journal event, idempotent across d
 
 **Context allowlist (fence 5) — the payload contains these slices and nothing else:**
 `text` · `now` (ISO) · `tz` · `vocab` (full) · `todayEvents[{id,title,calendar,start,end}]`
-· `todayHabits[{id,name,done}]` · `openTowerItems[{id,text,status}]` ·
-`recentPulses` (last 5: `{text, coding?}`) · `mouth` (`today` | `tower`).
+· `recentPulses` (last 5: `{text, coding?}`).
+
+*Amended 2026-08-29 (Phase 4): `todayHabits[{id,name,done}]`, `openTowerItems[{id,text,status}]`
+and `mouth` (`today` | `tower`) are removed — fence 5 plus fence 9. One mouth remains. The
+shipped build still sends all three; the allowlist subset test moves with the code.*
+**The nutrition feature adds nothing to the context — the text already carries everything.**
+Future sessions: do not "helpfully" enrich the context; this sentence exists so you don't.
 
 **Output (strict JSON, nothing else):**
 ```json
@@ -269,11 +414,20 @@ Seeding: first Phase 2 run, iff unset — one journal event, idempotent across d
   "signal": "block|event|state|plan|task|claim|note",
   "domain": null, "activity": null, "people": [],
   "span": {"start": "...", "end": null, "approx": false},
-  "links": {"habitId": null, "towerId": null, "eventId": null},
-  "effects": [{"type": "completeHabit|spawnTask|updateTask|claimEvent", "...": "..."}],
-  "vocabProposal": {"kind": "domain|activity|person|habitAlias", "value": "...", "mapsTo": null}
+  "links": {"eventId": null},
+  "nutrition": {"kcal": null, "kcalSource": "stated|estimated",
+                "proteinG": null, "proteinSource": "stated|estimated"},
+  "coderRev": 2,
+  "effects": [{"type": "claimEvent", "...": "..."}],
+  "vocabProposal": {"kind": "domain|activity|person", "value": "...", "mapsTo": null}
 }
 ```
+*Amended 2026-08-29. Phase 4 narrows `links` and the `effects` enum; Phase 5 adds
+`nutrition` and `coderRev`. `vocabProposal` is a top-level key, not an effect type — the
+addendum's "effects enum is `claimEvent | vocabProposal`" is Phase 4's surviving-effects
+list, and is written here in the shape the code actually parses (`coder.ts`). Its
+`habitAlias` kind goes with `habitAliases`, subject to the Phase 4 collision note above:
+proposing about a habit is what fence 9 forbids, whichever way the field itself lands.*
 Rules given to the model: nulls over guesses; `signal` always set (`note` when unsure);
 never invent people, habits, events, or tasks not present in context; time expressions
 resolved against `now` and `tz`; `mouth: tower` biases toward `task`.
@@ -282,9 +436,9 @@ resolved against `now` and `tz`; `mouth: tower` biases toward `task`.
 
 | effect | applies | default |
 |---|---|---|
-| `completeHabit` | ticks today's habit completion (timing analytics read the pulse span, not the habit record) | confirm |
-| `spawnTask` | creates Tower item, sets `links.towerId` | confirm |
-| `updateTask` | proposes status/waitingOn/expectsBy on a matched open item | confirm |
+| ~~`completeHabit`~~ | *Retired 2026-08-29 (Phase 4), fence 9. Was: ticks today's habit completion.* | — |
+| ~~`spawnTask`~~ | *Retired 2026-08-29 (Phase 4), fence 9. Was: creates Tower item, sets `links.towerId`.* | — |
+| ~~`updateTask`~~ | *Retired 2026-08-29 (Phase 4), fence 9. Was: proposes status/waitingOn/expectsBy on a matched open item.* | — |
 | `claimEvent` | sets `links.eventId` — flips a home-calendar event to counts-as-mine | confirm |
 | `vocabProposal` | upserts `pulseVocab` | confirm (never auto) |
 
@@ -701,3 +855,45 @@ claiming half the day? Does the Needed/Spent gap say anything worth acting on �
 `db ↔ db` pairing the only clean one, or should `home ↔ family` be drawn too? Watch the three
 readings above; each is a one-line change. If the section is wallpaper after a month, delete it
 without sentimentality: the stream and the coder stand on their own.
+
+### 2026-08-29 — addendum integrated: Phases 4 & 5, and hard fence 9
+
+A documentation run, no `src/` change. `calendar/PLAN_PULSE_PHASES_4_5.md` arrived after
+Phase 3 closed, written outside the session that closed it, carrying two new phases and a
+new fence. Its own paste-over instructions are now carried out here: **hard fence 9**
+(habits and Tower are manual spaces; the coder observes and classifies, and is never an
+actuator) joins the global list, **Phase 4** (decommission the `completeHabit`, `spawnTask`
+and `updateTask` effects) and **Phase 5** (nutrition ledger — kcal and protein, arithmetic
+only, with an owner-invoked backfill) sit after Phase 3, and Appendices A, B and C carry
+the amendments. Both phases keep the addendum's own gate: **neither begins until Gate 3 has
+passed.** Integrating the document is not building the phases.
+
+Four readings taken where the addendum was silent or where the plan disagreed with itself.
+Each is recorded rather than smoothed over:
+
+- **Its header names `docs/PLAN_PULSE.md`; the plan lives at `calendar/PLAN_PULSE.md`.**
+  There is exactly one Pulse plan in the repo and `docs/` holds none, so the target was
+  unambiguous and no file moved. Flagged, not asked.
+- **`habitAliases` is load-bearing for shipped Phase 3.** Phase 4 drops it from
+  `pulseVocab`; `ledger.ts:462` reads it to build the habit timing strip. Left **unresolved
+  on purpose** — an integration note under Phase 4 states the collision, lists three ways
+  out with a recommendation, and hands the choice to the owner at Gate 3 or at the top of
+  Phase 4. A builder is not to pick one silently.
+- **"Effects enum is `claimEvent | vocabProposal`" is loose.** In `coder.ts` the output has
+  `effects` and `vocabProposal` as separate keys; `vocabProposal` was never in the effects
+  enum. Appendix B is written in the shape the parser actually reads — effects enum narrows
+  to `claimEvent`, `vocabProposal` stays its own key — which is what Phase 4's
+  surviving-effects line means.
+- **The `habitAlias` vocab-proposal kind follows the field out.** The addendum removes
+  `habitAliases` but never mentions the proposal kind that writes to it. Fence 9 forbids the
+  AI proposing about habits regardless of where the mapping ends up, so the kind goes either
+  way; noted against the collision above.
+
+The appendices now describe the post-Phase-5 contract while the shipped build is still
+pre-Phase-4. Rather than let the doc quietly lie about what runs today, every amended row
+says which phase it belongs to, Phase 3's `Plan complete` is struck with a pointer forward,
+and the `## Status` header at the top states plainly that nothing in `src/` implements
+either phase yet.
+
+**No gate of its own.** Gates 0, 2 and 3 remain open and unchanged, and Gate 3 is what
+unlocks Phase 4.
