@@ -70,59 +70,6 @@ export interface EnhancedInsightRequest extends DayInsightRequest {
 }
 
 /**
- * Generate a personalized daily insight using Claude
- */
-export async function generateDailyInsight(data: DayInsightRequest): Promise<string> {
-  const apiKey = await loadApiKey();
-  if (!apiKey) {
-    throw new Error('No API key configured');
-  }
-
-  const habitSummary = data.habits
-    .map(h => `${h.name}: ${h.completed ? '✓' : '✗'}${h.streak > 0 ? ` (${h.streak}d streak)` : ''}`)
-    .join('\n');
-
-  const prompt = `You are a stoic, Naval Ravikant-inspired life coach. Be extremely brief (2-3 sentences max). No fluff, no emojis. Give one sharp insight based on this data:
-
-Habits today:
-${habitSummary}
-
-Tasks: ${data.tasksCompleted}/${data.totalTasks}
-Days left this year: ${data.daysUntilEndOfYear}
-${data.reflection ? `Reflection: "${data.reflection}"` : ''}
-
-Give one actionable insight. Focus on leverage, compound effects, or what matters most today. Be direct.`;
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-3-haiku-20240307',
-      max_tokens: 150,
-      messages: [
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-    }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: { message: `HTTP ${response.status}` } }));
-    throw new Error(error.error?.message || `API request failed (${response.status})`);
-  }
-
-  const result = await response.json();
-  return result.content[0]?.text || 'No insight generated.';
-}
-
-/**
  * Format trend as arrow symbol
  */
 function formatTrend(trend: 'up' | 'down' | 'stable'): string {
@@ -135,6 +82,8 @@ function formatTrend(trend: 'up' | 'down' | 'stable'): string {
  * Format day-of-week rates compactly
  */
 function formatDowRates(rates: Record<string, number>): string {
+  // Third copy of the same seven names: utils/analytics.ts carries two more
+  // (DAY_NAMES, Sunday-first, and the weekday/weekend split). One owner wanted.
   const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   return days.map(d => `${d}:${rates[d] || 0}`).join(' ');
 }

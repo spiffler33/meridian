@@ -10,6 +10,8 @@
 import { useMemo } from 'react';
 import { useApp } from '../store/AppContext';
 import { AiInsight } from '../components/AiInsight';
+import { Section } from '../components/Section';
+import { StepNav } from '../components/StepNav';
 import { getWeekDates, formatShortDate, getDayOfWeek, isToday, getWeekNumber, getToday } from '../utils/dates';
 import { AllDayChip, Dot } from '../components/calendarUi';
 import { deviceTimeZone, eventsForDays, timeLabel } from '../lib/calendar';
@@ -62,8 +64,8 @@ function DayCard({
     <button
       onClick={onClick}
       className={`
-        p-3 rounded border text-left transition-all
-        ${today ? 'border-accent/50 bg-accent/5' : 'border-border bg-bg-card hover:border-border-focus'}
+        p-3 rounded border text-left transition-colors
+        ${today ? 'border-accent-rim bg-accent-wash' : 'border-border hover:border-border-focus'}
         ${isSelected ? 'ring-1 ring-accent' : ''}
       `}
     >
@@ -75,7 +77,7 @@ function DayCard({
         {today && <span className="ml-2 text-accent text-xs">•</span>}
       </div>
 
-      <div className="space-y-1 text-xs font-mono text-text-muted">
+      <div className="space-y-1 text-xs text-text-muted">
         <div className="flex justify-between">
           <span>tasks</span>
           <span className={mitCount.completed > 0 ? 'text-text-secondary' : ''}>
@@ -97,7 +99,7 @@ function DayCard({
       </div>
 
       {shown.length > 0 && (
-        <div className="mt-2 space-y-1 border-t border-sp-hair pt-2">
+        <div className="mt-2 space-y-1 border-t border-border pt-2">
           {shown.map(event =>
             event.allDay ? (
               <div key={event.id} className="flex">
@@ -109,15 +111,15 @@ function DayCard({
                   <Dot calendar={event.calendar} />
                 </span>
                 <span
-                  className={`flex-shrink-0 font-mono text-[10.5px] tabular-nums ${
-                    past ? 'text-sp-faint' : 'text-sp-muted'
+                  className={`flex-shrink-0 text-2xs tabular-nums ${
+                    past ? 'text-text-muted' : 'text-text-secondary'
                   }`}
                 >
                   {timeLabel(event.start, timeZone)}
                 </span>
                 <span
-                  className={`truncate font-mono text-[10.5px] ${
-                    past ? 'text-sp-faint' : 'text-sp-muted'
+                  className={`truncate text-2xs ${
+                    past ? 'text-text-muted' : 'text-text-secondary'
                   }`}
                 >
                   {event.title}
@@ -126,7 +128,7 @@ function DayCard({
             )
           )}
           {hidden > 0 && (
-            <div className="font-mono text-[10.5px] text-sp-faint">+{hidden}</div>
+            <div className=" text-2xs text-text-muted">+{hidden}</div>
           )}
         </div>
       )}
@@ -178,45 +180,28 @@ export function WeekView({
           <div className="text-lg font-medium text-text">
             week {weekNumber}
           </div>
-          <div className="text-xs text-text-muted font-mono mt-1">
+          <div className="text-xs text-text-muted mt-1">
             {formatShortDate(weekDates[0])} — {formatShortDate(weekDates[6])}
           </div>
         </div>
 
-        <div className="flex items-center gap-1">
-          <button
-            onClick={onPreviousWeek}
-            className="p-2 text-text-muted hover:text-text transition-colors"
-          >
-            ‹
-          </button>
-          <button
-            onClick={onNextWeek}
-            className="p-2 text-text-muted hover:text-text transition-colors"
-          >
-            ›
-          </button>
-        </div>
+        <StepNav onPrev={onPreviousWeek} onNext={onNextWeek} label="week" />
       </div>
 
       {/* Summary */}
-      <div className="bg-bg-card rounded border border-border p-4">
-        <div className="text-xs text-text-muted font-mono space-y-1">
+      <Section label="totals">
+        <div className="text-xs text-text-muted space-y-1">
           <div>tasks completed: {completedMits}/{totalMits}</div>
           <div>days with notes: {daysWithNotes}/7</div>
         </div>
-      </div>
+      </Section>
 
       {/* Days */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
         {weekDates.map(date => {
-          const dayData = getDailyData(date);
-          const dayMits = dayData.mit.work.length + dayData.mit.self.length + dayData.mit.family.length;
-          const dayCompletedMits =
-            dayData.mit.work.filter(i => i.completed).length +
-            dayData.mit.self.filter(i => i.completed).length +
-            dayData.mit.family.filter(i => i.completed).length;
-          const dayHabitCount = getHabitCount(date);
+          // The same arithmetic the row above uses, over a week of one day, so
+          // a card and the summary can never disagree about what a day held.
+          const day = weekTotals([date], getDailyData);
 
           return (
             <DayCard
@@ -224,9 +209,9 @@ export function WeekView({
               date={date}
               events={eventsByDay.get(date) ?? []}
               timeZone={timeZone}
-              mitCount={{ total: dayMits, completed: dayCompletedMits }}
-              habitCount={{ total: habits.length, completed: dayHabitCount }}
-              hasReflection={dayData.reflection.length > 0}
+              mitCount={{ total: day.totalMits, completed: day.completedMits }}
+              habitCount={{ total: habits.length, completed: getHabitCount(date) }}
+              hasReflection={day.daysWithNotes > 0}
               isSelected={date === selectedDate}
               onClick={() => onDateSelect(date)}
             />

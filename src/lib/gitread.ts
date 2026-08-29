@@ -27,11 +27,15 @@
 import {
   GitHubError,
   RATE_LIMITED_REASON,
+  RETRY_BACKOFF_MS,
+  RETRY_JITTER,
   UNREACHABLE_REASON,
+  UNUSABLE_RESPONSE_STATUS,
   call,
   failure,
   fromBase64,
   readJson,
+  sleep,
   type AccessResult,
 } from './github';
 
@@ -58,13 +62,6 @@ export const CALENDAR_DATA: RepoSource = {
 
 /** Total attempts for a read that keeps hitting a 5xx. */
 const MAX_ATTEMPTS = 3;
-/** Delay before attempts 2 and 3. */
-const RETRY_BACKOFF_MS = [250, 750];
-/** Random share added on top, so two devices do not retry in lockstep. */
-const RETRY_JITTER = 0.25;
-
-/** GitHub answered, but the body it sent cannot be used. Not a status GitHub reported. */
-const UNUSABLE_RESPONSE_STATUS = 502;
 
 const NO_ACCESS_REASON = 'this token cannot read that repo — check the grant';
 const UNCONFIRMED_REASON = 'access could not be confirmed';
@@ -80,10 +77,11 @@ function repoBase(source: RepoSource): string {
   return `/repos/${source.owner}/${source.repo}`;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
+/**
+ * The read ladder's own jitter. Deliberately not github.ts's `retryDelay`:
+ * that one rounds differently and clamps against a server-supplied
+ * `retry-after` that a read never receives. Same constants, different formula.
+ */
 function retryDelay(attempt: number): number {
   const base = RETRY_BACKOFF_MS[Math.min(attempt, RETRY_BACKOFF_MS.length - 1)];
   return Math.round(base * (1 + Math.random() * RETRY_JITTER));

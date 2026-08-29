@@ -36,7 +36,7 @@ export function DayShape({
 
   return (
     <section>
-      <h2 className="text-xs uppercase tracking-widest text-text-muted mb-3">Day shape</h2>
+      <h2 className="text-xs uppercase tracking-label text-text-muted mb-3">Day shape</h2>
 
       {allDay.length > 0 && (
         <div className="mb-3 flex flex-wrap gap-1.5">
@@ -47,29 +47,29 @@ export function DayShape({
       )}
 
       {timed.length > 0 && (
-        <div className="space-y-[7px]">
+        <div className="space-y-2">
           {timed.map(row => (
             <div key={row.event.id} className="flex items-baseline gap-2.5">
-              <span className="translate-y-[-2px]">
+              <span className="-translate-y-0.5">
                 <Dot calendar={row.event.calendar} lit={row.next} />
               </span>
               <span
-                className={`flex-shrink-0 font-mono text-[11.5px] tabular-nums ${
-                  row.past ? 'text-sp-faint' : 'text-sp-muted'
+                className={`flex-shrink-0 font-mono text-xs tabular-nums ${
+                  row.past ? 'text-text-muted' : 'text-text-secondary'
                 }`}
               >
                 {timeLabel(row.event.start, timeZone)}–{timeLabel(row.event.end, timeZone)}
               </span>
               <span className="min-w-0">
                 <span
-                  className={`block truncate font-mono text-[12.5px] leading-[1.5] ${
-                    row.past ? 'text-sp-faint' : row.next ? 'text-sp-ink' : 'text-sp-muted'
+                  className={`block truncate font-mono text-xs ${
+                    row.past ? 'text-text-muted' : row.next ? 'text-text' : 'text-text-secondary'
                   }`}
                 >
                   {row.event.title}
                 </span>
                 {row.event.location && (
-                  <span className="block truncate font-mono text-[10.5px] leading-[1.5] text-sp-faint">
+                  <span className="block truncate font-mono text-2xs text-text-muted">
                     {row.event.location}
                   </span>
                 )}
@@ -81,11 +81,11 @@ export function DayShape({
 
       {rows.length === 0 && (
         // A statement, not an alarm. An empty day is a fact about the day.
-        <div className="font-mono text-[11.5px] text-sp-faint">no events mirrored today</div>
+        <div className="font-mono text-xs text-text-muted">no events mirrored today</div>
       )}
 
       {stale && mirror && (
-        <div className="mt-3 font-mono text-[10.5px] text-sp-amber">
+        <div className="mt-3 font-mono text-2xs text-accent">
           mirror stale since {timeLabel(new Date(mirror.generatedAt).toISOString(), timeZone)}
         </div>
       )}

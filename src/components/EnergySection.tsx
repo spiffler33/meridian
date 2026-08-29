@@ -36,6 +36,8 @@ import {
 } from '../lib/ledger';
 import type { ActivityTiming, CalendarHours, DayKcal, DomainHours, WeekNutrition } from '../lib/ledger';
 import { getPulses } from '../services/data';
+import { Section } from './Section';
+import { StepNav } from './StepNav';
 import { getWeekNumber } from '../utils/dates';
 
 interface EnergySectionProps {
@@ -53,18 +55,18 @@ interface EnergySectionProps {
  * here it separates one chart from another rather than one calendar from
  * another, which is why this is its own list and not an import of that one.
  */
-const SPENT_TONE = 'bg-sp-amber';
-const NEEDED_TONE = 'bg-sp-ice';
-const UNCLAIMED_TONE = 'bg-sp-faint';
+const SPENT_TONE = 'bg-accent';
+const NEEDED_TONE = 'bg-cite';
+const UNCLAIMED_TONE = 'bg-text-muted';
 
 const hours = (value: number) => value.toFixed(1);
 
 function Label({ children }: { children: React.ReactNode }) {
-  return <span className="text-xs text-text-muted uppercase tracking-wide">{children}</span>;
+  return <span className="text-xs text-text-muted uppercase tracking-caps">{children}</span>;
 }
 
 function Empty({ children }: { children: React.ReactNode }) {
-  return <p className="font-mono text-[11.5px] text-text-muted">{children}</p>;
+  return <p className=" text-xs text-text-muted">{children}</p>;
 }
 
 interface BarProps {
@@ -86,10 +88,14 @@ interface BarProps {
  * no hours this week is a fact, not an absence.
  */
 function Bar({ name, value, widest, tone, ghost = 0, note }: BarProps) {
+  // `rounded-[3px]` rather than the token `rounded` (6px), here and on every
+  // other bar in this file: the track is 12px tall, and a 6px radius on a 12px
+  // bar is a pill. Half the height is the largest radius that still reads as a
+  // rectangle. Deliberate — not a value the next sweep should round up.
   const scale = (amount: number) => (widest <= 0 ? 0 : Math.min(100, (amount / widest) * 100));
   return (
-    <div className="grid grid-cols-[76px_1fr_44px] items-center gap-[10px] py-[3px] sm:grid-cols-[108px_1fr_52px]">
-      <span className="truncate font-mono text-[11.5px] text-text-secondary" title={name}>
+    <div className="grid grid-cols-[76px_1fr_44px] items-center gap-2.5 py-0.5 sm:grid-cols-[108px_1fr_52px]">
+      <span className="truncate text-xs text-text-secondary" title={name}>
         {name}
       </span>
       <span className="relative block h-3 overflow-hidden rounded-[3px] bg-bg-hover">
@@ -104,7 +110,7 @@ function Bar({ name, value, widest, tone, ghost = 0, note }: BarProps) {
           style={{ width: `${scale(value)}%` }}
         />
       </span>
-      <span className="text-right font-mono text-[11.5px] tabular-nums text-text" title={note}>
+      <span className="text-right text-xs tabular-nums text-text" title={note}>
         {hours(value)}
       </span>
     </div>
@@ -118,7 +124,6 @@ function widestOf(values: readonly number[]): number {
 
 function SpentChart({ bars }: { bars: DomainHours[] }) {
   const widest = widestOf(bars.map(bar => bar.hours));
-  if (bars.length === 0) return <Empty>no coded blocks this week</Empty>;
   return (
     <div>
       {bars.map(bar => (
@@ -137,7 +142,6 @@ function SpentChart({ bars }: { bars: DomainHours[] }) {
 
 function NeededChart({ bars }: { bars: CalendarHours[] }) {
   const widest = widestOf(bars.map(bar => bar.hours + bar.unclaimed));
-  if (bars.length === 0) return <Empty>no events this week</Empty>;
   return (
     <div>
       {bars.map(bar => (
@@ -189,8 +193,8 @@ function TimingRow({ row }: { row: ActivityTiming }) {
   return (
     <div className="space-y-1">
       <div className="flex items-baseline justify-between gap-3">
-        <span className="truncate font-mono text-[11.5px] text-text-secondary">{row.activity}</span>
-        <span className="font-mono text-[11px] tabular-nums text-text-muted">{row.total}</span>
+        <span className="truncate text-xs text-text-secondary">{row.activity}</span>
+        <span className=" text-xs tabular-nums text-text-muted">{row.total}</span>
       </div>
       <div className="flex gap-px" role="img" aria-label={`${row.activity}: ${row.total} logged`}>
         {row.hours.map((count, hour) => {
@@ -235,8 +239,8 @@ function KcalBar({ day, widest }: { day: DayKcal; widest: number }) {
   const stated = day.corrected ? day.kcal : day.kcal - day.estimatedKcal;
   const showsEstimate = !day.corrected && day.estimatedKcal > 0;
   return (
-    <div className="grid grid-cols-[76px_1fr_44px] items-center gap-[10px] py-[3px] sm:grid-cols-[108px_1fr_52px]">
-      <span className="truncate font-mono text-[11.5px] text-text-secondary">{weekdayLabel(day.date)}</span>
+    <div className="grid grid-cols-[76px_1fr_44px] items-center gap-2.5 py-0.5 sm:grid-cols-[108px_1fr_52px]">
+      <span className="truncate text-xs text-text-secondary">{weekdayLabel(day.date)}</span>
       <span className="relative block h-3 overflow-hidden rounded-[3px] bg-bg-hover">
         {showsEstimate && (
           <span
@@ -250,7 +254,7 @@ function KcalBar({ day, widest }: { day: DayKcal; widest: number }) {
         />
       </span>
       <span
-        className="text-right font-mono text-[11.5px] tabular-nums text-text"
+        className="text-right text-xs tabular-nums text-text"
         title={showsEstimate ? `${kcalLabel(day.estimatedKcal)} kcal estimated` : undefined}
       >
         {day.kcal > 0 ? kcalLabel(day.kcal) : ''}
@@ -275,18 +279,13 @@ function weekdayLabel(date: string): string {
 
 function KcalChart({ nutrition }: { nutrition: WeekNutrition }) {
   const widest = widestOf(nutrition.days.map(day => day.kcal));
-  // "Nothing was logged" and "nothing that was logged could be counted" are
-  // different weeks, and only the first is empty. A week of unsizeable meals
-  // has to say so — reporting it as an empty week would be the chart telling
-  // the owner they did not eat.
-  if (widest <= 0 && nutrition.uncounted === 0) return <Empty>nothing eaten was logged this week</Empty>;
   return (
     <div>
       {nutrition.days.map(day => (
         <KcalBar key={day.date} day={day} widest={widest} />
       ))}
       {nutrition.uncounted > 0 && (
-        <p className="pt-1 font-mono text-[11px] text-text-muted">
+        <p className="pt-1 text-xs text-text-muted">
           {nutrition.uncounted} {nutrition.uncounted === 1 ? 'item' : 'items'} eaten, not counted
         </p>
       )}
@@ -335,54 +334,63 @@ export function EnergySection({
     };
   }, [data.value, mirror, selectedDate, timeZone, weekStartsOn]);
 
+  // Which of the four sub-sections have anything to draw. One that has nothing
+  // does not render at all: four separate ways of saying the week is empty is
+  // not four facts, it is one, and it is said once, below, in one line.
+  const spentDrawn = ledger !== null && ledger.spent.length > 0;
+  const neededDrawn = ledger !== null && ledger.needed.length > 0;
+  // "Nothing was logged" and "nothing that was logged could be counted" are
+  // different weeks, and only the first is empty. A week of unsizeable meals
+  // still draws — reporting it as an empty week would be the chart telling the
+  // owner they did not eat.
+  const nutritionDrawn =
+    ledger !== null &&
+    (ledger.nutrition.days.some(day => day.kcal > 0) || ledger.nutrition.uncounted > 0);
+  const timingDrawn = ledger !== null && ledger.timing.rows.length > 0;
+  const nothingDrawn = !spentDrawn && !neededDrawn && !nutritionDrawn && !timingDrawn;
+
   return (
-    <section className="bg-bg-card rounded border border-border p-4 space-y-4">
-      <div className="flex items-baseline justify-between gap-3">
-        <Label>energy</Label>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={onPreviousWeek}
-            aria-label="previous week"
-            className="text-text-muted hover:text-text transition-colors"
-          >
-            &lsaquo;
-          </button>
-          <span className="font-mono text-xs text-text-secondary tabular-nums">
+    <Section
+      label="energy"
+      aside={
+        <StepNav onPrev={onPreviousWeek} onNext={onNextWeek} label="week">
+          <span className="text-xs tabular-nums text-text-secondary">
             week {getWeekNumber(selectedDate)}
           </span>
-          <button
-            onClick={onNextWeek}
-            aria-label="next week"
-            className="text-text-muted hover:text-text transition-colors"
-          >
-            &rsaquo;
-          </button>
-        </div>
-      </div>
-
+        </StepNav>
+      }
+    >
       {data.pending && <Empty>reading the stream</Empty>}
       {data.error !== null && <Empty>the stream could not be read</Empty>}
 
       {ledger !== null && (
         <div className="space-y-5">
           {ledger.honesty.uncoded > 0 && (
-            <p className="font-mono text-[11px] text-text-muted">
+            <p className=" text-xs text-text-muted">
               {`${ledger.honesty.uncoded} uncoded ${
                 ledger.honesty.uncoded === 1 ? 'pulse' : 'pulses'
               } excluded`}
             </p>
           )}
 
-          <div className="grid gap-5 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label>spent by domain</Label>
-              <SpentChart bars={ledger.spent} />
+          {nothingDrawn && <Empty>nothing coded this week</Empty>}
+
+          {(spentDrawn || neededDrawn) && (
+            <div className="grid gap-5 sm:grid-cols-2">
+              {spentDrawn && (
+                <div className="space-y-2">
+                  <Label>spent by domain</Label>
+                  <SpentChart bars={ledger.spent} />
+                </div>
+              )}
+              {neededDrawn && (
+                <div className="space-y-2">
+                  <Label>needed by calendar</Label>
+                  <NeededChart bars={ledger.needed} />
+                </div>
+              )}
             </div>
-            <div className="space-y-2">
-              <Label>needed by calendar</Label>
-              <NeededChart bars={ledger.needed} />
-            </div>
-          </div>
+          )}
 
           {ledger.pairs.paired.length > 0 && (
             <div className="space-y-2">
@@ -391,41 +399,41 @@ export function EnergySection({
             </div>
           )}
 
-          <div className="space-y-2">
-            <Label>calories by day</Label>
-            <KcalChart nutrition={ledger.nutrition} />
-          </div>
-
-          <div className="space-y-3">
-            <div className="flex items-baseline justify-between gap-3">
-              <Label>activity timing</Label>
-              <span className="font-mono text-[11px] text-text-muted">
-                {HISTOGRAM_WEEKS} weeks, local hour
-              </span>
+          {nutritionDrawn && (
+            <div className="space-y-2">
+              <Label>calories by day</Label>
+              <KcalChart nutrition={ledger.nutrition} />
             </div>
-            {ledger.timing.rows.length === 0 ? (
-              <Empty>nothing coded to an activity yet</Empty>
-            ) : (
+          )}
+
+          {timingDrawn && (
+            <div className="space-y-3">
+              <div className="flex items-baseline justify-between gap-3">
+                <Label>activity timing</Label>
+                <span className=" text-xs text-text-muted">
+                  {HISTOGRAM_WEEKS} weeks, local hour
+                </span>
+              </div>
               <div className="space-y-3">
                 {ledger.timing.rows.map(row => (
                   <TimingRow key={row.activity} row={row} />
                 ))}
-                <div className="flex justify-between font-mono text-[10px] text-text-muted tabular-nums">
+                <div className="flex justify-between text-2xs text-text-muted tabular-nums">
                   {HOUR_TICKS.map(hour => (
                     <span key={hour}>{String(hour).padStart(2, '0')}</span>
                   ))}
                   <span>23</span>
                 </div>
                 {ledger.timing.hidden > 0 && (
-                  <p className="font-mono text-[11px] text-text-muted">
+                  <p className=" text-xs text-text-muted">
                     {ledger.timing.hidden} quieter {ledger.timing.hidden === 1 ? 'activity' : 'activities'} not shown
                   </p>
                 )}
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       )}
-    </section>
+    </Section>
   );
 }

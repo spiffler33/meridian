@@ -1,64 +1,81 @@
 /** @type {import('tailwindcss').Config} */
+
+/*
+ * Every colour here is a pointer into `src/index.css`. Nothing is defined
+ * twice, and there is no palette in this file to drift from that one.
+ *
+ * There is no `/opacity` support on these tokens on purpose: a token holds a
+ * whole colour value, not channels, so `bg-accent/5` compiles to nothing at
+ * all. Where a tint is genuinely wanted, index.css mixes a named one
+ * (`accent-wash`, `accent-rim`, `cite-rim`) and it is used by name.
+ */
 export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
+  content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
       colors: {
-        // CSS variable-based colors for theming
         bg: 'var(--color-bg)',
         'bg-card': 'var(--color-bg-card)',
         'bg-hover': 'var(--color-bg-hover)',
         border: 'var(--color-border)',
         'border-focus': 'var(--color-border-focus)',
+
         text: 'var(--color-text)',
         'text-secondary': 'var(--color-text-secondary)',
         'text-muted': 'var(--color-text-muted)',
+        // The whisper tier. Below the contrast bar in both themes, on
+        // purpose — nothing load-bearing may be written in it.
+        'text-faint': 'var(--color-text-faint)',
+
         accent: 'var(--color-accent)',
-        'accent-hover': 'var(--color-accent-hover)',
-        // Category colors
-        work: 'var(--color-work)',
-        self: 'var(--color-self)',
-        family: 'var(--color-family)',
-        // Feedback colors
-        success: 'var(--color-success)',
-        warning: 'var(--color-warning)',
+        'accent-quiet': 'var(--color-accent-quiet)',
+        'accent-wash': 'var(--color-accent-wash)',
+        'accent-rim': 'var(--color-accent-rim)',
         error: 'var(--color-error)',
-        // Setpoint palette - the Read pane (docs/PLAN_READING_PANE.md, App. A)
-        sp: {
-          bg: 'var(--sp-bg)',
-          panel: 'var(--sp-panel)',
-          panel2: 'var(--sp-panel2)',
-          ink: 'var(--sp-ink)',
-          muted: 'var(--sp-muted)',
-          faint: 'var(--sp-faint)',
-          hair: 'var(--sp-hair)',
-          amber: 'var(--sp-amber)',
-          green: 'var(--sp-green)',
-          ice: 'var(--sp-ice)',
-          rim: 'var(--sp-rim)',
-        },
+
+        // Instrument hues — the setpoint wave and citation marks only.
+        settled: 'var(--color-settled)',
+        cite: 'var(--color-cite)',
+        'cite-rim': 'var(--color-cite-rim)',
       },
       maxWidth: {
-        'content': 'var(--max-width)',
+        content: 'var(--max-width)',
       },
       borderRadius: {
         DEFAULT: 'var(--radius)',
       },
       fontFamily: {
-        sans: ['var(--font-sans)'],
+        // Two faces. `mono` is the instrument, `read` is the voice.
         mono: ['var(--font-mono)'],
-        serif: ['var(--font-serif)'],
         read: ['var(--font-read)'],
       },
+      /*
+       * The whole scale. Five steps, and density comes from line-height rather
+       * than from padding, so each step carries its own.
+       *
+       *   2xs  micro instrument — heat cells, timing strip, chip labels
+       *   xs   labels, captions, the footer
+       *   sm   the UI default — nav, buttons, rows, most of the app
+       *   base reading: pulse lines, prose, anything the owner wrote
+       *   lg   display: the date, a page's one big number
+       */
+      /*
+       * Two letter-spacings, both for uppercase runs — lowercase text gets
+       * none. Four hand-written `tracking-[0.NNem]` values were in play, two
+       * of which differed by 0.04em at 11px, which is a fifth of a pixel.
+       */
+      letterSpacing: {
+        caps: '0.06em',
+        label: '0.18em',
+      },
       fontSize: {
-        'xs': ['11px', { lineHeight: '1.4' }],
-        'sm': ['14px', { lineHeight: '1.5' }],
-        'base': ['16px', { lineHeight: '1.5' }],
+        '2xs': ['10px', { lineHeight: '1.4' }],
+        xs: ['11px', { lineHeight: '1.45' }],
+        sm: ['14px', { lineHeight: '1.55' }],
+        base: ['16px', { lineHeight: '1.7' }],
+        lg: ['20px', { lineHeight: '1.25' }],
       },
     },
   },
   plugins: [],
-}
+};

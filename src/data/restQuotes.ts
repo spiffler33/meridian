@@ -5,7 +5,7 @@
  * Rotates based on day of year.
  */
 
-export const REST_QUOTES = [
+const REST_QUOTES = [
   "Rest is not idleness. The mind consolidates in stillness.",
   "Strategic withdrawal is not defeat.",
   "Recovery is when adaptation happens.",

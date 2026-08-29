@@ -128,7 +128,7 @@ describe('muting', () => {
 
     view(PAST_WEEK, mirrorOf([timed('done', week[2], '01')]));
 
-    expect(screen.getByText('done').className).toContain('text-sp-faint');
+    expect(screen.getByText('done').className).toContain('text-text-muted');
   });
 
   it('leaves a week that has not happened at full strength', () => {
@@ -136,7 +136,7 @@ describe('muting', () => {
 
     view(FUTURE_WEEK, mirrorOf([timed('ahead', week[2], '01')]));
 
-    expect(screen.getByText('ahead').className).not.toContain('text-sp-faint');
+    expect(screen.getByText('ahead').className).not.toContain('text-text-muted');
   });
 });
 

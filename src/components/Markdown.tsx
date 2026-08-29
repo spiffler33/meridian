@@ -34,13 +34,13 @@ export interface CiteLinks {
 }
 
 const HEADING_CLASS: Record<number, string> = {
-  1: 'mt-6 font-read text-[18px] font-bold leading-[1.35] text-sp-ink',
-  2: 'mt-5 font-read text-[16px] font-bold leading-[1.4] text-sp-ink',
-  3: 'mt-4 font-read text-[15px] font-semibold leading-[1.4] text-sp-ink',
+  1: 'mt-6 font-read text-base font-bold leading-snug text-text',
+  2: 'mt-5 font-read text-base font-semibold leading-snug text-text',
+  3: 'mt-4 font-read text-sm font-semibold leading-snug text-text',
 };
 
 function headingClass(level: number): string {
-  return HEADING_CLASS[level] ?? 'mt-4 font-read text-[14px] font-semibold text-sp-muted';
+  return HEADING_CLASS[level] ?? 'mt-4 font-read text-sm font-semibold leading-snug text-text-secondary';
 }
 
 function Nodes({ nodes, links }: { nodes: Inline[]; links?: CiteLinks }) {
@@ -52,7 +52,7 @@ function Nodes({ nodes, links }: { nodes: Inline[]; links?: CiteLinks }) {
             return <span key={index}>{node.text}</span>;
           case 'strong':
             return (
-              <strong key={index} className="font-semibold text-sp-ink">
+              <strong key={index} className="font-semibold text-text">
                 <Nodes nodes={node.children} links={links} />
               </strong>
             );
@@ -64,7 +64,7 @@ function Nodes({ nodes, links }: { nodes: Inline[]; links?: CiteLinks }) {
             );
           case 'code':
             return (
-              <code key={index} className="rounded bg-sp-panel2 px-1 font-mono text-[13px]">
+              <code key={index} className="rounded bg-bg-hover px-1 font-mono text-sm">
                 {node.text}
               </code>
             );
@@ -75,7 +75,7 @@ function Nodes({ nodes, links }: { nodes: Inline[]; links?: CiteLinks }) {
                 href={node.href}
                 target="_blank"
                 rel="noreferrer noopener"
-                className="text-sp-ice underline underline-offset-2"
+                className="text-cite underline underline-offset-2"
               >
                 <Nodes nodes={node.children} links={links} />
               </a>
@@ -88,7 +88,7 @@ function Nodes({ nodes, links }: { nodes: Inline[]; links?: CiteLinks }) {
             // The image files are gitignored and were never pushed. What the
             // figure showed is read out in the entry's figures.md instead.
             return (
-              <span key={index} className="font-mono text-[10px] text-sp-faint">
+              <span key={index} className="font-mono text-2xs text-text-muted">
                 [figure{node.alt ? ` · ${node.alt}` : ''}]
               </span>
             );
@@ -141,7 +141,7 @@ function FootnoteMark({ label, links }: { label: string; links?: CiteLinks }) {
     definition === undefined ? null : resolveCitation({ grammar: 'path', source: definition });
 
   if (target === null || links === undefined) {
-    return <sup className="font-mono text-[10px] text-sp-faint">{label}</sup>;
+    return <sup className="font-mono text-2xs text-text-muted">{label}</sup>;
   }
 
   const gist = links.gist?.(target.slug) ?? null;
@@ -153,20 +153,20 @@ function FootnoteMark({ label, links }: { label: string; links?: CiteLinks }) {
         onClick={() => setOpen(was => !was)}
         aria-expanded={open}
         aria-label={`Source for note ${label}`}
-        className="align-super font-mono text-[10px] text-sp-ice"
+        className="align-super font-mono text-2xs text-cite"
       >
         [{label}]
       </button>
       {open && (
-        <span className="absolute left-0 top-full z-20 mt-1 block w-[min(22rem,74vw)] rounded border border-sp-rim bg-sp-panel2 p-[10px] text-left shadow-lg">
-          <span className="block break-all font-mono text-[10px] text-sp-ice">{target.slug}</span>
+        <span className="absolute left-0 top-full z-20 mt-1 block w-[min(22rem,74vw)] rounded border border-cite-rim bg-bg-hover p-2.5 text-left">
+          <span className="block break-all font-mono text-2xs text-cite">{target.slug}</span>
           {gist && (
-            <span className="mt-[6px] block font-read text-[13px] leading-[1.45] text-sp-muted">
+            <span className="mt-1.5 block font-read text-sm text-text-secondary">
               {gist}
             </span>
           )}
           {target.phrase && (
-            <span className="mt-[6px] block font-mono text-[10.5px] leading-[1.5] text-sp-faint">
+            <span className="mt-1.5 block font-mono text-2xs text-text-muted">
               §{target.phrase}
             </span>
           )}
@@ -176,7 +176,7 @@ function FootnoteMark({ label, links }: { label: string; links?: CiteLinks }) {
               setOpen(false);
               links.onOpen(target);
             }}
-            className="mt-[10px] block font-mono text-[10.5px] text-sp-amber"
+            className="mt-2.5 block font-mono text-2xs text-accent"
           >
             open source →
           </button>
@@ -190,8 +190,8 @@ function Cell({ nodes, head, links }: { nodes: Inline[]; head: boolean; links?: 
   const Tag = head ? 'th' : 'td';
   return (
     <Tag
-      className={`border border-sp-hair px-2 py-1 text-left align-top font-mono text-[11px] ${
-        head ? 'text-sp-muted' : 'text-sp-ink'
+      className={`border border-border px-2 py-1 text-left align-top text-xs ${
+        head ? 'text-text-secondary' : 'text-text'
       }`}
     >
       <Nodes nodes={nodes} links={links} />
@@ -233,7 +233,7 @@ export function Markdown({
             );
           case 'paragraph':
             return (
-              <p key={index} {...landing(index, mark, 'prose-read mt-3 text-sp-ink')}>
+              <p key={index} {...landing(index, mark, 'prose-read mt-3 text-text')}>
                 <Nodes nodes={block.children} links={links} />
               </p>
             );
@@ -244,7 +244,7 @@ export function Markdown({
                 {...landing(
                   index,
                   mark,
-                  'prose-read mt-3 border-l border-sp-hair pl-3 italic text-sp-muted'
+                  'prose-read mt-3 border-l border-border pl-3 italic text-text-secondary'
                 )}
               >
                 <Nodes nodes={block.children} links={links} />
@@ -254,7 +254,7 @@ export function Markdown({
             return block.ordered ? (
               <ol
                 key={index}
-                {...landing(index, mark, 'prose-read mt-3 list-decimal pl-5 marker:text-sp-faint')}
+                {...landing(index, mark, 'prose-read mt-3 list-decimal pl-5 marker:text-text-muted')}
               >
                 {block.items.map((item, itemIndex) => (
                   <li key={itemIndex} className="mt-1">
@@ -265,7 +265,7 @@ export function Markdown({
             ) : (
               <ul
                 key={index}
-                {...landing(index, mark, 'prose-read mt-3 list-disc pl-5 marker:text-sp-faint')}
+                {...landing(index, mark, 'prose-read mt-3 list-disc pl-5 marker:text-text-muted')}
               >
                 {block.items.map((item, itemIndex) => (
                   <li key={itemIndex} className="mt-1">
@@ -275,7 +275,7 @@ export function Markdown({
               </ul>
             );
           case 'rule':
-            return <hr key={index} className="my-5 border-sp-hair" />;
+            return <hr key={index} className="my-5 border-border" />;
           case 'code':
             return (
               <pre
@@ -283,7 +283,7 @@ export function Markdown({
                 {...landing(
                   index,
                   mark,
-                  'mt-3 overflow-x-auto rounded bg-sp-panel2 p-3 font-mono text-[11px] text-sp-ink'
+                  'mt-3 overflow-x-auto rounded bg-bg-hover p-3 text-xs text-text'
                 )}
               >
                 {block.text}

@@ -15,11 +15,13 @@
  * `bucket()`, which is the one place that guard lives.
  */
 
+import { queued } from './async';
 import { dayKey } from './calendar';
 import { allCachedFiles, enqueue, getDeviceId, nextSeq, peekOutbox, setMeta, setState } from './db';
 import type { OutboxRecord } from './db';
 import { fold, parseJournalLines } from './journal';
 import type { FoldedState, JournalEvent } from './journal';
+import { randomToken } from './random';
 import type {
   HabitCategory,
   MitCategory,
@@ -35,7 +37,8 @@ import type {
 // ============================================================================
 
 /**
- * Nine entities the ported tables became, plus two the app grew on its own.
+ * Nine entities the ported tables became, plus three the app grew on its own
+ * (readItem, pulse, pulseVocab) — twelve, and no export behind the last three.
  *
  * `readItem` never existed in Postgres. It is the reading pane's record of
  * what has been read, and it is the first entity with no export behind it.
@@ -417,8 +420,22 @@ function bool(record: Record_, key: string, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
 
-/** One of a closed set of schema values, or the column's default. */
-function oneOf<T extends string>(record: Record_, key: string, options: readonly T[], fallback: T): T {
+/**
+ * One of a closed set of schema values, or `fallback` where the stored value
+ * is not in the set.
+ *
+ * The fallback is the whole difference between the three ways this is called,
+ * and each one is a decision:
+ *
+ * - a schema default (`'stoic'`, `'active'`) — the column had one, so a row
+ *   that lost its value reads the way the database would have read it;
+ * - `null` — the column was nullable, and an absent value means nothing was
+ *   chosen rather than something was;
+ * - `undefined` — an enrichment that is genuinely optional, where absent means
+ *   "not yet coded". An invalid value then reads the same as an absent one,
+ *   never as a guess at what was meant.
+ */
+function oneOf<T extends string, F>(record: Record_, key: string, options: readonly T[], fallback: F): T | F {
   const value = record[key];
   for (const option of options) {
     if (value === option) return option;
@@ -426,18 +443,18 @@ function oneOf<T extends string>(record: Record_, key: string, options: readonly
   return fallback;
 }
 
-function nullableOneOf<T extends string>(record: Record_, key: string, options: readonly T[]): T | null {
+/**
+ * An array field, filtered to its string entries, or `fallback` where the
+ * field is absent or is not an array at all.
+ *
+ * Absent and malformed deliberately read the same: a partial guess at a
+ * garbled array is worse than not having one. `[]` is the fallback for a
+ * column that always had a list; `undefined` for one that may simply not have
+ * been written yet.
+ */
+function strArray<F>(record: Record_, key: string, fallback: F): string[] | F {
   const value = record[key];
-  for (const option of options) {
-    if (value === option) return option;
-  }
-  return null;
-}
-
-/** An array field, filtered to its string entries. A missing or malformed field is empty. */
-function strArray(record: Record_, key: string): string[] {
-  const value = record[key];
-  if (!Array.isArray(value)) return [];
+  if (!Array.isArray(value)) return fallback;
   return value.filter((item): item is string => typeof item === 'string');
 }
 
@@ -452,32 +469,12 @@ function strRecord(record: Record_, key: string): Record<string, string> {
   return result;
 }
 
-/**
- * An enrichment field that is genuinely optional: absent means "not yet
- * coded", so unlike `oneOf` there is no fallback to a schema default — an
- * invalid value reads the same as an absent one, never as a guess.
- */
-function optionalOneOf<T extends string>(record: Record_, key: string, options: readonly T[]): T | undefined {
-  const value = record[key];
-  for (const option of options) {
-    if (value === option) return option;
-  }
-  return undefined;
-}
-
 /** A nullable string field that may simply be absent. Garbage reads as absent, not as null. */
 function optionalNullableStr(record: Record_, key: string): string | null | undefined {
   if (!(key in record)) return undefined;
   const value = record[key];
   if (value === null) return null;
   return typeof value === 'string' ? value : undefined;
-}
-
-/** An optional array of strings. Garbage reads as absent, never as a partial guess. */
-function optionalStrArray(record: Record_, key: string): string[] | undefined {
-  if (!(key in record)) return undefined;
-  const value = record[key];
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : undefined;
 }
 
 /** The coder's `span`, or undefined when absent or shaped wrong. */
@@ -530,12 +527,12 @@ function optionalNutrition(record: Record_, key: string): PulseNutrition | undef
   const kcal = optionalNum(obj, 'kcal');
   const nutrition: PulseNutrition = {
     kcal: kcal ?? null,
-    kcalSource: optionalOneOf(obj, 'kcalSource', NUTRITION_SOURCES) ?? 'estimated',
+    kcalSource: oneOf(obj, 'kcalSource', NUTRITION_SOURCES, undefined) ?? 'estimated',
   };
   const proteinG = optionalNum(obj, 'proteinG');
   if (proteinG !== undefined) {
     nutrition.proteinG = proteinG;
-    nutrition.proteinSource = optionalOneOf(obj, 'proteinSource', NUTRITION_SOURCES) ?? 'estimated';
+    nutrition.proteinSource = oneOf(obj, 'proteinSource', NUTRITION_SOURCES, undefined) ?? 'estimated';
   }
   return nutrition;
 }
@@ -735,7 +732,7 @@ function toTowerItemRow(id: string, record: Record_): TowerItemRow {
     status: oneOf(record, 'status', TOWER_STATUSES, 'active'),
     waiting_on: nullableStr(record, 'waiting_on'),
     expects_by: nullableStr(record, 'expects_by'),
-    effort: nullableOneOf(record, 'effort', TOWER_EFFORTS),
+    effort: oneOf(record, 'effort', TOWER_EFFORTS, null),
     is_event: bool(record, 'is_event', false),
     last_touched: nullableTimestamp(record, 'last_touched', createdAt),
     created_at: createdAt,
@@ -779,13 +776,13 @@ const PULSE_SIGNALS: readonly PulseSignal[] = ['block', 'event', 'state', 'plan'
 function toPulseRow(id: string, record: Record_): PulseRow {
   const row: PulseRow = { id, text: str(record, 'text', ''), at: str(record, 'at', EPOCH_FLOOR) };
 
-  const signal = optionalOneOf(record, 'signal', PULSE_SIGNALS);
+  const signal = oneOf(record, 'signal', PULSE_SIGNALS, undefined);
   if (signal !== undefined) row.signal = signal;
   const domain = optionalNullableStr(record, 'domain');
   if (domain !== undefined) row.domain = domain;
   const activity = optionalNullableStr(record, 'activity');
   if (activity !== undefined) row.activity = activity;
-  const people = optionalStrArray(record, 'people');
+  const people = strArray(record, 'people', undefined);
   if (people !== undefined) row.people = people;
   const span = optionalSpan(record, 'span');
   if (span !== undefined) row.span = span;
@@ -808,9 +805,9 @@ function toPulseRow(id: string, record: Record_): PulseRow {
 function toPulseVocabRow(id: string, record: Record_): PulseVocabRow {
   return {
     id,
-    domains: strArray(record, 'domains'),
+    domains: strArray(record, 'domains', []),
     activities: strRecord(record, 'activities'),
-    people: strArray(record, 'people'),
+    people: strArray(record, 'people', []),
   };
 }
 
@@ -1032,18 +1029,7 @@ let generation = 0;
  * and a commit persists a state a reset already replaced. Either way the
  * owner's edit is gone and nothing threw.
  */
-let queue: Promise<void> = Promise.resolve();
-
-function serialize<T>(work: () => Promise<T>): Promise<T> {
-  const run = queue.then(work);
-  // The queue itself must never reject: one failed write cannot be allowed to
-  // fail every write queued behind it.
-  queue = run.then(
-    () => undefined,
-    () => undefined
-  );
-  return run;
-}
+const serialize = queued();
 
 /**
  * Load the session's events from what is already on the device: every cached
@@ -1235,21 +1221,22 @@ function refold(): void {
   sessionState = fold(sessionEvents).state;
 }
 
+/** Bytes of hex to mint where `crypto.randomUUID` is unavailable. */
+const ID_BYTES = 16;
+
 /**
  * A fresh id for an event or a row.
  *
  * `crypto.randomUUID` is secure-context-only and is simply absent when the app
- * is opened over plain http on the LAN, so fall back to `getRandomValues`,
- * which is not gated on a secure context.
+ * is opened over plain http on the LAN, so `randomToken` falls back to
+ * `getRandomValues`, which is not gated on a secure context.
  */
 export function newId(): string {
-  const api: Crypto | undefined = globalThis.crypto;
-  if (api && typeof api.randomUUID === 'function') return api.randomUUID();
-  if (api && typeof api.getRandomValues === 'function') {
-    const bytes = api.getRandomValues(new Uint8Array(16));
-    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  const id = randomToken(ID_BYTES);
+  if (id === null) {
+    throw new Error('this browser exposes no crypto random source, so no id can be minted');
   }
-  throw new Error('this browser exposes no crypto random source, so no id can be minted');
+  return id;
 }
 
 /**

@@ -21,7 +21,7 @@ in that phase's run-log entry. Each gate's verdict is an amendment to this file,
 plan.
 
 **Phases 4 and 5 were added 2026-08-29 by the owner**, integrated from the addendum
-`calendar/PLAN_PULSE_PHASES_4_5.md`, together with **hard fence 9**. Phase 4 retires the
+`calendar/PLAN_PULSE_PHASES_4_5.md` (archived), together with **hard fence 9**. Phase 4 retires the
 coder's actuator effects; Phase 5 adds the nutrition ledger.
 
 **Phase 4 is built and deployed, 2026-08-29**, along with the **activity histogram** that
@@ -900,7 +900,7 @@ without sentimentality: the stream and the coder stand on their own.
 
 ### 2026-08-29 — addendum integrated: Phases 4 & 5, and hard fence 9
 
-A documentation run, no `src/` change. `calendar/PLAN_PULSE_PHASES_4_5.md` arrived after
+A documentation run, no `src/` change. `calendar/PLAN_PULSE_PHASES_4_5.md` (archived) arrived after
 Phase 3 closed, written outside the session that closed it, carrying two new phases and a
 new fence. Its own paste-over instructions are now carried out here: **hard fence 9**
 (habits and Tower are manual spaces; the coder observes and classifies, and is never an

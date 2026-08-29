@@ -10,6 +10,7 @@
  */
 
 import type { GitReadRepo } from './gitread'
+import { randomToken } from './random'
 
 const DB_NAME = 'meridian'
 /**
@@ -425,24 +426,20 @@ export function deleteMeta(key: MetaKey): Promise<void> {
 }
 
 /**
- * A fresh device id. `crypto.randomUUID` is secure-context-only and is simply
- * absent when the PWA is opened over plain http on the LAN — which is how the
- * phone reaches the dev server — so fall back to `getRandomValues`, which is
- * not gated on a secure context. Same alphabet, same length either way.
+ * A fresh device id: the first `DEVICE_ID_LENGTH` characters of whatever
+ * `randomToken` could mint. Same alphabet, same length either way — the
+ * fallback asks for exactly half as many bytes as the id has characters, so
+ * the slice takes all of it.
  */
 function newDeviceId(): string {
-  const api: Crypto | undefined = globalThis.crypto
-  if (api && typeof api.randomUUID === 'function') {
-    return api.randomUUID().slice(0, DEVICE_ID_LENGTH)
+  const token = randomToken(DEVICE_ID_LENGTH / 2)
+  if (token === null) {
+    throw new DbError(
+      'unsupported',
+      'this browser exposes no crypto random source, so no device id can be minted'
+    )
   }
-  if (api && typeof api.getRandomValues === 'function') {
-    const bytes = api.getRandomValues(new Uint8Array(DEVICE_ID_LENGTH / 2))
-    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
-  }
-  throw new DbError(
-    'unsupported',
-    'this browser exposes no crypto random source, so no device id can be minted'
-  )
+  return token.slice(0, DEVICE_ID_LENGTH)
 }
 
 /**

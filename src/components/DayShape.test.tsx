@@ -77,8 +77,8 @@ describe('the strip', () => {
     );
 
     // 12:00: standup finished at 10:00, the call has not started.
-    expect(screen.getByText('standup').className).toContain('text-sp-faint');
-    expect(screen.getByText('db call').className).toContain('text-sp-ink');
+    expect(screen.getByText('standup').className).toContain('text-text-muted');
+    expect(screen.getByText('db call').className).toContain('text-text');
   });
 
   it('lights nothing once the day is done', () => {
@@ -88,8 +88,8 @@ describe('the strip', () => {
       <DayShape mirror={mirrorOf([STANDUP, CALL])} date={DATE} timeZone={SGT} now={evening} />
     );
 
-    expect(screen.getByText('standup').className).toContain('text-sp-faint');
-    expect(screen.getByText('db call').className).toContain('text-sp-faint');
+    expect(screen.getByText('standup').className).toContain('text-text-muted');
+    expect(screen.getByText('db call').className).toContain('text-text-muted');
   });
 
   it('shows a location where there is one and adds nothing where there is not', () => {

@@ -12,7 +12,7 @@ import type { ReadableItem } from '../lib/readState';
 
 export function Card({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mb-4 rounded border border-sp-hair bg-sp-panel px-[18px] pb-4 pt-[18px]">
+    <div className="mb-4 rounded border border-border bg-bg-card px-4 pb-4 pt-4">
       {children}
     </div>
   );
@@ -21,8 +21,8 @@ export function Card({ children }: { children: React.ReactNode }) {
 export function Kicker({ children, tone }: { children: React.ReactNode; tone?: 'ice' }) {
   return (
     <div
-      className={`mb-2 font-mono text-[9.5px] uppercase tracking-[0.22em] ${
-        tone === 'ice' ? 'text-sp-ice' : 'text-sp-amber'
+      className={`mb-2 text-2xs uppercase tracking-label ${
+        tone === 'ice' ? 'text-cite' : 'text-accent'
       }`}
     >
       {children}
@@ -32,7 +32,7 @@ export function Kicker({ children, tone }: { children: React.ReactNode; tone?: '
 
 export function Headline({ children }: { children: React.ReactNode }) {
   return (
-    <h2 className="font-read text-[18px] font-bold leading-[1.35] tracking-[-0.01em] text-sp-ink">
+    <h2 className="font-read text-lg font-bold tracking-[-0.01em] text-text">
       {children}
     </h2>
   );
@@ -48,7 +48,7 @@ export function Headline({ children }: { children: React.ReactNode }) {
  */
 export function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mb-[6px] mt-5 font-mono text-[10px] uppercase tracking-[0.22em] text-sp-faint">
+    <div className="mb-1.5 mt-5 text-2xs uppercase tracking-label text-text-muted">
       {children}
     </div>
   );
@@ -67,7 +67,7 @@ export function OutLink({ href, children }: { href: string; children: React.Reac
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-sp-ice underline underline-offset-2"
+      className="text-cite underline underline-offset-2"
     >
       {children}
     </a>
@@ -76,7 +76,7 @@ export function OutLink({ href, children }: { href: string; children: React.Reac
 
 export function SrcLine({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mt-[14px] border-t border-sp-hair pt-3 font-mono text-[10.5px] leading-[1.7] text-sp-faint">
+    <div className="mt-3.5 border-t border-border pt-3 text-2xs leading-relaxed text-text-muted">
       {children}
     </div>
   );
@@ -84,7 +84,7 @@ export function SrcLine({ children }: { children: React.ReactNode }) {
 
 export function Note({ children }: { children: React.ReactNode }) {
   return (
-    <p className="mt-[10px] font-read text-sm italic leading-[1.6] text-sp-muted">{children}</p>
+    <p className="mt-2.5 font-read text-sm italic text-text-secondary">{children}</p>
   );
 }
 
@@ -101,7 +101,7 @@ export function Note({ children }: { children: React.ReactNode }) {
  * for and carries the rest in its title, and the footer says all of it.
  */
 const CITE_SHAPE =
-  'mx-px inline-block truncate rounded-[9px] border border-sp-rim px-[7px] pb-[2px] pt-px align-[-0.2em] font-mono text-[10.5px] text-sp-ice';
+  'mx-px inline-block truncate rounded border border-cite-rim px-2 pb-0.5 pt-px align-[-0.2em] font-mono text-2xs text-cite';
 
 /** Inline it yields to the sentence; on its own line it takes the column. */
 const CITE_WIDTH = { inline: 'max-w-[24ch] sm:max-w-[52ch]', wide: 'max-w-full' };
@@ -126,7 +126,7 @@ export function Cite({
     );
   }
   return (
-    <button type="button" onClick={onClick} title={title} className={`${shape} hover:border-sp-ice`}>
+    <button type="button" onClick={onClick} title={title} className={`${shape} hover:border-cite`}>
       {children}
     </button>
   );
@@ -139,7 +139,7 @@ export function Cite({
  */
 export function Notice({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mb-3 border-l border-sp-rim pl-2 font-mono text-[10.5px] leading-[1.6] text-sp-faint">
+    <div className="mb-3 border-l border-cite-rim pl-2 text-2xs leading-relaxed text-text-muted">
       {children}
     </div>
   );
@@ -147,7 +147,7 @@ export function Notice({ children }: { children: React.ReactNode }) {
 
 /** Inline, quiet, and gone the moment the answer arrives. Never a spinner. */
 export function Pending({ what }: { what: string }) {
-  return <div className="py-2 font-mono text-[10.5px] text-sp-faint">reading {what}…</div>;
+  return <div className="py-2 text-2xs text-text-muted">reading {what}…</div>;
 }
 
 /**
@@ -156,9 +156,9 @@ export function Pending({ what }: { what: string }) {
  */
 export function Failed({ what, detail }: { what: string; detail?: string | null }) {
   return (
-    <div className="rounded border border-sp-hair bg-sp-panel px-[18px] py-4">
-      <div className="font-mono text-[10.5px] text-error">{what}</div>
-      {detail && <div className="mt-1 break-all font-mono text-[10.5px] text-sp-faint">{detail}</div>}
+    <div className="rounded border border-border bg-bg-card px-4 py-4">
+      <div className="text-2xs text-error">{what}</div>
+      {detail && <div className="mt-1 break-all text-2xs text-text-muted">{detail}</div>}
     </div>
   );
 }
@@ -176,18 +176,25 @@ export interface SurfaceRead {
   spent: (item: ReadableItem) => boolean;
 }
 
-/** The foot of a surface item: what it is, and one tap to change it. */
-export function MarkRead({ read, onToggle }: { read: boolean; onToggle: () => void }) {
+/**
+ * The foot of a surface item: what it is, and one tap to change it.
+ *
+ * It takes the key rather than the answer, because a caller holding both ends
+ * had to mint the same key twice — once to ask and once to toggle — and two
+ * mintings of one key are one chance for them to disagree.
+ */
+export function MarkRead({ read, itemKey }: { read: SurfaceRead; itemKey: string }) {
+  const marked = read.isRead(itemKey);
   return (
-    <div className="mt-5 flex justify-end border-t border-sp-hair pt-3">
+    <div className="mt-5 flex justify-end border-t border-border pt-3">
       <button
-        onClick={onToggle}
-        aria-pressed={read}
-        className={`font-mono text-[10.5px] uppercase tracking-[0.18em] ${
-          read ? 'text-sp-green' : 'text-sp-faint hover:text-sp-muted'
+        onClick={() => read.toggle(itemKey)}
+        aria-pressed={marked}
+        className={`text-2xs uppercase tracking-label ${
+          marked ? 'text-settled' : 'text-text-muted hover:text-text-secondary'
         }`}
       >
-        {read ? '✓ read' : 'mark read'}
+        {marked ? '✓ read' : 'mark read'}
       </button>
     </div>
   );
@@ -232,7 +239,7 @@ export function Backlog({ read, rows }: { read: SurfaceRead; rows: readonly Back
         <button
           onClick={() => setRevealed(shown => !shown)}
           aria-expanded={revealed}
-          className="block whitespace-nowrap px-[2px] py-[10px] text-left font-mono text-[10.5px] text-sp-faint hover:text-sp-muted"
+          className="block whitespace-nowrap px-0.5 py-2.5 text-left text-2xs text-text-muted hover:text-text-secondary"
         >
           · {done.length} read
         </button>
@@ -254,10 +261,10 @@ export function RailItem({
     <button
       onClick={onClick}
       aria-current={active ? 'true' : undefined}
-      className={`whitespace-nowrap rounded border px-2 py-1 font-mono text-[10px] tracking-[0.06em] ${
+      className={`whitespace-nowrap rounded border px-2 py-1 text-2xs tracking-caps ${
         active
-          ? 'border-sp-amber text-sp-ink'
-          : 'border-sp-hair text-sp-faint hover:text-sp-muted'
+          ? 'border-accent text-text'
+          : 'border-border text-text-muted hover:text-text-secondary'
       }`}
     >
       {children}
@@ -269,7 +276,7 @@ export function BackLink({ onClick, children }: { onClick: () => void; children:
   return (
     <button
       onClick={onClick}
-      className="mb-3 font-mono text-[10.5px] text-sp-faint hover:text-sp-muted"
+      className="mb-3 text-2xs text-text-muted hover:text-text-secondary"
     >
       ← {children}
     </button>
@@ -291,12 +298,12 @@ export function ListRow({
   return (
     <button
       onClick={onClick}
-      className="block w-full border-b border-sp-hair px-[2px] py-[11px] text-left"
+      className="block w-full border-b border-border px-0.5 py-3 text-left"
     >
-      <div className="font-mono text-[10px] tracking-[0.06em] text-sp-faint">{label}</div>
-      <div className="font-read text-[15px] font-semibold leading-[1.4] text-sp-ink">{title}</div>
+      <div className="text-2xs tracking-caps text-text-muted">{label}</div>
+      <div className="font-read text-sm font-semibold text-text">{title}</div>
       {detail && (
-        <div className="truncate font-read text-[13px] leading-[1.45] text-sp-muted">{detail}</div>
+        <div className="truncate font-read text-sm text-text-secondary">{detail}</div>
       )}
     </button>
   );

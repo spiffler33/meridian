@@ -102,7 +102,7 @@ function PulseStream({
               {timeLabel(pulse.at, timeZone)}
             </time>
           </span>
-          <span className="font-read text-[14.5px] leading-[1.6] text-text">
+          <span className="font-read text-base text-text">
             {pulse.text}
           </span>
           <span className="flex items-baseline gap-3">
@@ -204,7 +204,7 @@ function NutritionLine({ total, target }: { total: DayNutrition; target: number 
   if (total.uncounted > 0) calories.push(`${total.uncounted} uncounted`);
 
   return (
-    <p className="flex flex-wrap items-baseline gap-x-4 pt-3 font-mono text-[11.5px] tabular-nums text-text-muted">
+    <p className="flex flex-wrap items-baseline gap-x-4 pt-3 font-mono text-xs tabular-nums text-text-muted">
       <span>{calories.join(' · ')}</span>
       {total.proteinG > 0 && <span>{`${kcalLabel(total.proteinG)} g protein`}</span>}
     </p>
@@ -260,7 +260,7 @@ function PulseCapture({ onCapture }: { onCapture: (text: string) => Promise<bool
         }}
         placeholder="what's happening…"
         aria-label="capture a pulse"
-        className="w-full bg-transparent font-read text-[14.5px] text-text placeholder:text-text-muted focus:outline-none"
+        className="w-full bg-transparent font-read text-base text-text placeholder:text-text-muted focus:outline-none"
       />
     </div>
   );

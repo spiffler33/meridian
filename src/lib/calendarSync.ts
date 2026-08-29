@@ -11,6 +11,7 @@
  * exists only to learn that file's blob sha.
  */
 
+import { singleFlight } from './async';
 import { getCachedContent, getMeta, putCachedContent, cachedContentShas, setMeta } from './db';
 import { EVENTS_PATH, parseCalendar, type CalendarMirror } from './calendar';
 import { CALENDAR_DATA, getBlob, getHeadSha, getTree, selectStale } from './gitread';
@@ -39,17 +40,8 @@ export async function calendarParseError(): Promise<string | null> {
   return parseCalendar(record.text).error;
 }
 
-let running: Promise<CalendarSyncResult> | null = null;
-
 /** One sync at a time per tab. Open and focus can land in the same moment. */
-export function syncCalendar(token: string): Promise<CalendarSyncResult> {
-  if (!running) {
-    running = runSync(token).finally(() => {
-      running = null;
-    });
-  }
-  return running;
-}
+export const syncCalendar = singleFlight(runSync);
 
 async function runSync(token: string): Promise<CalendarSyncResult> {
   const head = await getHeadSha(token, CALENDAR_DATA);

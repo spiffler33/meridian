@@ -20,13 +20,13 @@ export interface HabitStats {
   monthCalendar: MonthCalendarDay[];
 }
 
-export interface PeriodStats {
+interface PeriodStats {
   completed: number;
   total: number;
   percentage: number;
 }
 
-export interface MonthCalendarDay {
+interface MonthCalendarDay {
   date: string;
   completed: boolean;
   isToday: boolean;
@@ -41,7 +41,7 @@ export interface MonthCalendarDay {
  * Calculate current streak from an array of completion dates.
  * Streak is consecutive days ending at today or yesterday.
  */
-export function calculateCurrentStreak(completionDates: string[], today: string = getToday()): number {
+function calculateCurrentStreak(completionDates: string[], today: string = getToday()): number {
   if (completionDates.length === 0) return 0;
 
   // Sort dates descending (most recent first)
@@ -73,7 +73,7 @@ export function calculateCurrentStreak(completionDates: string[], today: string 
 /**
  * Calculate the longest streak from an array of completion dates.
  */
-export function calculateLongestStreak(completionDates: string[]): number {
+function calculateLongestStreak(completionDates: string[]): number {
   if (completionDates.length === 0) return 0;
 
   // Sort dates ascending
@@ -106,7 +106,7 @@ export function calculateLongestStreak(completionDates: string[]): number {
 /**
  * Get the start of the current week (Monday).
  */
-export function getWeekStart(today: string = getToday()): string {
+function getWeekStart(today: string = getToday()): string {
   const date = parseDate(today);
   const dayOfWeek = date.getDay();
   // Convert Sunday (0) to 7 for easier math, Monday = 1
@@ -117,7 +117,7 @@ export function getWeekStart(today: string = getToday()): string {
 /**
  * Get the start of the current month.
  */
-export function getMonthStart(today: string = getToday()): string {
+function getMonthStart(today: string = getToday()): string {
   const date = parseDate(today);
   return formatDate(new Date(date.getFullYear(), date.getMonth(), 1));
 }
@@ -125,7 +125,7 @@ export function getMonthStart(today: string = getToday()): string {
 /**
  * Get the start of the current year.
  */
-export function getYearStart(today: string = getToday()): string {
+function getYearStart(today: string = getToday()): string {
   const date = parseDate(today);
   return formatDate(new Date(date.getFullYear(), 0, 1));
 }
@@ -133,7 +133,7 @@ export function getYearStart(today: string = getToday()): string {
 /**
  * Count days between two dates (inclusive of start, exclusive of end).
  */
-export function countDays(startDate: string, endDate: string): number {
+function countDays(startDate: string, endDate: string): number {
   const start = parseDate(startDate);
   const end = parseDate(endDate);
   const diffMs = end.getTime() - start.getTime();
@@ -143,7 +143,7 @@ export function countDays(startDate: string, endDate: string): number {
 /**
  * Calculate stats for a period.
  */
-export function calculatePeriodStats(
+function calculatePeriodStats(
   completionDates: string[],
   periodStart: string,
   periodEnd: string
@@ -161,7 +161,7 @@ export function calculatePeriodStats(
 /**
  * Calculate this week's stats.
  */
-export function calculateThisWeek(completionDates: string[], today: string = getToday()): PeriodStats {
+function calculateThisWeek(completionDates: string[], today: string = getToday()): PeriodStats {
   const weekStart = getWeekStart(today);
   return calculatePeriodStats(completionDates, weekStart, today);
 }
@@ -169,7 +169,7 @@ export function calculateThisWeek(completionDates: string[], today: string = get
 /**
  * Calculate this month's stats.
  */
-export function calculateThisMonth(completionDates: string[], today: string = getToday()): PeriodStats {
+function calculateThisMonth(completionDates: string[], today: string = getToday()): PeriodStats {
   const monthStart = getMonthStart(today);
   return calculatePeriodStats(completionDates, monthStart, today);
 }
@@ -177,7 +177,7 @@ export function calculateThisMonth(completionDates: string[], today: string = ge
 /**
  * Calculate this year's stats.
  */
-export function calculateThisYear(completionDates: string[], today: string = getToday()): PeriodStats {
+function calculateThisYear(completionDates: string[], today: string = getToday()): PeriodStats {
   const yearStart = getYearStart(today);
   return calculatePeriodStats(completionDates, yearStart, today);
 }
@@ -190,7 +190,7 @@ export function calculateThisYear(completionDates: string[], today: string = get
  * Generate a mini calendar for the current month.
  * Returns an array of days with completion status.
  */
-export function generateMonthCalendar(
+function generateMonthCalendar(
   completionDates: string[],
   today: string = getToday()
 ): MonthCalendarDay[] {

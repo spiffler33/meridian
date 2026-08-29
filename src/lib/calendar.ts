@@ -23,6 +23,9 @@
  * event in the mirror.
  */
 
+import { partsOf, zoneFormat } from './intlParts';
+import { compareCodeUnits } from './order';
+
 /** The one file meridian reads from the calendar mirror. */
 export const EVENTS_PATH = 'events.json';
 
@@ -166,15 +169,14 @@ function isString(value: unknown): value is string {
  * looked up by name, so no locale's date order or separator can change the
  * answer. A locale-shaped `format()` call here would put the month first for
  * an en-US device and silently bucket every event into the wrong day.
+ *
+ * The formatter comes from the shared per-zone cache: this is the hottest
+ * caller in the app — `daysTouched` walks a day at a time and a week's ledger
+ * fold asks hundreds of times — and constructing one per call was the cost.
  */
 export function dayKey(instantMs: number, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(new Date(instantMs));
-  const find = (type: string) => parts.find(part => part.type === type)?.value ?? '';
+  const parts = zoneFormat(timeZone).formatToParts(new Date(instantMs));
+  const find = (type: string) => partsOf(parts, type) ?? '';
   return `${find('year')}-${find('month')}-${find('day')}`;
 }
 
@@ -236,8 +238,9 @@ export function daysTouched(event: CalendarEvent, timeZone: string): string[] {
  */
 function byDayOrder(a: CalendarEvent, b: CalendarEvent): number {
   if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
-  if (a.start !== b.start) return a.start < b.start ? -1 : 1;
-  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  const byStart = compareCodeUnits(a.start, b.start);
+  if (byStart !== 0) return byStart;
+  return compareCodeUnits(a.id, b.id);
 }
 
 /** One local day's events, in reading order. */
@@ -313,7 +316,7 @@ export function timeLabel(instant: string, timeZone: string): string {
     hour: '2-digit',
     minute: '2-digit',
   }).formatToParts(new Date(at));
-  const find = (type: string) => parts.find(part => part.type === type)?.value ?? '';
+  const find = (type: string) => partsOf(parts, type) ?? '';
   return `${find('hour')}:${find('minute')}`;
 }
 

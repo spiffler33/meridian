@@ -16,7 +16,6 @@ import type {
   MitCategory,
   HabitDefinition,
   TowerItem,
-  TowerStatus,
   PackWithCount,
 } from '../types';
 import { createEmptyDailyData, DEFAULT_HABITS } from '../types';
@@ -47,9 +46,6 @@ import {
   getHabits,
   upsertDailyEntry,
   getDailyDataRange,
-  createTask,
-  updateTask,
-  deleteTask,
   getAllYearThemes,
   setYearTheme as setYearThemeInDb,
   getTowerItems,
@@ -63,7 +59,6 @@ import {
   createPackSession,
   deletePackSession,
   getProfile,
-  onLocalWrite,
   updateProfile as updateProfileInStore,
 } from '../services/data';
 import type { TowerItemInput, PackInput, PackSessionInput, Profile } from '../services/data';
@@ -106,12 +101,6 @@ type Action =
   | { type: 'SET_TASKS'; payload: { window: DateWindow; groups: { date: string; category: MitCategory; tasks: TodoItem[] }[] } }
   | { type: 'SET_YEAR_THEMES'; payload: { year: number; theme: string }[] }
   | { type: 'TOGGLE_HABIT'; payload: { date: string; habitId: HabitId } }
-  | { type: 'ADD_MIT'; payload: { date: string; category: MitCategory; item: TodoItem } }
-  | { type: 'UPDATE_MIT'; payload: { date: string; category: MitCategory; id: string; text: string } }
-  | { type: 'DELETE_MIT'; payload: { date: string; category: MitCategory; id: string } }
-  | { type: 'TOGGLE_MIT'; payload: { date: string; category: MitCategory; id: string; completed: boolean } }
-  | { type: 'SET_MIT_FIRST_STEP'; payload: { date: string; category: MitCategory; id: string; firstStep: string } }
-  | { type: 'SET_FOCUS'; payload: { date: string; focus: string } }
   | { type: 'SET_REFLECTION'; payload: { date: string; reflection: string } }
   | { type: 'SET_HOLIDAY'; payload: { date: string; isHoliday: boolean } }
   | { type: 'UPDATE_SETTINGS'; payload: Partial<AppSettings> }
@@ -228,121 +217,6 @@ function appReducer(state: ExtendedAppState, action: Action): ExtendedAppState {
       };
     }
 
-    case 'ADD_MIT': {
-      const { date, category, item } = action.payload;
-      const dayData = state.dailyData[date] || createEmptyDailyData(date);
-      return {
-        ...state,
-        dailyData: {
-          ...state.dailyData,
-          [date]: {
-            ...dayData,
-            mit: {
-              ...dayData.mit,
-              [category]: [...dayData.mit[category], item],
-            },
-          },
-        },
-      };
-    }
-
-    case 'UPDATE_MIT': {
-      const { date, category, id, text } = action.payload;
-      const dayData = state.dailyData[date];
-      if (!dayData) return state;
-      return {
-        ...state,
-        dailyData: {
-          ...state.dailyData,
-          [date]: {
-            ...dayData,
-            mit: {
-              ...dayData.mit,
-              [category]: dayData.mit[category].map(item =>
-                item.id === id ? { ...item, text } : item
-              ),
-            },
-          },
-        },
-      };
-    }
-
-    case 'DELETE_MIT': {
-      const { date, category, id } = action.payload;
-      const dayData = state.dailyData[date];
-      if (!dayData) return state;
-      return {
-        ...state,
-        dailyData: {
-          ...state.dailyData,
-          [date]: {
-            ...dayData,
-            mit: {
-              ...dayData.mit,
-              [category]: dayData.mit[category].filter(item => item.id !== id),
-            },
-          },
-        },
-      };
-    }
-
-    case 'TOGGLE_MIT': {
-      const { date, category, id, completed } = action.payload;
-      const dayData = state.dailyData[date];
-      if (!dayData) return state;
-      return {
-        ...state,
-        dailyData: {
-          ...state.dailyData,
-          [date]: {
-            ...dayData,
-            mit: {
-              ...dayData.mit,
-              [category]: dayData.mit[category].map(item =>
-                item.id === id ? { ...item, completed } : item
-              ),
-            },
-          },
-        },
-      };
-    }
-
-    case 'SET_MIT_FIRST_STEP': {
-      const { date, category, id, firstStep } = action.payload;
-      const dayData = state.dailyData[date];
-      if (!dayData) return state;
-      return {
-        ...state,
-        dailyData: {
-          ...state.dailyData,
-          [date]: {
-            ...dayData,
-            mit: {
-              ...dayData.mit,
-              [category]: dayData.mit[category].map(item =>
-                item.id === id ? { ...item, firstStep } : item
-              ),
-            },
-          },
-        },
-      };
-    }
-
-    case 'SET_FOCUS': {
-      const { date, focus } = action.payload;
-      const dayData = state.dailyData[date] || createEmptyDailyData(date);
-      return {
-        ...state,
-        dailyData: {
-          ...state.dailyData,
-          [date]: {
-            ...dayData,
-            focus,
-          },
-        },
-      };
-    }
-
     case 'SET_REFLECTION': {
       const { date, reflection } = action.payload;
       const dayData = state.dailyData[date] || createEmptyDailyData(date);
@@ -453,17 +327,10 @@ function appReducer(state: ExtendedAppState, action: Action): ExtendedAppState {
 // Context type
 interface AppContextType {
   state: ExtendedAppState;
-  loading: boolean;
   profile: Profile | null;
   updateProfile: (updates: ProfileUpdates) => Promise<void>;
   getDailyData: (date: string) => DailyData;
   toggleHabit: (date: string, habitId: HabitId) => void;
-  addMit: (date: string, category: MitCategory, text: string, firstStep?: string) => void;
-  updateMit: (date: string, category: MitCategory, id: string, text: string) => void;
-  deleteMit: (date: string, category: MitCategory, id: string) => void;
-  toggleMit: (date: string, category: MitCategory, id: string) => void;
-  setMitFirstStep: (date: string, category: MitCategory, id: string, firstStep: string) => void;
-  setFocus: (date: string, focus: string) => void;
   setReflection: (date: string, reflection: string) => void;
   toggleHoliday: (date: string) => void;
   updateSettings: (settings: Partial<AppSettings>) => void;
@@ -473,13 +340,6 @@ interface AppContextType {
   getHabitCount: (date: string) => number;
   getHabitStreak: (habitId: HabitId, fromDate?: string) => number;
   // Tower methods
-  getTowerItemsByStatus: (status: TowerStatus) => TowerItem[];
-  /**
-   * Nothing calls this. A line the OWNER typed goes through
-   * `captureTowerItem` (`useTowerPulses`), which writes the item and its pulse
-   * in one commit and reports the write; this writes an item alone, with no
-   * pulse for the coder to reach and no error the caller can see.
-   */
   addTowerItem: (input: TowerItemInput) => Promise<void>;
   updateTowerItemById: (id: string, updates: Partial<TowerItemInput>) => Promise<void>;
   completeTowerItemById: (id: string) => Promise<void>;
@@ -495,7 +355,6 @@ const AppContext = createContext<AppContextType | null>(null);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, createEmptyState());
-  const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
   const initializedRef = useRef(false);
 
@@ -626,11 +485,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     initializedRef.current = true;
 
     void (async () => {
-      try {
-        await loadLocalData();
-      } finally {
-        setLoading(false);
-      }
+      await loadLocalData();
 
       // Ask the browser to keep this origin's storage. Settings queries the
       // live answer itself, so nothing is recorded here.
@@ -659,16 +514,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       },
     });
   }, [loadLocalData]);
-
-  // A chip applied on the Pulse page, and a line typed into Tower's own box,
-  // both write a Tower item or a habit tick straight through the data layer,
-  // which this provider knows nothing about: `onSynced` fires only for a pull
-  // that fetched something, and a push never fires it at all. Without this the
-  // write is durable and invisible — the owner taps "+ call the plumber", or
-  // captures a task, and finds Tower empty. The write has already landed in
-  // its own commit; this only re-reads the local store, in exactly the same
-  // way the pull does.
-  useEffect(() => onLocalWrite(() => void loadLocalData()), [loadLocalData]);
 
   // Any change to rendered state or to the profile may have queued events —
   // including writes made outside this provider. The debounce inside
@@ -759,110 +604,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [state.dailyData]
   );
 
-  // Add MIT, recorded to the local journal
-  const addMit = useCallback(
-    async (date: string, category: MitCategory, text: string, firstStep?: string) => {
-      try {
-        const task = await createTask({ date, category, text, firstStep });
-        const item: TodoItem = {
-          id: task.id,
-          text: task.text,
-          completed: task.completed,
-          firstStep: task.first_step || undefined,
-        };
-        dispatch({ type: 'ADD_MIT', payload: { date, category, item } });
-      } catch (err) {
-        if (import.meta.env.DEV) console.error('Failed to create task:', err);
-      }
-    },
-    []
-  );
-
-  // Update MIT, recorded to the local journal
-  const updateMit = useCallback(
-    async (date: string, category: MitCategory, id: string, text: string) => {
-      // Update local state immediately
-      dispatch({ type: 'UPDATE_MIT', payload: { date, category, id, text } });
-
-      try {
-        await updateTask(id, { text });
-      } catch (err) {
-        if (import.meta.env.DEV) console.error('Failed to update task:', err);
-      }
-    },
-    []
-  );
-
-  // Delete MIT, recorded to the local journal
-  const deleteMit = useCallback(
-    async (date: string, category: MitCategory, id: string) => {
-      // Update local state immediately
-      dispatch({ type: 'DELETE_MIT', payload: { date, category, id } });
-
-      try {
-        await deleteTask(id);
-      } catch (err) {
-        if (import.meta.env.DEV) console.error('Failed to delete task:', err);
-      }
-    },
-    []
-  );
-
-  // Toggle MIT, recorded to the local journal
-  const toggleMit = useCallback(
-    async (date: string, category: MitCategory, id: string) => {
-      const dayData = state.dailyData[date];
-      if (!dayData) return;
-
-      const task = dayData.mit[category].find(t => t.id === id);
-      if (!task) return;
-
-      const newCompleted = !task.completed;
-
-      // Update local state immediately
-      dispatch({ type: 'TOGGLE_MIT', payload: { date, category, id, completed: newCompleted } });
-
-      try {
-        await updateTask(id, { completed: newCompleted });
-      } catch (err) {
-        if (import.meta.env.DEV) console.error('Failed to toggle task:', err);
-        // Revert on error
-        dispatch({ type: 'TOGGLE_MIT', payload: { date, category, id, completed: task.completed } });
-      }
-    },
-    [state.dailyData]
-  );
-
-  // Set MIT first step, recorded to the local journal
-  const setMitFirstStep = useCallback(
-    async (date: string, category: MitCategory, id: string, firstStep: string) => {
-      // Update local state immediately
-      dispatch({ type: 'SET_MIT_FIRST_STEP', payload: { date, category, id, firstStep } });
-
-      try {
-        await updateTask(id, { first_step: firstStep });
-      } catch (err) {
-        if (import.meta.env.DEV) console.error('Failed to update task first step:', err);
-      }
-    },
-    []
-  );
-
-  // Set focus, recorded to the local journal
-  const setFocus = useCallback(
-    async (date: string, focus: string) => {
-      // Update local state immediately
-      dispatch({ type: 'SET_FOCUS', payload: { date, focus } });
-
-      try {
-        await upsertDailyEntry(date, { focus });
-      } catch (err) {
-        if (import.meta.env.DEV) console.error('Failed to save focus:', err);
-      }
-    },
-    []
-  );
-
   // Set reflection, recorded to the local journal
   const setReflection = useCallback(
     async (date: string, reflection: string) => {
@@ -926,13 +667,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // ============================================================================
   // Tower Methods
   // ============================================================================
-
-  const getTowerItemsByStatusFn = useCallback(
-    (status: TowerStatus): TowerItem[] => {
-      return state.tower.filter(item => item.status === status);
-    },
-    [state.tower]
-  );
 
   /**
    * Rethrows, unlike its siblings here. Tower's capture box hands the owner's
@@ -1055,17 +789,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const value: AppContextType = {
     state,
-    loading,
     profile,
     updateProfile: updateProfileFn,
     getDailyData,
     toggleHabit,
-    addMit,
-    updateMit,
-    deleteMit,
-    toggleMit,
-    setMitFirstStep,
-    setFocus,
     setReflection,
     toggleHoliday,
     updateSettings: settings => dispatch({ type: 'UPDATE_SETTINGS', payload: settings }),
@@ -1075,7 +802,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     getHabitCount,
     getHabitStreak,
     // Tower
-    getTowerItemsByStatus: getTowerItemsByStatusFn,
     addTowerItem: addTowerItemFn,
     updateTowerItemById: updateTowerItemByIdFn,
     completeTowerItemById: completeTowerItemByIdFn,

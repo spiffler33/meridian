@@ -24,6 +24,7 @@ import type { BackfillProgress } from '../services/data';
 import { PULSE_EFFECT_TYPES } from '../lib/entities';
 import type { PulseEffectType } from '../lib/entities';
 import { clearToken, getDeviceId, getToken, requestPersistence, setMeta, setToken } from '../lib/db';
+import { Section } from '../components/Section';
 import { NewslettersSettings } from '../components/NewslettersSettings';
 import { CalendarSettings } from '../components/CalendarSettings';
 import { GITHUB_OWNER, GITHUB_REPO, isJournalDeviceId, listJournal, verifyAccess } from '../lib/github';
@@ -91,7 +92,7 @@ function HabitEditor({ habit, onUpdate, onDelete }: HabitEditorProps) {
           </button>
           <button
             onClick={handleSave}
-            className="px-2 py-1 text-xs text-accent hover:text-accent-hover"
+            className="px-2 py-1 text-xs text-accent"
           >
             save
           </button>
@@ -130,6 +131,42 @@ const AI_TONES: { value: AiTone; label: string; description: string }[] = [
   { value: 'stoic', label: 'stoic', description: 'minimal, focused on leverage' },
   { value: 'friendly', label: 'friendly', description: 'warm, supportive coach' },
   { value: 'wise', label: 'wise', description: 'thoughtful friend, conversational' },
+];
+
+/**
+ * What the keys actually do, read off `useKeyboardShortcuts`.
+ *
+ * The old list claimed a day view and a week view, and neither exists: `t` is
+ * the tower, and the week is a lens `w` opens inside the year rather than a
+ * place you go. A shortcut list that is wrong is worse than none.
+ */
+const SHORTCUTS: { key: string; meaning: string }[] = [
+  {
+    key: 't',
+    meaning:
+      'tower — what needs doing now, one item at a time. the rest stays queued, out of mind but not lost. blocked items wait in "follow up".',
+  },
+  { key: 'p', meaning: 'pulse — the stream.' },
+  {
+    key: 'h',
+    meaning:
+      'habits — daily toggles. did you or didn\'t you. no judgement, just data. set your three most important things each day.',
+  },
+  {
+    key: 'y',
+    meaning:
+      'year — the long view. a heatmap of your days. patterns emerge that you couldn\'t see up close.',
+  },
+  { key: 'r', meaning: 'read — the reading pane.' },
+  { key: 's', meaning: 'settings — you are here.' },
+  { key: '0', meaning: 'today.' },
+  { key: '←', meaning: 'previous day.' },
+  { key: '→', meaning: 'next day.' },
+  {
+    key: 'w',
+    meaning:
+      'opens the week lens inside year — seven days at a glance, which held together and which fell apart. not a view of its own.',
+  },
 ];
 
 /**
@@ -176,7 +213,6 @@ export function SettingsView() {
   const [apiKey, setApiKey] = useState('');
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
   const [apiKeySaving, setApiKeySaving] = useState(false);
-  const [personalContext, setPersonalContext] = useState(profile?.personal_context || '');
   const [deviceId, setDeviceId] = useState('');
   const [savedDeviceId, setSavedDeviceId] = useState('');
   const [deviceSaved, setDeviceSaved] = useState(false);
@@ -195,6 +231,7 @@ export function SettingsView() {
   const [usernameDraft, setUsernameDraft] = useState<string | null>(null);
   const [displayNameDraft, setDisplayNameDraft] = useState<string | null>(null);
   const [kcalTargetDraft, setKcalTargetDraft] = useState<string | null>(null);
+  const [personalContextDraft, setPersonalContextDraft] = useState<string | null>(null);
   // The whole backfill UI is four pieces of state: what a run would cost, what
   // it has done so far, whether one is running, and the controller that stops it.
   const [backfillScope, setBackfillScope] = useState<{ count: number; approxCostUsd: number } | null>(null);
@@ -204,6 +241,7 @@ export function SettingsView() {
 
   const username = usernameDraft ?? profile?.username ?? '';
   const displayName = displayNameDraft ?? profile?.display_name ?? '';
+  const personalContext = personalContextDraft ?? profile?.personal_context ?? '';
 
   useEffect(() => {
     loadApiKey().then(key => setApiKey(key));
@@ -255,16 +293,16 @@ export function SettingsView() {
     };
   }, []);
 
-  useEffect(() => {
-    setPersonalContext(profile?.personal_context || '');
-  }, [profile?.personal_context]);
-
   const handleToneChange = (tone: AiTone) => {
     updateProfile({ ai_tone: tone });
   };
 
   const handleContextSave = () => {
-    updateProfile({ personal_context: personalContext });
+    if (personalContextDraft === null) return;
+    const next = personalContextDraft;
+    setPersonalContextDraft(null);
+    if (next === (profile?.personal_context ?? '')) return;
+    updateProfile({ personal_context: next });
   };
 
   /**
@@ -546,43 +584,64 @@ export function SettingsView() {
   };
 
   return (
-    <div className="space-y-6 max-w-xl">
+    <div className="space-y-8 max-w-xl">
       <h2 className="text-lg font-medium text-text">settings</h2>
 
-      {/* Theme */}
-      <section className="bg-bg-card rounded border border-border p-4">
-        <div className="text-xs text-text-muted uppercase tracking-wide mb-3">theme</div>
-        <div className="grid grid-cols-5 gap-2">
+      <Section label="appearance">
+        <div className="grid grid-cols-3 gap-2">
           {THEMES.map(t => (
             <button
               key={t.name}
               onClick={() => setTheme(t.name)}
-              className={`
-                px-2 py-2 rounded border text-xs transition-all
-                ${theme === t.name
+              className={`px-2 py-2 rounded border text-sm transition-colors ${
+                theme === t.name
                   ? 'border-accent text-accent'
                   : 'border-border text-text-muted hover:text-text hover:border-border-focus'
-                }
-              `}
+              }`}
             >
-              {t.label.toLowerCase()}
+              {t.label}
             </button>
           ))}
         </div>
-      </section>
 
-      {/* Habits */}
-      <section className="bg-bg-card rounded border border-border p-4">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-xs text-text-muted uppercase tracking-wide">habits</span>
+        <div className="space-y-2">
+          <div className="text-xs text-text-secondary">week starts</div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => updateSettings({ weekStartsOn: 1 })}
+              className={`px-3 py-1.5 text-sm rounded border transition-colors ${
+                state.settings.weekStartsOn === 1
+                  ? 'border-accent text-accent'
+                  : 'border-border text-text-muted hover:text-text'
+              }`}
+            >
+              monday
+            </button>
+            <button
+              onClick={() => updateSettings({ weekStartsOn: 0 })}
+              className={`px-3 py-1.5 text-sm rounded border transition-colors ${
+                state.settings.weekStartsOn === 0
+                  ? 'border-accent text-accent'
+                  : 'border-border text-text-muted hover:text-text'
+              }`}
+            >
+              sunday
+            </button>
+          </div>
+        </div>
+      </Section>
+
+      <Section
+        label="habits"
+        aside={
           <button
             onClick={() => updateHabits(DEFAULT_HABITS)}
             className="text-xs text-text-muted hover:text-text"
           >
             reset
           </button>
-        </div>
-
+        }
+      >
         <div className="divide-y divide-border">
           {state.settings.habits.map((habit, index) => (
             <HabitEditor
@@ -595,7 +654,7 @@ export function SettingsView() {
         </div>
 
         {addingHabit ? (
-          <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border">
+          <div className="flex items-center gap-2">
             <input
               type="text"
               value={newHabitLabel}
@@ -611,54 +670,27 @@ export function SettingsView() {
         ) : (
           <button
             onClick={() => setAddingHabit(true)}
-            className="w-full mt-3 pt-3 border-t border-border text-xs text-text-muted hover:text-accent text-left"
+            className="w-full text-xs text-text-muted hover:text-accent text-left"
           >
             + add habit
           </button>
         )}
-      </section>
+      </Section>
 
-      {/* Week start */}
-      <section className="bg-bg-card rounded border border-border p-4">
-        <div className="text-xs text-text-muted uppercase tracking-wide mb-3">week starts</div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => updateSettings({ weekStartsOn: 1 })}
-            className={`px-3 py-1.5 text-sm rounded border transition-colors ${
-              state.settings.weekStartsOn === 1
-                ? 'border-accent text-accent'
-                : 'border-border text-text-muted hover:text-text'
-            }`}
-          >
-            monday
-          </button>
-          <button
-            onClick={() => updateSettings({ weekStartsOn: 0 })}
-            className={`px-3 py-1.5 text-sm rounded border transition-colors ${
-              state.settings.weekStartsOn === 0
-                ? 'border-accent text-accent'
-                : 'border-border text-text-muted hover:text-text'
-            }`}
-          >
-            sunday
-          </button>
-        </div>
-      </section>
-
-      {/* Device */}
-      <section className="bg-bg-card rounded border border-border p-4">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-xs text-text-muted uppercase tracking-wide">device</span>
-          {deviceSaved && <span className="text-xs text-text-muted">saved</span>}
-        </div>
-        <div className="space-y-3">
+      <Section label="data">
+        {/* Device */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-text-secondary">device</span>
+            {deviceSaved && <span className="text-xs text-text-muted">saved</span>}
+          </div>
           <div className="flex gap-2">
             <input
               type="text"
               value={deviceId}
               onChange={e => { setDeviceId(e.target.value); setDeviceSaved(false); setDeviceProblem(''); }}
               placeholder="device id"
-              className="flex-1 px-2 py-1.5 text-sm rounded border border-border bg-transparent text-text focus:border-accent outline-none font-mono"
+              className="flex-1 px-2 py-1.5 text-sm rounded border border-border bg-transparent text-text focus:border-accent outline-none"
             />
             <button
               onClick={handleDeviceIdSave}
@@ -667,21 +699,17 @@ export function SettingsView() {
               save
             </button>
           </div>
-          {deviceProblem && (
-            <div className="text-xs text-error">{deviceProblem}</div>
-          )}
+          {deviceProblem && <div className="text-xs text-error">{deviceProblem}</div>}
           <div className="text-xs text-text-muted">
             this id names your journal file in the data repo. changing it starts a
             new file from the next edit on - the old one stays where it is, with
             its history intact.
           </div>
         </div>
-      </section>
 
-      {/* GitHub backup */}
-      <section className="bg-bg-card rounded border border-border p-4">
-        <div className="text-xs text-text-muted uppercase tracking-wide mb-3">github backup</div>
-        <div className="space-y-3">
+        {/* GitHub backup */}
+        <div className="space-y-2">
+          <div className="text-xs text-text-secondary">github backup</div>
           <div className="flex gap-2">
             <input
               type="password"
@@ -693,7 +721,7 @@ export function SettingsView() {
               // offering to save the pat and refilling it later.
               autoComplete="new-password"
               spellCheck={false}
-              className="flex-1 px-2 py-1.5 text-sm rounded border border-border bg-transparent text-text focus:border-accent outline-none font-mono"
+              className="flex-1 px-2 py-1.5 text-sm rounded border border-border bg-transparent text-text focus:border-accent outline-none"
             />
             <button
               onClick={handleTokenSave}
@@ -728,58 +756,85 @@ export function SettingsView() {
             and is never shown again once saved.
           </div>
         </div>
-      </section>
 
-      {/* Newsletters, the reading pane's source repo */}
-      <NewslettersSettings />
+        {/* Newsletters, the reading pane's source repo */}
+        <NewslettersSettings />
 
-      <CalendarSettings />
+        <CalendarSettings />
 
-      {/* Storage */}
-      <section className="bg-bg-card rounded border border-border p-4">
-        <div className="text-xs text-text-muted uppercase tracking-wide mb-3">storage</div>
-        <div className="space-y-3 text-xs text-text-muted">
-          <div className="flex items-center justify-between gap-3">
-            <span>
-              {persistence === 'granted'
-                ? 'persistent storage granted - this browser will keep the local copy'
-                : persistence === 'denied'
-                  ? 'persistent storage not granted - this browser may clear the local copy'
-                  : persistence === 'unknown'
-                    ? 'this browser cannot say whether it will keep the local copy'
-                    : ''}
-            </span>
-            <button
-              onClick={handleRequestPersistence}
-              className="text-xs text-text-muted hover:text-accent transition-colors whitespace-nowrap"
-            >
-              ask again
-            </button>
-          </div>
-          <p>
-            the copy in this browser is the convenient one. the durable one is the
-            journal in github - if this browser ever clears its data, that is what
-            brings everything back.
-          </p>
-          <div className="space-y-1">
-            <div className="text-text">install on iphone</div>
-            <div>open meridian in safari, tap share, then "add to home screen".</div>
-            <div>an installed app keeps its data far longer than a tab does.</div>
+        {/* Storage, and what installing it buys */}
+        <div className="space-y-2">
+          <div className="text-xs text-text-secondary">storage</div>
+          <div className="space-y-3 text-xs text-text-muted">
+            <div className="flex items-center justify-between gap-3">
+              <span>
+                {persistence === 'granted'
+                  ? 'persistent storage granted - this browser will keep the local copy'
+                  : persistence === 'denied'
+                    ? 'persistent storage not granted - this browser may clear the local copy'
+                    : persistence === 'unknown'
+                      ? 'this browser cannot say whether it will keep the local copy'
+                      : ''}
+              </span>
+              <button
+                onClick={handleRequestPersistence}
+                className="text-xs text-text-muted hover:text-accent transition-colors whitespace-nowrap"
+              >
+                ask again
+              </button>
+            </div>
+            <p>
+              the copy in this browser is the convenient one. the durable one is the
+              journal in github - if this browser ever clears its data, that is what
+              brings everything back.
+            </p>
+            <div className="space-y-1">
+              <div className="text-text">install on iphone</div>
+              <div>open meridian in safari, tap share, then "add to home screen".</div>
+              <div>an installed app keeps its data far longer than a tab does.</div>
+            </div>
           </div>
         </div>
-      </section>
 
-      {/* Claude API */}
-      <section className="bg-bg-card rounded border border-border p-4">
-        <div className="text-xs text-text-muted uppercase tracking-wide mb-3">ai insights (claude api)</div>
-        <div className="space-y-3">
+        {/* Account */}
+        <div className="space-y-2">
+          <div className="text-xs text-text-secondary">account</div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-text-muted mb-1">username</label>
+              <input
+                type="text"
+                value={username}
+                onChange={e => setUsernameDraft(e.target.value)}
+                onBlur={handleUsernameSave}
+                className="w-full px-2 py-1.5 text-sm rounded border border-border bg-transparent text-text focus:border-accent outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-text-muted mb-1">display name</label>
+              <input
+                type="text"
+                value={displayName}
+                onChange={e => setDisplayNameDraft(e.target.value)}
+                onBlur={handleDisplayNameSave}
+                className="w-full px-2 py-1.5 text-sm rounded border border-border bg-transparent text-text focus:border-accent outline-none"
+              />
+            </div>
+          </div>
+        </div>
+      </Section>
+
+      <Section label="ai">
+        {/* Claude API */}
+        <div className="space-y-2">
+          <div className="text-xs text-text-secondary">claude api key</div>
           <div className="flex gap-2">
             <input
               type={apiKeyVisible ? 'text' : 'password'}
               value={apiKey}
               onChange={e => setApiKey(e.target.value)}
               placeholder="sk-ant-..."
-              className="flex-1 px-2 py-1.5 text-sm rounded border border-border bg-transparent text-text focus:border-accent outline-none font-mono"
+              className="flex-1 px-2 py-1.5 text-sm rounded border border-border bg-transparent text-text focus:border-accent outline-none"
             />
             <button
               onClick={() => setApiKeyVisible(!apiKeyVisible)}
@@ -818,143 +873,53 @@ export function SettingsView() {
             </a>
           </div>
         </div>
-      </section>
 
-      {/* AI Assistant */}
-      <section className="bg-bg-card rounded border border-border p-4">
-        <div className="text-xs text-text-muted uppercase tracking-wide mb-3">ai assistant</div>
-        <div className="space-y-4">
-          {/* Tone selector */}
-          <div>
-            <div className="text-xs text-text-muted mb-2">tone</div>
-            <div className="space-y-2">
-              {AI_TONES.map(tone => (
-                <label key={tone.value} className="flex items-start gap-2 cursor-pointer group">
-                  <input
-                    type="radio"
-                    name="ai-tone"
-                    value={tone.value}
-                    checked={(profile?.ai_tone || 'stoic') === tone.value}
-                    onChange={() => handleToneChange(tone.value)}
-                    className="mt-0.5 accent-accent"
-                  />
-                  <div>
-                    <span className="text-sm text-text group-hover:text-accent transition-colors">
-                      {tone.label}
-                    </span>
-                    <span className="text-xs text-text-muted ml-2">
-                      - {tone.description}
-                    </span>
-                  </div>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {/* Personal context */}
-          <div>
-            <div className="text-xs text-text-muted mb-2">
-              personal context
-              <span className="ml-2 text-text-muted opacity-60">(also editable in year view)</span>
-            </div>
-            <textarea
-              value={personalContext}
-              onChange={e => setPersonalContext(e.target.value)}
-              onBlur={handleContextSave}
-              placeholder="health goals, struggles, what matters this year..."
-              className="w-full px-2 py-1.5 text-sm rounded border border-border bg-transparent text-text focus:border-accent outline-none resize-none"
-              rows={3}
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* Nutrition */}
-      <section className="bg-bg-card rounded border border-border p-4">
-        <div className="text-xs text-text-muted uppercase tracking-wide mb-3">nutrition</div>
-        <div className="text-xs text-text-muted mb-3 leading-relaxed">
-          a daily calorie target, printed beside today's total. nothing compares against it and
-          nothing is said about the gap — it is a number next to a number. blank turns it off.
-        </div>
-        <input
-          type="number"
-          inputMode="numeric"
-          min={0}
-          value={kcalTargetDraft ?? (profile?.kcal_target === null || profile?.kcal_target === undefined ? '' : String(profile.kcal_target))}
-          onChange={e => setKcalTargetDraft(e.target.value)}
-          onBlur={handleKcalTargetSave}
-          placeholder="daily kcal target"
-          aria-label="daily kcal target"
-          className="w-full px-2 py-1.5 text-sm font-mono rounded border border-border bg-transparent text-text focus:border-accent outline-none"
-        />
-      </section>
-
-      {/* Re-code history */}
-      <section className="bg-bg-card rounded border border-border p-4">
-        <div className="text-xs text-text-muted uppercase tracking-wide mb-3">re-code history</div>
-        <div className="text-xs text-text-muted mb-3 leading-relaxed">
-          re-reads past pulses through the current coder, so older ones gain the fields newer ones
-          have. it writes coding only — never the text you typed, and no chips about last tuesday.
-          it costs one api call per pulse. resume by pressing it again.
-        </div>
-
-        {backfillScope !== null && backfillProgress === null && (
-          <div className="text-sm text-text font-mono mb-3">
-            {backfillScope.count === 0
-              ? 'nothing to re-code — every pulse is current'
-              : `${backfillScope.count} ${backfillScope.count === 1 ? 'pulse' : 'pulses'}, roughly $${backfillScope.approxCostUsd.toFixed(2)}`}
-          </div>
-        )}
-
-        {backfillProgress !== null && (
-          <div className="text-sm text-text font-mono mb-3">
-            {`${backfillProgress.done + backfillProgress.failed} of ${backfillProgress.total} done`}
-            {backfillProgress.failed > 0 && ` · ${backfillProgress.failed} failed, run again`}
-          </div>
-        )}
-
-        <div className="flex items-center gap-2">
-          {/*
-            Two taps, always: the first one only counts, and its answer IS the
-            confirmation — a run button that appears next to a price is a
-            confirmation the owner has already read, which a modal asking "are
-            you sure" is not.
-          */}
-          {!backfilling && (
-            <button
-              onClick={() => void handleBackfillCount()}
-              className="px-3 py-1.5 text-sm rounded border border-border text-text hover:border-accent transition-colors"
-            >
-              count
-            </button>
-          )}
-          {!backfilling && backfillScope !== null && backfillScope.count > 0 && (
-            <button
-              onClick={() => void handleBackfillRun()}
-              className="px-3 py-1.5 text-sm rounded border border-accent text-accent hover:bg-bg-hover transition-colors"
-            >
-              re-code {backfillScope.count}
-            </button>
-          )}
-          {backfilling && (
-            <button
-              onClick={() => backfillStop.current?.abort()}
-              className="px-3 py-1.5 text-sm rounded border border-border text-error hover:border-error transition-colors"
-            >
-              stop
-            </button>
-          )}
-        </div>
-      </section>
-
-      {/* Pulse effects */}
-      <section className="bg-bg-card rounded border border-border p-4">
-        <div className="text-xs text-text-muted uppercase tracking-wide mb-3">pulse effects</div>
-        <div className="text-xs text-text-muted mb-3 leading-relaxed">
-          a coding proposes; you tap. switch one on and it applies itself as a coding lands —
-          never reaching back over pulses already coded. vocabulary is always confirmed by hand.
-        </div>
+        {/* Tone. Read by the daily insight: `AiInsight` hands it to
+            `generateEnhancedInsight`, which opens the prompt with it. */}
         <div className="space-y-2">
+          <div className="text-xs text-text-secondary">tone</div>
+          {AI_TONES.map(tone => (
+            <label key={tone.value} className="flex items-start gap-2 cursor-pointer group">
+              <input
+                type="radio"
+                name="ai-tone"
+                value={tone.value}
+                checked={(profile?.ai_tone || 'stoic') === tone.value}
+                onChange={() => handleToneChange(tone.value)}
+                className="mt-0.5 accent-accent"
+              />
+              <div>
+                <span className="text-sm text-text group-hover:text-accent transition-colors">
+                  {tone.label}
+                </span>
+                <span className="text-xs text-text-muted ml-2">
+                  - {tone.description}
+                </span>
+              </div>
+            </label>
+          ))}
+        </div>
+
+        {/* Personal context — the owner's own words, so the reading face. */}
+        <div className="space-y-2">
+          <div className="text-xs text-text-secondary">personal context</div>
+          <textarea
+            value={personalContext}
+            onChange={e => setPersonalContextDraft(e.target.value)}
+            onBlur={handleContextSave}
+            placeholder="health goals, struggles, what matters this year..."
+            className="w-full px-2 py-1.5 font-read text-base rounded border border-border bg-transparent text-text focus:border-accent outline-none resize-none"
+            rows={3}
+          />
+        </div>
+
+        {/* Pulse effects */}
+        <div className="space-y-2">
+          <div className="text-xs text-text-secondary">pulse effects</div>
+          <div className="text-xs text-text-muted leading-relaxed">
+            a coding proposes; you tap. switch one on and it applies itself as a coding lands —
+            never reaching back over pulses already coded. vocabulary is always confirmed by hand.
+          </div>
           {PULSE_EFFECT_TYPES.map(type => (
             <label key={type} className="flex items-center gap-2 cursor-pointer group">
               <input
@@ -969,103 +934,98 @@ export function SettingsView() {
             </label>
           ))}
         </div>
-      </section>
 
-      {/* Shortcuts */}
-      <section className="bg-bg-card rounded border border-border p-4">
-        <div className="text-xs text-text-muted uppercase tracking-wide mb-3">shortcuts</div>
-        <div className="text-xs text-text-muted font-mono space-y-1">
-          <div>[t] day view</div>
-          <div>[w] week view</div>
-          <div>[y] year view</div>
-          <div>[←][→] navigate</div>
-        </div>
-      </section>
-
-      {/* About Meridian */}
-      <section className="bg-bg-card rounded border border-border p-4">
-        <div className="text-xs text-text-muted uppercase tracking-wide mb-3">about meridian</div>
-
-        <div className="text-sm text-text leading-relaxed space-y-4 font-mono">
-          <p className="text-text-muted">
-            A place to steer attention, track habits, and see patterns. Nothing more.
-          </p>
-
-          <div className="space-y-3 text-xs">
-            <div>
-              <span className="text-text">[t] tower</span>
-              <span className="text-text-muted ml-2">
-                - surfaces what needs doing now. one item at a time.
-                the rest stays queued, out of mind but not lost.
-                blocked items wait patiently in "follow up."
-              </span>
-            </div>
-
-            <div>
-              <span className="text-text">[h] habits</span>
-              <span className="text-text-muted ml-2">
-                - daily toggles. did you or didn't you. no judgement,
-                just data. set your three most important things each day.
-              </span>
-            </div>
-
-            <div>
-              <span className="text-text">[w] week</span>
-              <span className="text-text-muted ml-2">
-                - seven days at a glance. see which days held together
-                and which fell apart. navigate with arrow keys.
-              </span>
-            </div>
-
-            <div>
-              <span className="text-text">[y] year</span>
-              <span className="text-text-muted ml-2">
-                - the long view. a heatmap of your days.
-                patterns emerge that you couldn't see up close.
-              </span>
-            </div>
-
-            <div>
-              <span className="text-text">[s] settings</span>
-              <span className="text-text-muted ml-2">
-                - you are here. customize habits, themes, ai tone.
-              </span>
-            </div>
+        {/* Re-code history */}
+        <div className="space-y-2">
+          <div className="text-xs text-text-secondary">re-code history</div>
+          <div className="text-xs text-text-muted leading-relaxed">
+            re-reads past pulses through the current coder, so older ones gain the fields newer ones
+            have. it writes coding only — never the text you typed, and no chips about last tuesday.
+            it costs one api call per pulse. resume by pressing it again.
           </div>
 
-          <p className="text-text-muted pt-2 border-t border-border">
-            use [0] to return to today. arrow keys to move through time.
-            everything saves automatically.
-          </p>
-        </div>
-      </section>
+          {backfillScope !== null && backfillProgress === null && (
+            <div className="text-sm text-text tabular-nums">
+              {backfillScope.count === 0
+                ? 'nothing to re-code — every pulse is current'
+                : `${backfillScope.count} ${backfillScope.count === 1 ? 'pulse' : 'pulses'}, roughly $${backfillScope.approxCostUsd.toFixed(2)}`}
+            </div>
+          )}
 
-      {/* Account */}
-      <section className="bg-bg-card rounded border border-border p-4">
-        <div className="text-xs text-text-muted uppercase tracking-wide mb-3">account</div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs text-text-muted mb-1">username</label>
-            <input
-              type="text"
-              value={username}
-              onChange={e => setUsernameDraft(e.target.value)}
-              onBlur={handleUsernameSave}
-              className="w-full px-2 py-1.5 text-sm rounded border border-border bg-transparent text-text focus:border-accent outline-none"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-text-muted mb-1">display name</label>
-            <input
-              type="text"
-              value={displayName}
-              onChange={e => setDisplayNameDraft(e.target.value)}
-              onBlur={handleDisplayNameSave}
-              className="w-full px-2 py-1.5 text-sm rounded border border-border bg-transparent text-text focus:border-accent outline-none"
-            />
+          {backfillProgress !== null && (
+            <div className="text-sm text-text tabular-nums">
+              {`${backfillProgress.done + backfillProgress.failed} of ${backfillProgress.total} done`}
+              {backfillProgress.failed > 0 && ` · ${backfillProgress.failed} failed, run again`}
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            {/*
+              Two taps, always: the first one only counts, and its answer IS the
+              confirmation — a run button that appears next to a price is a
+              confirmation the owner has already read, which a modal asking "are
+              you sure" is not.
+            */}
+            {!backfilling && (
+              <button
+                onClick={() => void handleBackfillCount()}
+                className="px-3 py-1.5 text-sm rounded border border-border text-text hover:border-accent transition-colors"
+              >
+                count
+              </button>
+            )}
+            {!backfilling && backfillScope !== null && backfillScope.count > 0 && (
+              <button
+                onClick={() => void handleBackfillRun()}
+                className="px-3 py-1.5 text-sm rounded border border-accent text-accent hover:bg-bg-hover transition-colors"
+              >
+                re-code {backfillScope.count}
+              </button>
+            )}
+            {backfilling && (
+              <button
+                onClick={() => backfillStop.current?.abort()}
+                className="px-3 py-1.5 text-sm rounded border border-border text-error hover:border-error transition-colors"
+              >
+                stop
+              </button>
+            )}
           </div>
         </div>
-      </section>
+      </Section>
+
+      <Section label="nutrition">
+        <div className="text-xs text-text-muted leading-relaxed">
+          a daily calorie target, printed beside today's total. nothing compares against it and
+          nothing is said about the gap — it is a number next to a number. blank turns it off.
+        </div>
+        <input
+          type="number"
+          inputMode="numeric"
+          min={0}
+          value={kcalTargetDraft ?? (profile?.kcal_target === null || profile?.kcal_target === undefined ? '' : String(profile.kcal_target))}
+          onChange={e => setKcalTargetDraft(e.target.value)}
+          onBlur={handleKcalTargetSave}
+          placeholder="daily kcal target"
+          aria-label="daily kcal target"
+          className="w-full px-2 py-1.5 text-sm tabular-nums rounded border border-border bg-transparent text-text focus:border-accent outline-none"
+        />
+      </Section>
+
+      <Section label="shortcuts">
+        <div className="space-y-1 text-xs">
+          {SHORTCUTS.map(shortcut => (
+            <div key={shortcut.key} className="grid grid-cols-[2rem_1fr] gap-3">
+              <span className="text-text-muted">{shortcut.key}</span>
+              <span className="text-text-secondary">{shortcut.meaning}</span>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-text-muted">
+          a place to steer attention, track habits, and see patterns. nothing more.
+          everything saves automatically.
+        </p>
+      </Section>
     </div>
   );
 }

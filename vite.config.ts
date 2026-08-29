@@ -18,8 +18,11 @@ export default defineConfig({
         start_url: '/',
         scope: '/',
         display: 'standalone',
-        theme_color: '#fafaf9',
-        background_color: '#fafaf9',
+        // The night background, measured from index.css. The installed app
+        // opens on this before the first paint, so a light value here is a
+        // white flash on every cold start.
+        theme_color: '#0d0b08',
+        background_color: '#0d0b08',
         icons: [
           { src: 'pwa-192x192.png', sizes: '192x192', type: 'image/png' },
           { src: 'pwa-512x512.png', sizes: '512x512', type: 'image/png' },
@@ -34,7 +37,7 @@ export default defineConfig({
       },
     }),
   ],
-  // For GitHub Pages: set to your repo name (e.g., '/meridian/')
-  // For local dev or custom domain: use '/'
+  // Served from a custom domain (meridian.spiffler.xyz), so the app is at
+  // the root rather than under a repo-name path.
   base: '/',
 })

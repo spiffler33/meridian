@@ -9,6 +9,8 @@
 
 import { useState } from 'react';
 import type { PackWithCount } from '../types';
+import { ROW_TONE_ACTIVE, ROW_TONE_IDLE } from './HabitGrid';
+import { Section } from './Section';
 import { PackLogModal } from './PackLogModal';
 import { PackHistoryModal } from './PackHistoryModal';
 import { PackCreateModal } from './PackCreateModal';
@@ -34,9 +36,9 @@ function ProgressBar({ used, total }: { used: number; total: number }) {
   const empty = segments - filled;
 
   return (
-    <span className="font-mono text-xs text-text-muted">
+    <span className="text-xs text-text-muted">
       <span className="text-accent">{'█'.repeat(filled)}</span>
-      <span className="opacity-40">{'░'.repeat(empty)}</span>
+      <span className="text-text-faint">{'░'.repeat(empty)}</span>
     </span>
   );
 }
@@ -48,11 +50,8 @@ function PackRow({ pack, onLog, onViewHistory }: PackRowProps) {
   return (
     <div
       className={`
-        flex items-center gap-3 px-3 py-2 rounded border text-sm transition-all
-        ${isComplete
-          ? 'border-accent/50 bg-accent/5 text-text'
-          : 'border-border bg-bg-card text-text-secondary hover:border-border-focus'
-        }
+        flex items-center gap-3 px-3 py-2 rounded border text-sm transition-colors
+        ${isComplete ? ROW_TONE_ACTIVE : ROW_TONE_IDLE}
       `}
     >
       {/* Label - clickable for history */}
@@ -68,7 +67,7 @@ function PackRow({ pack, onLog, onViewHistory }: PackRowProps) {
       <ProgressBar used={pack.used} total={pack.total} />
 
       {/* Count */}
-      <span className="text-xs text-text-muted font-mono flex-shrink-0 w-12 text-right">
+      <span className="text-xs text-text-muted flex-shrink-0 w-12 text-right tabular-nums">
         {pack.used}/{pack.total}
       </span>
 
@@ -127,24 +126,20 @@ export function PacksSection({
   // Don't render section if no packs and we're not showing create modal
   // But always show the header with add button
   return (
-    <div className="bg-bg-card rounded border border-border p-4">
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">
-          packs
-        </span>
+    <Section
+      label="packs"
+      aside={
         <button
           onClick={() => setShowCreateModal(true)}
-          className="text-xs text-accent hover:opacity-80 transition-opacity font-mono"
+          className="text-xs text-accent hover:opacity-80 transition-opacity"
           aria-label="Create new pack"
         >
           + new
         </button>
-      </div>
-
+      }
+    >
       {packs.length === 0 ? (
-        <div className="text-xs text-text-muted font-mono py-2">
-          no active packs
-        </div>
+        <div className="text-xs text-text-muted py-2">no active packs</div>
       ) : (
         <div className="space-y-2">
           {packs.map(pack => (
@@ -184,6 +179,6 @@ export function PacksSection({
           onClose={() => setShowCreateModal(false)}
         />
       )}
-    </div>
+    </Section>
   );
 }

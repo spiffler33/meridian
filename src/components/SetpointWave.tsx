@@ -71,10 +71,10 @@ export function SetpointWave({ unread }: { unread: number | null }) {
 
   const tone =
     state === 'At setpoint'
-      ? 'text-sp-green'
+      ? 'text-settled'
       : state === 'Standing by'
-        ? 'text-sp-faint'
-        : 'text-sp-amber';
+        ? 'text-text-muted'
+        : 'text-accent';
 
   return (
     <div className={still ? 'sp-still' : undefined}>
@@ -85,34 +85,34 @@ export function SetpointWave({ unread }: { unread: number | null }) {
           preserveAspectRatio="none"
           aria-hidden="true"
         >
-          <line x1="0" y1="32" x2="680" y2="32" stroke="var(--sp-hair)" strokeWidth="1" />
+          <line x1="0" y1="32" x2="680" y2="32" stroke="var(--color-border)" strokeWidth="1" />
           <path
             className="sp-wave"
             d={WAVE_PATH}
             fill="none"
-            stroke="var(--sp-ink)"
+            stroke="var(--color-text)"
             strokeWidth="2"
             opacity="0.85"
             style={{ transform: `scaleY(${amplitude})`, transformOrigin: '50% 32px' }}
           />
           <defs>
             <radialGradient id="sp-wave-glow">
-              <stop offset="0%" stopColor="var(--sp-amber)" stopOpacity="0.5" />
-              <stop offset="100%" stopColor="var(--sp-amber)" stopOpacity="0" />
+              <stop offset="0%" stopColor="var(--color-accent)" stopOpacity="0.5" />
+              <stop offset="100%" stopColor="var(--color-accent)" stopOpacity="0" />
             </radialGradient>
           </defs>
           <circle cx="340" cy="32" r="16" fill="url(#sp-wave-glow)" />
-          <circle cx="340" cy="32" r="6.5" fill="var(--sp-amber)" />
+          <circle cx="340" cy="32" r="6.5" fill="var(--color-accent)" />
         </svg>
       </div>
 
       <div className="flex items-baseline justify-between">
         <span
-          className={`sp-stateword font-mono text-[11px] uppercase tracking-[0.18em] ${tone}`}
+          className={`sp-stateword text-xs uppercase tracking-label ${tone}`}
         >
           {state}
         </span>
-        <span className="font-mono text-[11px] tabular-nums text-sp-faint">
+        <span className="text-xs tabular-nums text-text-muted">
           {unread === null ? 'not synced' : unread > 0 ? `${unread} unread` : 'all read'}
         </span>
       </div>

@@ -67,6 +67,7 @@ import {
   syllabusPath,
 } from '../lib/newslettersRead';
 import { loadLibrary } from '../lib/newslettersSync';
+import { signed, sparkline, stateTone, weeksSince } from '../lib/readSurfaces';
 import { readItemKey } from '../services/data';
 import type { ReadSurface } from '../types';
 
@@ -118,7 +119,7 @@ function CiteChip({
 /** Nothing has been synced yet, so there is nothing to be wrong about. */
 function Unsynced({ what }: { what: string }) {
   return (
-    <div className="py-2 font-mono text-[10.5px] text-sp-faint">
+    <div className="py-2 text-2xs text-text-muted">
       no {what} on this device yet — open with a token to sync
     </div>
   );
@@ -127,6 +128,31 @@ function Unsynced({ what }: { what: string }) {
 function Trouble({ error }: { error: unknown }) {
   const { what, detail } = describeReadFailure(error);
   return <Failed what={what} detail={detail} />;
+}
+
+/**
+ * What a surface draws before it has a document.
+ *
+ * Every pane reads a file and every read has the same three ways of not being
+ * an answer yet: still out, failed, or settled on nothing. In one place so ten
+ * call sites cannot drift into ten dialects of the same three lines.
+ *
+ * `absent` is what "settled on nothing" looks like to this caller — the
+ * surface-wide "nothing synced" line, or the named failure for one document.
+ * `null` where the read landed and there is nothing to say.
+ */
+function AsyncGate({
+  state,
+  what,
+  absent,
+}: {
+  state: { pending: boolean; error: unknown };
+  what: string;
+  absent?: React.ReactNode;
+}) {
+  if (state.pending) return <Pending what={what} />;
+  if (state.error) return <Trouble error={state.error} />;
+  return <>{absent ?? null}</>;
 }
 
 // ---------------------------------------------------------------------------
@@ -166,9 +192,9 @@ export function BriefPane({ item, onNavigate, read }: SurfaceProps) {
   }, [date]);
   const brief = useAsync(loadBrief);
 
-  if (list.pending) return <Pending what="the briefs" />;
-  if (list.error) return <Trouble error={list.error} />;
-  if (!list.value || list.value.length === 0) return <Unsynced what="briefs" />;
+  if (list.pending || list.error || !list.value || list.value.length === 0) {
+    return <AsyncGate state={list} what="the briefs" absent={<Unsynced what="briefs" />} />;
+  }
 
   if (date === undefined) {
     return (
@@ -193,11 +219,15 @@ export function BriefPane({ item, onNavigate, read }: SurfaceProps) {
     <>
       <BackLink onClick={() => onNavigate('brief', [])}>briefs</BackLink>
 
-      {brief.pending && <Pending what="the brief" />}
-      {brief.error ? <Trouble error={brief.error} /> : null}
-      {!brief.pending && !brief.error && !brief.value && (
-        <Failed what="that brief has not been synced to this device" detail={briefPath(date)} />
-      )}
+      <AsyncGate
+        state={brief}
+        what="the brief"
+        absent={
+          brief.value ? null : (
+            <Failed what="that brief has not been synced to this device" detail={briefPath(date)} />
+          )
+        }
+      />
 
       {brief.value && (
         <Card>
@@ -205,10 +235,7 @@ export function BriefPane({ item, onNavigate, read }: SurfaceProps) {
           {brief.value.title && <Headline>{brief.value.title}</Headline>}
           <Markdown blocks={bodyBlocks(brief.value)} />
 
-          <MarkRead
-            read={read.isRead(readItemKey('brief', date))}
-            onToggle={() => read.toggle(readItemKey('brief', date))}
-          />
+          <MarkRead read={read} itemKey={readItemKey('brief', date)} />
         </Card>
       )}
     </>
@@ -263,85 +290,16 @@ interface TapeFile {
   };
 }
 
-/** Eight levels of block, index 0 being alive but untouched. */
-const SPARK_BLOCKS = '▁▂▃▄▅▆▇█';
-
-/** A week before the theme existed. Not a zero — there was nothing to count. */
-const SPARK_UNBORN = '·';
-
-/**
- * Eight weeks of a theme, as eight characters.
- *
- * The tape is a trend instrument and this is the trend: one block per week,
- * scaled against the theme's own busiest week rather than the tape's, so a
- * quiet theme still shows its own shape. The published edition draws exactly
- * this, so the two readings of one tape agree.
- *
- * A week before `first_seen` is a middle dot, not a low block: the theme did
- * not exist, which is a different fact from a week in which nothing touched it.
- *
- * Ties round up here and to even in the edition's Python, so one week in a
- * hundred can sit one block apart between the two. Blocks, not numbers.
- */
-function sparkline(
-  touches: readonly number[],
-  weeks: readonly string[],
-  firstSeen: string | undefined
-): string {
-  let busiest = 0;
-  for (const count of touches) if (count > busiest) busiest = count;
-
-  let out = '';
-  for (let index = 0; index < touches.length; index += 1) {
-    const week = weeks[index];
-    if (firstSeen !== undefined && week !== undefined && week < firstSeen.slice(0, 10)) {
-      out += SPARK_UNBORN;
-      continue;
-    }
-    const count = touches[index];
-    if (!Number.isFinite(count) || count <= 0) {
-      out += SPARK_BLOCKS[0];
-      continue;
-    }
-    const level = busiest > 0 ? Math.max(1, Math.min(7, Math.round((count / busiest) * 7))) : 1;
-    out += SPARK_BLOCKS[level];
-  }
-  return out;
-}
-
-/** How many weeks a theme has been on the tape, counting the week it was cut. */
-function weeksSince(firstSeen: string | undefined, runDate: string | undefined): number | null {
-  if (firstSeen === undefined || runDate === undefined) return null;
-  const born = Date.parse(`${firstSeen.slice(0, 10)}T00:00:00Z`);
-  const cut = Date.parse(`${runDate.slice(0, 10)}T00:00:00Z`);
-  if (Number.isNaN(born) || Number.isNaN(cut)) return null;
-  return Math.max(0, Math.floor((cut - born) / 86_400_000 / 7) + 1);
-}
-
-const STATE_TONE: Record<string, string> = {
-  HOT: 'text-sp-amber',
-  NEW: 'text-sp-green',
-  BUILDING: 'text-sp-ice',
-  COOLING: 'text-sp-faint',
-};
-
-function stateTone(state: string | undefined): string {
-  return (state && STATE_TONE[state]) ?? 'text-sp-muted';
-}
-
-function signed(value: number | undefined): string | null {
-  if (typeof value !== 'number' || value === 0) return null;
-  return value > 0 ? `+${value}` : `${value}`;
-}
-
 export function TapePane({ onNavigate, read }: SurfaceProps) {
   const load = useCallback(() => cachedJson<TapeFile>(TAPE_PATH), []);
   const { value, error, pending } = useAsync(load);
   const open = opener(onNavigate);
 
-  if (pending) return <Pending what="the tape" />;
-  if (error) return <Trouble error={error} />;
-  if (!value) return <Unsynced what="tape" />;
+  if (pending || error || !value) {
+    return (
+      <AsyncGate state={{ pending, error }} what="the tape" absent={<Unsynced what="tape" />} />
+    );
+  }
 
   const rows = value.tape ?? [];
   const cards = value.cards ?? [];
@@ -355,7 +313,7 @@ export function TapePane({ onNavigate, read }: SurfaceProps) {
 
   return (
     <>
-      <div className="mb-4 flex items-baseline justify-between font-mono text-[10.5px] text-sp-faint">
+      <div className="mb-4 flex items-baseline justify-between text-2xs text-text-muted">
         <span>
           {value.window?.key ?? 'tape'}
           {value.window?.start && value.window?.end
@@ -373,29 +331,29 @@ export function TapePane({ onNavigate, read }: SurfaceProps) {
       {/* Who is new to the corpus this week. The edition prints it on the
           masthead; on a phone it needs its own line. */}
       {voices.length > 0 && (
-        <div className="mb-4 -mt-2 font-mono text-[10.5px] text-sp-faint">
+        <div className="mb-4 -mt-2 text-2xs text-text-muted">
           {voices.length} new voice{voices.length === 1 ? '' : 's'}: {voices.join(', ')}
         </div>
       )}
 
       {rows.length > 0 && (
-        <div className="mb-5 border-y border-sp-hair py-1">
+        <div className="mb-5 border-y border-border py-1">
           {rows.map((row, index) => (
             <div
               key={row.id ?? index}
-              className="flex items-baseline justify-between gap-3 py-[3px] font-mono text-[10.5px]"
+              className="flex items-baseline justify-between gap-3 py-0.5 text-2xs"
             >
-              <span className="truncate text-sp-muted">{row.display_name ?? row.id ?? '—'}</span>
+              <span className="truncate text-text-secondary">{row.display_name ?? row.id ?? '—'}</span>
               <span className="flex flex-shrink-0 items-baseline gap-2 tabular-nums">
                 {row.touches?.length ? (
-                  <span className="tracking-[0.02em] text-sp-ice">
+                  <span className="text-cite">
                     {sparkline(row.touches, weeks, row.first_seen)}
                   </span>
                 ) : null}
                 {typeof row.this_window === 'number' && (
-                  <span className="text-sp-faint">{row.this_window}</span>
+                  <span className="text-text-muted">{row.this_window}</span>
                 )}
-                {signed(row.delta) && <span className="text-sp-faint">{signed(row.delta)}</span>}
+                {signed(row.delta) && <span className="text-text-muted">{signed(row.delta)}</span>}
                 <span className={stateTone(row.state)}>{row.state ?? ''}</span>
               </span>
             </div>
@@ -414,8 +372,8 @@ export function TapePane({ onNavigate, read }: SurfaceProps) {
               theme has been running. The edition carries all three on one line
               under the header. */}
           {card.touches?.length ? (
-            <div className="mb-2 flex flex-wrap items-baseline gap-x-2 font-mono text-[10.5px] text-sp-faint">
-              <span className="tracking-[0.02em] text-sp-ice">
+            <div className="mb-2 flex flex-wrap items-baseline gap-x-2 text-2xs text-text-muted">
+              <span className="text-cite">
                 {sparkline(card.touches, weeks, card.first_seen)}
               </span>
               <span className="tabular-nums">
@@ -432,13 +390,13 @@ export function TapePane({ onNavigate, read }: SurfaceProps) {
 
           {card.label && <Headline>{card.label}</Headline>}
 
-          {card.stance_left && <p className="prose-read mt-3 text-sp-ink">{card.stance_left}</p>}
+          {card.stance_left && <p className="prose-read mt-3 text-text">{card.stance_left}</p>}
           {card.stance_right && (
             <>
-              <div className="mt-3 font-mono text-[10px] uppercase tracking-[0.22em] text-sp-faint">
+              <div className="mt-3 text-2xs uppercase tracking-label text-text-muted">
                 against
               </div>
-              <p className="prose-read mt-1 text-sp-ink">{card.stance_right}</p>
+              <p className="prose-read mt-1 text-text">{card.stance_right}</p>
             </>
           )}
           {card.pressure_text && <Note>{card.pressure_text}</Note>}
@@ -446,14 +404,14 @@ export function TapePane({ onNavigate, read }: SurfaceProps) {
           {/* An older entry this week pulled back up — the thing the tape is
               for. It taps into the entry like any other mark. */}
           {card.resurfacing?.slug && (
-            <div className="mt-3 font-mono text-[10.5px] leading-[1.6] text-sp-amber">
+            <div className="mt-3 text-2xs leading-relaxed text-accent">
               <span className="mr-1">↞ resurfaces:</span>
               <CiteChip
                 citation={{ grammar: 'slug', slug: card.resurfacing.slug }}
                 onOpen={open}
               />
               {card.resurfacing.text && (
-                <span className="ml-1 text-sp-muted">“{card.resurfacing.text}”</span>
+                <span className="ml-1 text-text-secondary">“{card.resurfacing.text}”</span>
               )}
             </div>
           )}
@@ -463,7 +421,7 @@ export function TapePane({ onNavigate, read }: SurfaceProps) {
               {card.evidence.map((item, evidenceIndex) => (
                 <div key={evidenceIndex} className="mb-2 last:mb-0">
                   {item.text && (
-                    <span className="font-read text-[13px] leading-[1.5] text-sp-muted">
+                    <span className="font-read text-sm text-text-secondary">
                       {item.text}{' '}
                     </span>
                   )}
@@ -487,15 +445,15 @@ export function TapePane({ onNavigate, read }: SurfaceProps) {
           closes on it, because a theme arriving is news and a theme going
           quiet is the other half of the same reading. */}
       {(born.length > 0 || quiet.length > 0) && (
-        <div className="mt-5 border-t border-sp-hair pt-4">
-          <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.22em] text-sp-faint">
+        <div className="mt-5 border-t border-border pt-4">
+          <div className="mb-2 text-2xs uppercase tracking-label text-text-muted">
             the ledger — born &amp; gone quiet
           </div>
-          <div className="font-mono text-[10.5px] leading-[1.9]">
+          <div className="text-2xs leading-loose">
             {born.map((entry, index) => (
               <div key={`born-${index}`} className="flex gap-2">
-                <span className="flex-shrink-0 text-sp-amber">● born</span>
-                <span className="text-sp-muted">
+                <span className="flex-shrink-0 text-accent">● born</span>
+                <span className="text-text-secondary">
                   {entry.display_name ?? entry.label ?? entry.id ?? '—'}
                   {entry.note ? ` — ${entry.note}` : ''}
                 </span>
@@ -503,8 +461,8 @@ export function TapePane({ onNavigate, read }: SurfaceProps) {
             ))}
             {quiet.map((entry, index) => (
               <div key={`quiet-${index}`} className="flex gap-2">
-                <span className="flex-shrink-0 text-sp-ice">○ quiet</span>
-                <span className="text-sp-muted">
+                <span className="flex-shrink-0 text-cite">○ quiet</span>
+                <span className="text-text-secondary">
                   {entry.labels ?? '—'}
                   {entry.note ? ` — ${entry.note}` : ''}
                 </span>
@@ -514,7 +472,7 @@ export function TapePane({ onNavigate, read }: SurfaceProps) {
         </div>
       )}
 
-      <MarkRead read={read.isRead(key)} onToggle={() => read.toggle(key)} />
+      <MarkRead read={read} itemKey={key} />
     </>
   );
 }
@@ -553,7 +511,7 @@ interface ChartFile {
   };
 }
 
-const GROUP_TONE = ['bg-sp-amber', 'bg-sp-green', 'bg-sp-ice'];
+const GROUP_TONE = ['bg-accent', 'bg-settled', 'bg-cite'];
 
 export function ChartPane({ item, onNavigate, read }: SurfaceProps) {
   const loadIds = useCallback(async () => chartIds((await cachedTree()).map(file => file.path)), []);
@@ -575,9 +533,9 @@ export function ChartPane({ item, onNavigate, read }: SurfaceProps) {
   const chart = useAsync(load);
   const open = opener(onNavigate);
 
-  if (ids.pending) return <Pending what="the charts" />;
-  if (ids.error) return <Trouble error={ids.error} />;
-  if (!ids.value || ids.value.length === 0) return <Unsynced what="charts" />;
+  if (ids.pending || ids.error || !ids.value || ids.value.length === 0) {
+    return <AsyncGate state={ids} what="the charts" absent={<Unsynced what="charts" />} />;
+  }
 
   const card = chart.value?.card;
   const bars = card?.bars ?? [];
@@ -609,30 +567,36 @@ export function ChartPane({ item, onNavigate, read }: SurfaceProps) {
         />
       </Rail>
 
-      {chart.pending && <Pending what="the chart" />}
-      {chart.error ? <Trouble error={chart.error} /> : null}
-      {!chart.pending && !chart.error && !card && chosen !== null && (
-        <Failed what="this chart has no card in it" detail={chartPath(chosen)} />
-      )}
+      <AsyncGate
+        state={chart}
+        what="the chart"
+        absent={
+          !card && chosen !== null ? (
+            <Failed what="this chart has no card in it" detail={chartPath(chosen)} />
+          ) : null
+        }
+      />
 
       {card && (
         <Card>
           {card.kicker && <Kicker>{card.kicker}</Kicker>}
           {card.headline && <Headline>{card.headline}</Headline>}
           {card.metric && (
-            <div className="mt-2 font-mono text-[10.5px] text-sp-muted">{card.metric}</div>
+            <div className="mt-2 text-2xs text-text-secondary">{card.metric}</div>
           )}
 
-          <div className="mt-[14px]">
+          <div className="mt-3.5">
             {bars.map((bar, index) => (
               <div
                 key={index}
-                className="grid grid-cols-[92px_1fr_64px] items-center gap-[10px] py-[5px] sm:grid-cols-[132px_1fr_72px]"
+                className="grid grid-cols-[92px_1fr_64px] items-center gap-2.5 py-1 sm:grid-cols-[132px_1fr_72px]"
               >
-                <span className="truncate text-right font-mono text-[11px] text-sp-muted">
+                <span className="truncate text-right text-xs text-text-secondary">
                   {bar.label ?? ''}
                 </span>
-                <div className="h-3 overflow-hidden rounded-[3px] bg-sp-panel2">
+                {/* rounded-[3px], not the app's `rounded`: the bar is 12px
+                    tall, and a 6px radius would round it into a pill. */}
+                <div className="h-3 overflow-hidden rounded-[3px] bg-bg-hover">
                   <div
                     className={`h-full rounded-[3px] ${GROUP_TONE[(bar.group ?? 0) % GROUP_TONE.length]}`}
                     style={{ width: widest > 0 ? `${((bar.w ?? 0) / widest) * 100}%` : '0%' }}
@@ -640,7 +604,7 @@ export function ChartPane({ item, onNavigate, read }: SurfaceProps) {
                 </div>
                 {/* Outside the bar, always: it survives a stripped fill in mail
                     and a narrow phone here. */}
-                <span className="text-left font-mono text-[11.5px] tabular-nums text-sp-ink">
+                <span className="text-left text-xs tabular-nums text-text">
                   {bar.value ?? ''}
                 </span>
               </div>
@@ -653,12 +617,12 @@ export function ChartPane({ item, onNavigate, read }: SurfaceProps) {
               opening, the argument, the three questions, then where the
               numbers came from. Every part is optional and absent renders as
               absent — a chart whose file carries no prose is still a chart. */}
-          {post?.intro && <p className="prose-read mt-5 text-sp-ink">{post.intro}</p>}
+          {post?.intro && <p className="prose-read mt-5 text-text">{post.intro}</p>}
 
           {post?.why && (
             <>
               <SectionLabel>why it's interesting</SectionLabel>
-              <p className="prose-read text-sp-ink">{post.why}</p>
+              <p className="prose-read text-text">{post.why}</p>
             </>
           )}
 
@@ -666,7 +630,7 @@ export function ChartPane({ item, onNavigate, read }: SurfaceProps) {
             <>
               <SectionLabel>table talk</SectionLabel>
               {questions.map((question, index) => (
-                <p key={index} className="prose-read mb-[10px] text-sp-muted last:mb-0">
+                <p key={index} className="prose-read mb-2.5 text-text-secondary last:mb-0">
                   {question}
                 </p>
               ))}
@@ -677,7 +641,7 @@ export function ChartPane({ item, onNavigate, read }: SurfaceProps) {
             <>
               <SectionLabel>sources</SectionLabel>
               {sources.map((source, index) => (
-                <p key={index} className="prose-read mb-[6px] text-[14px] text-sp-muted last:mb-0">
+                <p key={index} className="prose-read mb-1.5 text-sm text-text-secondary last:mb-0">
                   {source.pre ?? ''}
                   {source.href && source.text ? (
                     <OutLink href={source.href}>{source.text}</OutLink>
@@ -707,10 +671,7 @@ export function ChartPane({ item, onNavigate, read }: SurfaceProps) {
             ) : null}
           </SrcLine>
 
-          <MarkRead
-            read={read.isRead(readItemKey('chart', chosen ?? ''))}
-            onToggle={() => read.toggle(readItemKey('chart', chosen ?? ''))}
-          />
+          <MarkRead read={read} itemKey={readItemKey('chart', chosen ?? '')} />
         </Card>
       )}
     </>
@@ -766,9 +727,9 @@ export function CanonPane({ item, onNavigate, read }: SurfaceProps) {
   const lesson = useAsync(loadDay);
   const open = opener(onNavigate);
 
-  if (docs.pending) return <Pending what="the canon" />;
-  if (docs.error) return <Trouble error={docs.error} />;
-  if (!docs.value || docs.value.length === 0) return <Unsynced what="canon lessons" />;
+  if (docs.pending || docs.error || !docs.value || docs.value.length === 0) {
+    return <AsyncGate state={docs} what="the canon" absent={<Unsynced what="canon lessons" />} />;
+  }
 
   if (doc === undefined) {
     return (
@@ -827,11 +788,11 @@ export function CanonPane({ item, onNavigate, read }: SurfaceProps) {
                     detail={entry.idea ?? null}
                   />
                 ) : (
-                  <div key={number} className="border-b border-sp-hair px-[2px] py-[11px] opacity-45">
-                    <div className="font-mono text-[10px] tracking-[0.06em] text-sp-faint">
+                  <div key={number} className="border-b border-border px-0.5 py-3 opacity-45">
+                    <div className="text-2xs tracking-caps text-text-muted">
                       {label} · not yet
                     </div>
-                    <div className="font-mono text-[12.5px] leading-[1.5] text-sp-muted">
+                    <div className="text-xs text-text-secondary">
                       {entry.title ?? `day ${entry.day ?? '?'}`}
                     </div>
                   </div>
@@ -858,26 +819,28 @@ export function CanonPane({ item, onNavigate, read }: SurfaceProps) {
     <>
       <BackLink onClick={() => onNavigate('canon', [doc])}>{doc}</BackLink>
 
-      {lesson.pending && <Pending what="the lesson" />}
-      {lesson.error ? <Trouble error={lesson.error} /> : null}
-      {!lesson.pending && !lesson.error && !lesson.value && (
-        latest > 0 && current > latest ? (
-          <Notice>
-            day {current} has not arrived yet — the course is at day {latest} of {of || '?'}
-          </Notice>
-        ) : (
-          <Failed
-            what="that day has not been synced to this device"
-            detail={dayPath(doc, current)}
-          />
-        )
-      )}
+      <AsyncGate
+        state={lesson}
+        what="the lesson"
+        absent={
+          lesson.value ? null : latest > 0 && current > latest ? (
+            <Notice>
+              day {current} has not arrived yet — the course is at day {latest} of {of || '?'}
+            </Notice>
+          ) : (
+            <Failed
+              what="that day has not been synced to this device"
+              detail={dayPath(doc, current)}
+            />
+          )
+        }
+      />
 
       {lesson.value && (
         <Card>
           <div className="flex items-baseline justify-between">
             <Kicker tone="ice">canon · {lesson.value.doc_id ?? doc}</Kicker>
-            <span className="font-mono text-[10.5px] tabular-nums text-sp-faint">
+            <span className="text-2xs tabular-nums text-text-muted">
               day {lesson.value.day ?? current}
               {of ? `/${of}` : ''}
             </span>
@@ -892,13 +855,13 @@ export function CanonPane({ item, onNavigate, read }: SurfaceProps) {
               links={{ entry, onOpen: open }}
             />
           ) : (
-            <Note>this lesson carries no text.</Note>
+            <div className="mt-3 text-2xs text-text-muted">this lesson carries no text.</div>
           )}
 
           {lesson.value.citations?.length ? (
             <SrcLine>
               {lesson.value.citations.map(citation => (
-                <div key={citation} className="mb-[6px] last:mb-0">
+                <div key={citation} className="mb-1.5 last:mb-0">
                   <CiteChip
                     wide
                     citation={{ grammar: 'phrase', entry: entry ?? '', phrase: citation }}
@@ -910,7 +873,7 @@ export function CanonPane({ item, onNavigate, read }: SurfaceProps) {
             </SrcLine>
           ) : null}
 
-          <div className="mt-4 flex justify-between font-mono text-[10.5px] text-sp-faint">
+          <div className="mt-4 flex justify-between text-2xs text-text-muted">
             <button
               disabled={current <= 1}
               onClick={() => onNavigate('canon', [doc, String(current - 1)])}
@@ -931,10 +894,7 @@ export function CanonPane({ item, onNavigate, read }: SurfaceProps) {
 
           {/* A course keeps progress, not a backlog: the mark says which days
               are done. It carries no date, so it never reaches the wave. */}
-          <MarkRead
-            read={read.isRead(readItemKey('canon', `${doc}/${current}`))}
-            onToggle={() => read.toggle(readItemKey('canon', `${doc}/${current}`))}
-          />
+          <MarkRead read={read} itemKey={readItemKey('canon', `${doc}/${current}`)} />
         </Card>
       )}
     </>
@@ -978,9 +938,9 @@ export function EssayPane({ item, onNavigate, read }: SurfaceProps) {
   );
   const essay = useAsync(loadEssay);
 
-  if (list.pending) return <Pending what="the essays" />;
-  if (list.error) return <Trouble error={list.error} />;
-  if (!list.value || list.value.entries.length === 0) return <Unsynced what="essays" />;
+  if (list.pending || list.error || !list.value || list.value.entries.length === 0) {
+    return <AsyncGate state={list} what="the essays" absent={<Unsynced what="essays" />} />;
+  }
 
   const gists = list.value.gists;
 
@@ -1016,11 +976,15 @@ export function EssayPane({ item, onNavigate, read }: SurfaceProps) {
     <>
       <BackLink onClick={() => onNavigate('essay', [])}>essays</BackLink>
 
-      {essay.pending && <Pending what="the essay" />}
-      {essay.error ? <Trouble error={essay.error} /> : null}
-      {!essay.pending && !essay.error && !essay.value && (
-        <Failed what="that essay has not been synced to this device" detail={essayPath(slug)} />
-      )}
+      <AsyncGate
+        state={essay}
+        what="the essay"
+        absent={
+          essay.value ? null : (
+            <Failed what="that essay has not been synced to this device" detail={essayPath(slug)} />
+          )
+        }
+      />
 
       {essay.value && (
         <Card>
@@ -1045,8 +1009,8 @@ export function EssayPane({ item, onNavigate, read }: SurfaceProps) {
                 const source = definitions.get(note.label) ?? '';
                 const target = resolveCitation({ grammar: 'path', source });
                 return (
-                  <div key={note.label} className="mb-[6px] last:mb-0">
-                    <span className="text-sp-ice">[{note.label}]</span>{' '}
+                  <div key={note.label} className="mb-1.5 last:mb-0">
+                    <span className="text-cite">[{note.label}]</span>{' '}
                     {target === null ? (
                       <span className="break-all">{source}</span>
                     ) : (
@@ -1065,10 +1029,7 @@ export function EssayPane({ item, onNavigate, read }: SurfaceProps) {
             </SrcLine>
           )}
 
-          <MarkRead
-            read={read.isRead(readItemKey('essay', slug))}
-            onToggle={() => read.toggle(readItemKey('essay', slug))}
-          />
+          <MarkRead read={read} itemKey={readItemKey('essay', slug)} />
         </Card>
       )}
     </>
@@ -1147,9 +1108,9 @@ export function RawPane({ item, read }: SurfaceProps) {
   if (slug === undefined) {
     return <Failed what="no entry named in this address" />;
   }
-  if (entry.pending) return <Pending what={slug} />;
-  if (entry.error) return <Trouble error={entry.error} />;
-  if (!entry.value || parsed === null) return <Unsynced what="source entries" />;
+  if (entry.pending || entry.error || !entry.value || parsed === null) {
+    return <AsyncGate state={entry} what={slug} absent={<Unsynced what="source entries" />} />;
+  }
 
   const missedFigures = wanted === 'figures' && parsed.figures === null;
   const missedSpan = phrase !== null && mark < 0;
@@ -1160,17 +1121,17 @@ export function RawPane({ item, read }: SurfaceProps) {
       <div className="flex items-baseline justify-between gap-3">
         <Kicker>raw · {entry.value.slug.slice(0, 10)}</Kicker>
         {parsed.figures !== null && (
-          <div className="flex flex-shrink-0 gap-2 font-mono text-[10px]">
+          <div className="flex flex-shrink-0 gap-2 text-2xs">
             <button
               onClick={() => setOverride({ route, file: 'prose' })}
-              className={showing === 'figures' ? 'text-sp-faint' : 'text-sp-amber'}
+              className={showing === 'figures' ? 'text-text-muted' : 'text-accent'}
             >
               prose
             </button>
-            <span className="text-sp-faint">|</span>
+            <span className="text-text-muted">|</span>
             <button
               onClick={() => setOverride({ route, file: 'figures' })}
-              className={showing === 'figures' ? 'text-sp-amber' : 'text-sp-faint'}
+              className={showing === 'figures' ? 'text-accent' : 'text-text-muted'}
             >
               figures
             </button>
@@ -1189,7 +1150,7 @@ export function RawPane({ item, read }: SurfaceProps) {
 
       {/* The same key the Library row carries: marking here turns the dot
           there, because it is the same entry. */}
-      <MarkRead read={read.isRead(entryKey)} onToggle={() => read.toggle(entryKey)} />
+      <MarkRead read={read} itemKey={entryKey} />
     </Card>
   );
 }

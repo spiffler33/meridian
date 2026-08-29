@@ -261,16 +261,6 @@ describe('the way back to the library', () => {
   });
 });
 
-describe('the reading surface', () => {
-  it('adopts the palette while mounted and hands it back on the way out', () => {
-    const { unmount } = show('tape');
-    expect(document.documentElement.getAttribute('data-surface')).toBe('read');
-
-    unmount();
-    expect(document.documentElement.getAttribute('data-surface')).toBeNull();
-  });
-});
-
 describe('the instrument', () => {
   it('reads the backlog the library is actually carrying', async () => {
     await seedBaseline('2026-08-16T00:00:00.000Z');

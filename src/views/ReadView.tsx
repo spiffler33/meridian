@@ -4,12 +4,10 @@
  * The reading surface for the newsletters library. Email stays the broadcast
  * edition; this is the owner's terminal on the same committed artifacts.
  *
- * The shell owns three things: the palette the whole screen adopts while this
- * view is mounted, the instrument in the header, and the tab rail. Everything
- * below the rail is a surface, and each surface reads its own file.
+ * The shell owns two things: the instrument in the header and the tab rail.
+ * Everything below the rail is a surface, and each surface reads its own file.
  */
 
-import { useEffect } from 'react';
 import type { ReadSurface } from '../types';
 import { SetpointWave } from '../components/SetpointWave';
 import { Backlog, type SurfaceRead } from '../components/readUi';
@@ -96,7 +94,7 @@ async function loadDated(): Promise<{
 /** The backlog on one tab, drawn only when there is one. */
 function Tick({ count }: { count: number | null }) {
   if (count === null || count <= 0) return null;
-  return <span className="ml-[6px] tabular-nums text-sp-amber">{count}</span>;
+  return <span className="ml-1.5 tabular-nums text-accent">{count}</span>;
 }
 
 /**
@@ -108,7 +106,7 @@ function Tick({ count }: { count: number | null }) {
 function LibraryState({ view }: { view: NewslettersView }) {
   if (view.error) {
     return (
-      <div className="flex items-baseline gap-2 pb-2 font-mono text-[10.5px] text-error">
+      <div className="flex items-baseline gap-2 pb-2 text-2xs text-error">
         <span>{view.error}</span>
         <button onClick={view.refresh} className="underline underline-offset-2">
           retry
@@ -118,17 +116,17 @@ function LibraryState({ view }: { view: NewslettersView }) {
   }
   if (!view.configured) {
     return (
-      <div className="pb-2 font-mono text-[10.5px] text-sp-muted">
+      <div className="pb-2 text-2xs text-text-secondary">
         no newsletters token on this device — add a read-only one in settings
       </div>
     );
   }
   if (view.syncing) {
-    return <div className="pb-2 font-mono text-[10.5px] text-sp-faint">syncing…</div>;
+    return <div className="pb-2 text-2xs text-text-muted">syncing…</div>;
   }
   if (view.loaded && view.rows.length === 0) {
     return (
-      <div className="pb-2 font-mono text-[10.5px] text-sp-faint">
+      <div className="pb-2 text-2xs text-text-muted">
         nothing synced to this device yet
       </div>
     );
@@ -153,28 +151,27 @@ function LibraryPane({
       node: (
         <div
           key={row.slug}
-          className="flex items-center gap-3 border-b border-sp-hair px-[2px] py-[11px]"
+          className="flex items-center gap-3 border-b border-border px-0.5 py-3"
         >
           <span
-            className={`h-[7px] w-[7px] flex-shrink-0 rounded-full ${
-              isRead ? 'border border-sp-hair' : 'bg-sp-amber'
+            className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${
+              isRead ? 'border border-border' : 'bg-accent'
             }`}
-            style={isRead ? undefined : { boxShadow: '0 0 8px var(--sp-amber)' }}
           />
           <button onClick={() => onOpen(row.slug)} className="min-w-0 flex-1 text-left">
-            <div className="font-mono text-[10px] tracking-[0.06em] text-sp-faint">{row.date}</div>
+            <div className="text-2xs tracking-caps text-text-muted">{row.date}</div>
             {/* The slug is the title. The corpus keeps the real one inside
                 the entry's frontmatter, which is a fetch away; the reader
                 shows it the moment the entry opens. */}
             <div
-              className={`truncate font-mono text-[12.5px] leading-[1.5] ${
-                isRead ? 'text-sp-muted' : 'text-sp-ink'
+              className={`truncate text-xs ${
+                isRead ? 'text-text-secondary' : 'text-text'
               }`}
             >
               {row.name}
             </div>
             {row.gist && (
-              <div className="truncate font-read text-[13px] leading-[1.45] text-sp-muted">
+              <div className="truncate font-read text-sm text-text-secondary">
                 {row.gist}
               </div>
             )}
@@ -182,12 +179,12 @@ function LibraryPane({
           <button
             onClick={() => read.toggle(key)}
             aria-label={isRead ? `Mark ${row.slug} unread` : `Mark ${row.slug} read`}
-            className={`h-5 w-5 flex-shrink-0 rounded-md border-[1.5px] ${
-              isRead ? 'border-sp-green bg-sp-green' : 'border-sp-faint hover:border-sp-muted'
+            className={`h-5 w-5 flex-shrink-0 rounded border ${
+              isRead ? 'border-settled bg-settled' : 'border-text-muted hover:border-text-secondary'
             }`}
           >
             {isRead && (
-              <span className="block text-center text-[12px] leading-4 text-sp-panel">✓</span>
+              <span className="block text-center text-xs leading-4 text-bg-card">✓</span>
             )}
           </button>
         </div>
@@ -204,14 +201,6 @@ function LibraryPane({
 }
 
 export function ReadView({ surface, item, onSurfaceChange, onNavigate }: ReadViewProps) {
-  // The whole screen becomes the reading surface while this view is mounted:
-  // the app's tokens resolve to setpoint values on <html>, so the header and
-  // the backup line come along instead of framing the pane in another palette.
-  useEffect(() => {
-    document.documentElement.setAttribute('data-surface', 'read');
-    return () => document.documentElement.removeAttribute('data-surface');
-  }, []);
-
   const view = useNewsletters();
 
   // Read-state is folded `readItem` events, and the baseline is established
@@ -254,7 +243,7 @@ export function ReadView({ surface, item, onSurfaceChange, onNavigate }: ReadVie
       <div
         role="tablist"
         aria-label="Reading surfaces"
-        className="mb-[22px] mt-[18px] flex gap-3 overflow-x-auto border-b border-sp-hair sm:gap-[22px]"
+        className="mb-5 mt-4 flex gap-3 overflow-x-auto border-b border-border sm:gap-5"
       >
         {TABS.map(tab => (
           <button
@@ -262,10 +251,10 @@ export function ReadView({ surface, item, onSurfaceChange, onNavigate }: ReadVie
             role="tab"
             aria-selected={surface === tab.surface}
             onClick={() => onSurfaceChange(tab.surface)}
-            className={`whitespace-nowrap border-b-2 px-[2px] pb-[10px] pt-2 font-mono text-[10.5px] uppercase tracking-[0.22em] ${
+            className={`whitespace-nowrap border-b-2 px-0.5 pb-2.5 pt-2 text-2xs uppercase tracking-label ${
               surface === tab.surface
-                ? 'border-sp-amber text-sp-ink'
-                : 'border-transparent text-sp-faint hover:text-sp-muted'
+                ? 'border-accent text-text'
+                : 'border-transparent text-text-muted hover:text-text-secondary'
             }`}
           >
             {tab.label}
@@ -290,18 +279,16 @@ export function ReadView({ surface, item, onSurfaceChange, onNavigate }: ReadVie
           `#/read/library` is still an address, still where a citation's source
           entry lives, and still carries its own count — it is just no longer
           one of the day's queues. */}
-      <div className="mt-10 border-t border-sp-hair pt-3">
+      <div className="mt-10 border-t border-border pt-3">
         <button
           onClick={() => onSurfaceChange('library')}
           aria-current={surface === 'library' ? 'true' : undefined}
-          className={`font-mono text-[10.5px] tracking-[0.06em] ${
-            surface === 'library' ? 'text-sp-muted' : 'text-sp-faint hover:text-sp-muted'
+          className={`text-2xs tracking-caps ${
+            surface === 'library' ? 'text-text-secondary' : 'text-text-muted hover:text-text-secondary'
           }`}
         >
           library
-          {entryUnread !== null && entryUnread > 0 && (
-            <span className="ml-[6px] tabular-nums text-sp-amber">{entryUnread}</span>
-          )}
+          <Tick count={entryUnread} />
         </button>
       </div>
     </div>

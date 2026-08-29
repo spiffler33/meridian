@@ -13,16 +13,13 @@
 
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { deleteMeta, getMeta, getToken } from '../lib/db';
+import { relativeTime } from '../utils/dates';
 import { onPushFailure } from '../lib/github';
 import type { GitHubErrorKind } from '../lib/github';
 import { flushOutbox } from '../lib/sync';
 
 /** How often the line re-reads the store, and re-renders so the clock moves. */
 const REFRESH_MS = 30_000;
-
-const MINUTE_MS = 60_000;
-const HOUR_MS = 3_600_000;
-const DAY_MS = 86_400_000;
 
 /**
  * A local write that failed is a separate signal from a push that failed: the
@@ -159,20 +156,6 @@ async function retryBackup(): Promise<void> {
 // Wording
 // ============================================================================
 
-function relativeParts(deltaMs: number): [number, Intl.RelativeTimeFormatUnit] {
-  const size = Math.abs(deltaMs);
-  if (size < MINUTE_MS) return [Math.round(deltaMs / 1000), 'second'];
-  if (size < HOUR_MS) return [Math.round(deltaMs / MINUTE_MS), 'minute'];
-  if (size < DAY_MS) return [Math.round(deltaMs / HOUR_MS), 'hour'];
-  return [Math.round(deltaMs / DAY_MS), 'day'];
-}
-
-/** "5 minutes ago" for a negative delta, "in 5 minutes" for a positive one. */
-function relative(deltaMs: number): string {
-  const [value, unit] = relativeParts(deltaMs);
-  return new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' }).format(value, unit);
-}
-
 /**
  * The age of the last durable copy.
  *
@@ -182,11 +165,28 @@ function relative(deltaMs: number): string {
  */
 function backedUpLine(snap: BackupSnapshot, nowMs: number): string {
   if (snap.lastBackupAt === null) return 'nothing backed up from this device yet.';
-  return `last backed up ${relative(Math.min(0, snap.lastBackupAt - nowMs))} from this device.`;
+  return `last backed up ${relativeTime(Math.min(0, snap.lastBackupAt - nowMs))} from this device.`;
+}
+
+/**
+ * The same fact, whispered. This is what sits under every screen on an
+ * ordinary day, so on an ordinary day it is four words in the quietest tier
+ * the palette has — the moment there is nothing to do about it, a full
+ * sentence with a full stop is the app talking for the sake of it.
+ */
+function healthyLine(snap: BackupSnapshot, nowMs: number): string {
+  if (snap.lastBackupAt === null) return 'not backed up yet';
+  return `backed up ${relativeTime(Math.min(0, snap.lastBackupAt - nowMs))}`;
 }
 
 interface Line {
   text: string;
+  /**
+   * How loudly the line speaks. `whisper` is the healthy everyday case and is
+   * deliberately below the contrast bar; anything the owner must act on is
+   * `normal` or `alarm`.
+   */
+  tone: 'whisper' | 'normal' | 'alarm';
   /** How old the last durable copy is, kept beside a failure rather than replaced by it. */
   detail: string | null;
   /** Worth the owner's attention. Being offline is not. */
@@ -194,7 +194,7 @@ interface Line {
   retry: boolean;
 }
 
-function failureLine(snap: BackupSnapshot, nowMs: number): Omit<Line, 'detail'> {
+function failureLine(snap: BackupSnapshot, nowMs: number): Omit<Line, 'detail' | 'tone'> {
   switch (snap.kind) {
     case 'auth':
       // The only branch allowed to point at the token.
@@ -206,7 +206,7 @@ function failureLine(snap: BackupSnapshot, nowMs: number): Omit<Line, 'detail'> 
     case 'ratelimit': {
       // A deadline, not a frozen duration: ten minutes after a 429 this must
       // not still be promising "in 2 minutes".
-      const wait = snap.retryUntil === null ? 'shortly' : relative(Math.max(0, snap.retryUntil - nowMs));
+      const wait = snap.retryUntil === null ? 'shortly' : relativeTime(Math.max(0, snap.retryUntil - nowMs));
       return {
         text: `backup paused — github's rate limit. the token is fine; try again ${wait}.`,
         alarming: true,
@@ -229,6 +229,7 @@ function statusLine(snap: BackupSnapshot, nowMs: number): Line {
     return {
       text: 'backup not set up yet — add a github token in settings.',
       detail: null,
+      tone: 'normal',
       alarming: false,
       retry: false,
     };
@@ -237,9 +238,14 @@ function statusLine(snap: BackupSnapshot, nowMs: number): Line {
     // Whether the last durable copy is five minutes or three weeks old is the
     // difference between an inconvenience and an emergency, so it stays on
     // screen exactly when the owner needs it.
-    return { ...failureLine(snap, nowMs), detail: backedUpLine(snap, nowMs) };
+    const failure = failureLine(snap, nowMs);
+    return {
+      ...failure,
+      detail: backedUpLine(snap, nowMs),
+      tone: failure.alarming ? 'alarm' : 'normal',
+    };
   }
-  return { text: backedUpLine(snap, nowMs), detail: null, alarming: false, retry: false };
+  return { text: healthyLine(snap, nowMs), detail: null, tone: 'whisper', alarming: false, retry: false };
 }
 
 // ============================================================================
@@ -262,8 +268,23 @@ export function BackupStatus() {
   const line = statusLine(snap, now);
 
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" aria-live="polite">
-      <span className={line.alarming ? 'text-error' : 'text-text-muted'}>{line.text}</span>
+    <div
+      className={`flex flex-wrap items-center gap-x-3 gap-y-1 ${
+        line.tone === 'whisper' ? 'text-2xs' : 'text-xs'
+      }`}
+      aria-live="polite"
+    >
+      <span
+        className={
+          line.tone === 'alarm'
+            ? 'text-error'
+            : line.tone === 'whisper'
+              ? 'text-text-faint'
+              : 'text-text-muted'
+        }
+      >
+        {line.text}
+      </span>
       {line.detail !== null && <span className="text-text-muted">{line.detail}</span>}
       {snap.stateFailed && <span className="text-error">{STATE_ERROR_TEXT}</span>}
       {line.retry && (
@@ -274,7 +295,7 @@ export function BackupStatus() {
           disabled={snap.retrying}
           className="text-text-muted hover:text-accent transition-colors disabled:opacity-50"
         >
-          {snap.retrying ? 'retrying...' : 'retry'}
+          {snap.retrying ? 'retrying…' : 'retry'}
         </button>
       )}
     </div>

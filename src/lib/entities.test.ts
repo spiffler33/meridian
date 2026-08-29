@@ -71,43 +71,27 @@ import {
   createHabit,
   createPack,
   createPackSession,
-  createTask,
   createTowerItem,
   deleteHabit,
   deletePackSession,
-  deleteTask,
   deleteTowerItem,
-  deleteYearTheme,
   getAllYearThemes,
   getCompletions,
-  getCompletionsForDate,
   getDailyDataRange,
-  getDailyEntry,
   getHabitCompletionDates,
-  getHabitStreak,
   getHabits,
   getPackSessions,
   getPacks,
   getProfile,
-  getTasks,
-  getTasksRange,
   getTowerItems,
-  getTowerItemsByStatus,
   getReadItems,
   getReadingBaseline,
-  getYearTheme,
   ensureReadingBaseline,
-  loadAllData,
-  reorderHabits,
-  restoreHabit,
   setItemRead,
   setYearTheme,
   toggleCompletion,
   updateHabit,
-  updatePack,
-  updatePackSession,
   updateProfile,
-  updateTask,
   updateTowerItem,
   upsertDailyEntry,
 } from '../services/data'
@@ -192,17 +176,10 @@ describe('a fresh device with no journal at all', () => {
   it('answers every read without throwing', async () => {
     expect(await getHabits()).toEqual([])
     expect(await getHabits(true)).toEqual([])
-    expect(await getDailyEntry('2026-01-05')).toBeNull()
     expect(await getCompletions('2026-01-01', '2026-12-31')).toEqual([])
-    expect(await getCompletionsForDate('2026-01-05')).toEqual({})
-    expect(await getTasks('2026-01-05')).toEqual([])
-    expect(await getTasksRange('2026-01-01', '2026-12-31')).toEqual([])
-    expect(await getYearTheme(2026)).toBeNull()
     expect(await getAllYearThemes()).toEqual([])
-    expect(await getHabitStreak('nobody')).toEqual({ current: 0, longest: 0 })
     expect(await getHabitCompletionDates('nobody')).toEqual([])
     expect(await getTowerItems()).toEqual([])
-    expect(await getTowerItemsByStatus('active')).toEqual([])
     expect(await getPacks()).toEqual([])
     expect(await getPackSessions('nobody')).toEqual([])
     expect(await getDailyDataRange('2026-01-01', '2026-12-31')).toEqual({
@@ -217,10 +194,6 @@ describe('a fresh device with no journal at all', () => {
     expect(profile.ai_tone).toBe('stoic')
     expect(profile.week_starts_on).toBe(1)
     expect(profile.personal_context).toBeNull()
-
-    const all = await loadAllData()
-    expect(all.habits).toEqual([])
-    expect(all.profile.id).toBe(profile.id)
   })
 
   it('takes a first write with nothing to fold onto', async () => {
@@ -277,11 +250,6 @@ describe('tower ordering: expects_by ASC NULLS LAST, then last_touched ASC', () 
   it('keeps the same order when done items are included', async () => {
     const items = await getTowerItems(true)
     expect(items.map((item) => item.text)).toEqual(['C', 'A', 'E', 'D', 'B'])
-  })
-
-  it('orders by status the same way', async () => {
-    const items = await getTowerItemsByStatus('active')
-    expect(items.map((item) => item.text)).toEqual(['C', 'A', 'D', 'B'])
   })
 })
 
@@ -346,85 +314,6 @@ describe('sort_order is assigned as max + 1', () => {
     expect(created.sort_order).toBe(10)
     expect((await getHabits()).map((habit) => habit.label)).toEqual(['One', 'Two', 'Three'])
   })
-
-  it('createTask scopes the maximum to the same date AND category', async () => {
-    await seed(
-      line('task', 'k-1', { date: '2026-01-05', category: 'work', text: 'a', sort_order: 0 }),
-      line('task', 'k-2', { date: '2026-01-05', category: 'work', text: 'b', sort_order: 1 }),
-      line('task', 'k-3', { date: '2026-01-05', category: 'self', text: 'c', sort_order: 7 }),
-      line('task', 'k-4', { date: '2026-01-06', category: 'work', text: 'd', sort_order: 4 })
-    )
-
-    const created = await createTask({ date: '2026-01-05', category: 'work', text: 'e' })
-    expect(created.sort_order).toBe(2)
-    expect(created.completed).toBe(false)
-    expect(created.completed_at).toBeNull()
-
-    const firstOfADay = await createTask({ date: '2026-02-01', category: 'family', text: 'f' })
-    expect(firstOfADay.sort_order).toBe(0)
-  })
-
-  it('orders tasks by category then sort_order', async () => {
-    await seed(
-      line('task', 'k-1', { date: '2026-01-05', category: 'work', text: 'w0', sort_order: 0 }),
-      line('task', 'k-2', { date: '2026-01-05', category: 'self', text: 's1', sort_order: 1 }),
-      line('task', 'k-3', { date: '2026-01-05', category: 'self', text: 's0', sort_order: 0 }),
-      line('task', 'k-4', { date: '2026-01-05', category: 'family', text: 'f0', sort_order: 0 })
-    )
-
-    expect((await getTasks('2026-01-05')).map((task) => task.text)).toEqual([
-      'f0',
-      's0',
-      's1',
-      'w0',
-    ])
-    expect((await getTasksRange('2026-01-01', '2026-01-31')).map((task) => task.text)).toEqual([
-      'f0',
-      's0',
-      's1',
-      'w0',
-    ])
-  })
-})
-
-// --- updateTask's completed_at side effect ----------------------------------
-
-describe('updateTask maintains completed_at', () => {
-  it('sets it on completion and clears it on un-completion', async () => {
-    const task = await createTask({ date: '2026-01-05', category: 'work', text: 'ship' })
-    expect(task.completed_at).toBeNull()
-
-    const done = await updateTask(task.id, { completed: true })
-    expect(done.completed).toBe(true)
-    expect(typeof done.completed_at).toBe('string')
-    expect(done.completed_at).not.toBeNull()
-
-    const undone = await updateTask(task.id, { completed: false })
-    expect(undone.completed).toBe(false)
-    expect(undone.completed_at).toBeNull()
-  })
-
-  it('leaves an explicit completed_at alone', async () => {
-    const task = await createTask({ date: '2026-01-05', category: 'work', text: 'ship' })
-    const done = await updateTask(task.id, {
-      completed: true,
-      completed_at: '2026-01-05T09:00:00.000Z',
-    })
-    expect(done.completed_at).toBe('2026-01-05T09:00:00.000Z')
-  })
-
-  it('does not disturb other fields', async () => {
-    const task = await createTask({
-      date: '2026-01-05',
-      category: 'work',
-      text: 'ship',
-      firstStep: 'open the editor',
-    })
-    const renamed = await updateTask(task.id, { text: 'ship it' })
-    expect(renamed.text).toBe('ship it')
-    expect(renamed.first_step).toBe('open the editor')
-    expect(renamed.completed).toBe(false)
-  })
 })
 
 // --- soft delete vs real delete ---------------------------------------------
@@ -452,14 +341,6 @@ describe('soft deletes keep the record, real deletes remove it', () => {
     expect(entityIds('pack')).toEqual([pack.id])
   })
 
-  it('deleteTask removes the entity entirely', async () => {
-    const task = await createTask({ date: '2026-01-05', category: 'work', text: 'ship' })
-    await deleteTask(task.id)
-
-    expect(await getTasks('2026-01-05')).toEqual([])
-    expect(entityIds('task')).toEqual([])
-  })
-
   it('deleteTowerItem removes the entity entirely', async () => {
     const item = await createTowerItem({ text: 'call the plumber' })
     await deleteTowerItem(item.id)
@@ -477,15 +358,6 @@ describe('soft deletes keep the record, real deletes remove it', () => {
     expect(entityIds('packSession')).toEqual([])
     expect((await getPacks())[0].used).toBe(0)
   })
-
-  it('deleteYearTheme removes the entity entirely', async () => {
-    await setYearTheme(2026, 'Momentum')
-    await deleteYearTheme(2026)
-
-    expect(await getYearTheme(2026)).toBeNull()
-    expect(await getAllYearThemes()).toEqual([])
-    expect(entityIds('yearTheme')).toEqual([])
-  })
 })
 
 // --- composite keys ---------------------------------------------------------
@@ -496,7 +368,6 @@ describe('a composite key maps to one stable entity', () => {
     await toggleCompletion('h-1', '2026-01-05', true)
 
     expect(entityIds('habitCompletion')).toHaveLength(1)
-    expect(await getCompletionsForDate('2026-01-05')).toEqual({ 'h-1': true })
   })
 
   it('a different habit or a different date is a different entity', async () => {
@@ -510,7 +381,6 @@ describe('a composite key maps to one stable entity', () => {
   it('toggling off deletes, and toggling on again stays one entity', async () => {
     await toggleCompletion('h-1', '2026-01-05', true)
     await toggleCompletion('h-1', '2026-01-05', false)
-    expect(await getCompletionsForDate('2026-01-05')).toEqual({})
     expect(entityIds('habitCompletion')).toEqual([])
 
     await toggleCompletion('h-1', '2026-01-05', true)
@@ -528,17 +398,12 @@ describe('a composite key maps to one stable entity', () => {
 
     await toggleCompletion('h-1', '2026-01-05', false)
     expect(entityIds('habitCompletion')).toEqual([])
-    expect(await getCompletionsForDate('2026-01-05')).toEqual({})
 
     await upsertDailyEntry('2026-01-05', { reflection: 'wrote it down' })
     expect(entityIds('dailyEntry')).toEqual(['eeee-old-uuid'])
-    const entry = await getDailyEntry('2026-01-05')
-    expect(entry?.focus).toBe('seeded focus')
-    expect(entry?.reflection).toBe('wrote it down')
 
     await setYearTheme(2026, 'Momentum')
     expect(entityIds('yearTheme')).toEqual(['dddd-old-uuid'])
-    expect(await getYearTheme(2026)).toBe('Momentum')
   })
 
   it('upserting the same date twice writes one entity and merges the fields', async () => {
@@ -546,9 +411,6 @@ describe('a composite key maps to one stable entity', () => {
     await upsertDailyEntry('2026-01-05', { isHoliday: true })
 
     expect(entityIds('dailyEntry')).toHaveLength(1)
-    const entry = await getDailyEntry('2026-01-05')
-    expect(entry?.focus).toBe('the one thing')
-    expect(entry?.is_holiday).toBe(true)
 
     const range = await getDailyDataRange('2026-01-01', '2026-01-31')
     expect(range.entries).toHaveLength(1)
@@ -559,7 +421,6 @@ describe('a composite key maps to one stable entity', () => {
     await setYearTheme(2026, 'Depth')
 
     expect(entityIds('yearTheme')).toHaveLength(1)
-    expect(await getYearTheme(2026)).toBe('Depth')
     expect(await getAllYearThemes()).toHaveLength(1)
   })
 })
@@ -581,26 +442,11 @@ describe('habit completion reads', () => {
     await toggleCompletion('h-1', '2026-03-14', true)
     await toggleCompletion('h-1', '2026-03-15', true)
 
-    expect(await getHabitStreak('h-1')).toEqual({ current: 3, longest: 3 })
     expect(await getHabitCompletionDates('h-1')).toEqual([
       '2026-03-15',
       '2026-03-14',
       '2026-03-13',
     ])
-  })
-
-  it('counts a streak that ended yesterday as still current', async () => {
-    await toggleCompletion('h-1', '2026-03-13', true)
-    await toggleCompletion('h-1', '2026-03-14', true)
-
-    expect(await getHabitStreak('h-1')).toEqual({ current: 2, longest: 2 })
-  })
-
-  it('does not call a streak current when the last day is older than yesterday', async () => {
-    await toggleCompletion('h-1', '2026-03-10', true)
-    await toggleCompletion('h-1', '2026-03-11', true)
-
-    expect(await getHabitStreak('h-1')).toEqual({ current: 0, longest: 2 })
   })
 
   it('filters a range inclusively and orders by date', async () => {
@@ -719,7 +565,6 @@ describe('writes reach the outbox and survive a reload', () => {
 
     const habits = await getHabits()
     expect(habits.map((row) => row.id)).toEqual([habit.id])
-    expect((await getDailyEntry('2026-01-05'))?.reflection).toBe('good day')
   })
 })
 
@@ -917,11 +762,6 @@ describe('resolveEntityId and uniqueByKey pick the same row', () => {
       })
     )
 
-    const entry = await getDailyEntry('2026-01-05')
-    expect(entry?.id).toBe('eeee-old-uuid')
-    expect(entry?.focus).toBe('seeded focus')
-    expect(entry?.reflection).toBe('typed in the other tab')
-
     const range = await getDailyDataRange('2026-01-01', '2026-01-31')
     expect(range.entries).toHaveLength(1)
     expect(range.entries[0].reflection).toBe('typed in the other tab')
@@ -1046,30 +886,6 @@ describe('every write the contract has to preserve', () => {
     expect(renamed.created_at).toBe(habit.created_at)
   })
 
-  it('restoreHabit clears archived_at and brings the habit back', async () => {
-    const habit = await createHabit({ label: 'Read', category: 'learning' })
-    await deleteHabit(habit.id)
-    expect(await getHabits()).toEqual([])
-
-    const restored = await restoreHabit(habit.id)
-    expect(restored.archived_at).toBeNull()
-    expect(restored.label).toBe('Read')
-    expect((await getHabits()).map((row) => row.id)).toEqual([habit.id])
-  })
-
-  it('reorderHabits writes each id the position it was handed', async () => {
-    const a = await createHabit({ label: 'A', category: 'health' })
-    const b = await createHabit({ label: 'B', category: 'health' })
-    const c = await createHabit({ label: 'C', category: 'health' })
-    expect((await getHabits()).map((row) => row.label)).toEqual(['A', 'B', 'C'])
-
-    await reorderHabits([c.id, a.id, b.id])
-
-    const reordered = await getHabits()
-    expect(reordered.map((row) => row.label)).toEqual(['C', 'A', 'B'])
-    expect(reordered.map((row) => row.sort_order)).toEqual([0, 1, 2])
-  })
-
   it('updateTowerItem rewrites the fields and bumps last_touched', async () => {
     await seed(
       line('towerItem', 't-1', {
@@ -1123,52 +939,11 @@ describe('every write the contract has to preserve', () => {
 
     expect((await getProfile()).ai_tone).toBe('wise')
   })
-
-  it('updatePack changes the label and the total', async () => {
-    const pack = await createPack({ label: 'Massage', total: 10 })
-
-    const updated = await updatePack(pack.id, { label: 'Massages', total: 12 })
-    expect(updated.label).toBe('Massages')
-    expect(updated.total).toBe(12)
-    expect(updated.createdAt).toBe(pack.createdAt)
-    expect((await getPacks())[0].total).toBe(12)
-  })
-
-  it('updatePackSession changes only what it is handed', async () => {
-    const pack = await createPack({ label: 'Massage', total: 10 })
-    const session = await createPackSession({
-      packId: pack.id,
-      date: '2026-01-05',
-      note: 'shoulders',
-    })
-
-    const moved = await updatePackSession(session.id, { date: '2026-01-06' })
-    expect(moved.date).toBe('2026-01-06')
-    expect(moved.note).toBe('shoulders')
-
-    const cleared = await updatePackSession(session.id, { note: null })
-    expect(cleared.note).toBeUndefined()
-    expect(cleared.date).toBe('2026-01-06')
-    expect((await getPackSessions(pack.id)).map((row) => row.date)).toEqual(['2026-01-06'])
-  })
 })
 
 // --- writes against an id nothing answers to ---------------------------------
 
 describe('a write against an id that does not exist creates nothing', () => {
-  it('reorderHabits ignores an unknown id and leaves the rest alone', async () => {
-    const habit = await createHabit({ label: 'Read', category: 'learning' })
-    const queued = await outboxSize()
-
-    await reorderHabits(['gone'])
-    expect(entityIds('habit')).toEqual([habit.id])
-    expect(await outboxSize()).toBe(queued)
-
-    await reorderHabits(['gone', habit.id])
-    expect(entityIds('habit')).toEqual([habit.id])
-    expect((await getHabits())[0].sort_order).toBe(1)
-  })
-
   it('createPackSession refuses a pack that is not there', async () => {
     await expect(createPackSession({ packId: 'gone', date: '2026-01-05' })).rejects.toThrow(
       'no matching record'
@@ -1197,19 +972,6 @@ describe('getDailyDataRange orders tasks the way the day is read', () => {
       'third',
       'tomorrow',
     ])
-
-    // the same order the single-day and range readers already gave
-    expect((await getTasks('2026-01-05')).map((task) => task.text)).toEqual([
-      'first',
-      'second',
-      'third',
-    ])
-    expect((await getTasksRange('2026-01-01', '2026-01-31')).map((task) => task.text)).toEqual([
-      'first',
-      'second',
-      'third',
-      'tomorrow',
-    ])
   })
 })
 
@@ -1217,19 +979,15 @@ describe('getDailyDataRange orders tasks the way the day is read', () => {
 
 describe('the outbox holds exactly one entry per event written', () => {
   it('counts one per write and nothing for a write with no drafts', async () => {
-    const first = await createHabit({ label: 'A', category: 'health' })
+    await createHabit({ label: 'A', category: 'health' })
     expect(await outboxSize()).toBe(1)
 
-    const second = await createHabit({ label: 'B', category: 'health' })
+    await createHabit({ label: 'B', category: 'health' })
     expect(await outboxSize()).toBe(2)
-
-    // one event per habit moved
-    await reorderHabits([second.id, first.id])
-    expect(await outboxSize()).toBe(4)
 
     // toggling off a completion that was never on has nothing to write
     await toggleCompletion('h-1', '2026-01-05', false)
-    expect(await outboxSize()).toBe(4)
+    expect(await outboxSize()).toBe(2)
   })
 })
 

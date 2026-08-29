@@ -8,8 +8,8 @@
  * answer (Appendix B's schema), and the one call that connects them.
  *
  * Reuses `claude.ts`'s proven request shape (plain `fetch`, no SDK, no
- * streaming) and its `loadApiKey()`. `claude.ts`'s two legacy functions are
- * untouched — they are the AI-on-life-support prose path; this is the
+ * streaming) and its `loadApiKey()`. `claude.ts`'s one legacy function is
+ * untouched — it is the AI-on-life-support prose path; this is the
  * deliberate rebuild, and it owns nothing else in that file.
  *
  * Cost note: 30 pulses/day ≈ $6/month on Sonnet 5 (≈$2 on Haiku), at ~1.6K

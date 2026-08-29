@@ -9,12 +9,12 @@
 import type { CalendarEvent } from '../lib/calendar';
 
 const DOT: Record<string, string> = {
-  home: 'bg-sp-green',
-  personal: 'bg-sp-ice',
-  db: 'bg-sp-amber',
+  home: 'bg-settled',
+  personal: 'bg-cite',
+  db: 'bg-accent',
 };
 
-const DOT_FALLBACK = 'bg-sp-muted';
+const DOT_FALLBACK = 'bg-text-secondary';
 
 /**
  * 7px, which is the library's unread dot — the same geometry, so the two
@@ -27,8 +27,8 @@ const DOT_FALLBACK = 'bg-sp-muted';
 export function Dot({ calendar, lit }: { calendar: string; lit?: boolean }) {
   return (
     <span
-      className={`h-[7px] w-[7px] flex-shrink-0 rounded-full ${DOT[calendar] ?? DOT_FALLBACK}`}
-      style={lit ? { boxShadow: '0 0 8px currentColor', color: 'var(--sp-amber)' } : undefined}
+      className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${DOT[calendar] ?? DOT_FALLBACK}`}
+      style={lit ? { boxShadow: '0 0 8px currentColor', color: 'var(--color-accent)' } : undefined}
     />
   );
 }
@@ -37,8 +37,8 @@ export function Dot({ calendar, lit }: { calendar: string; lit?: boolean }) {
 export function AllDayChip({ event, faded }: { event: CalendarEvent; faded?: boolean }) {
   return (
     <span
-      className={`inline-flex max-w-full items-center gap-1.5 rounded-[9px] border border-sp-hair px-[7px] pb-[2px] pt-px font-mono text-[10.5px] ${
-        faded ? 'text-sp-faint' : 'text-sp-muted'
+      className={`inline-flex max-w-full items-center gap-1.5 rounded border border-border px-2 pb-0.5 pt-px font-mono text-2xs ${
+        faded ? 'text-text-muted' : 'text-text-secondary'
       }`}
     >
       <Dot calendar={event.calendar} />

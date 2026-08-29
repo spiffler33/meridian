@@ -1,8 +1,9 @@
 /**
- * Life Calendar - Main App Component
+ * Meridian — the app shell.
  *
- * "Frictionless. Track, reflect, see patterns."
- * Terminal meets journal - clean, fast, keyboard-first.
+ * Picks the view from the hash, holds the two pieces of state that outlive a
+ * view (the calendar mirror and whether the week lens is open), and wraps
+ * everything in the providers.
  */
 
 import { useCallback, useState } from 'react';
@@ -26,18 +27,23 @@ function AppContent() {
 
   // Mounted here rather than in a view: the calendar mirror is what the day is
   // planned against, so it refreshes when the app opens and on every focus,
-  // whichever pane happens to be showing. One instance, passed down — two
-  // hooks would mean two cache reads and two copies of the same state.
+  // whichever pane happens to be showing. Passed down rather than re-hooked,
+  // so the views that read it share one cache read and one copy of the state.
   const calendar = useCalendar();
 
   // Whether the week lens on the Year view is open. Held here rather than in
   // the view because `w` opens it from anywhere, and deliberately out of the
   // hash: it is a look at the year, not an address.
   const [weekOpen, setWeekOpen] = useState(false);
+  // Destructured rather than reached through `nav`: the hook returns a fresh
+  // object every render, so a `[nav]` dependency rebuilds this callback each
+  // time and makes `useKeyboardShortcuts` tear down and re-add its key
+  // listener on every render. `setView` itself is stable.
+  const { setView } = nav;
   const openWeek = useCallback(() => {
     setWeekOpen(true);
-    nav.setView('year');
-  }, [nav]);
+    setView('year');
+  }, [setView]);
 
   // Keyboard shortcuts
   useKeyboardShortcuts({

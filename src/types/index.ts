@@ -72,7 +72,7 @@ export type ViewType = 'tower' | 'pulse' | 'habits' | 'year' | 'read' | 'setting
 
 // Surfaces inside the Read view. `raw` is a reader rather than a tab: it has
 // no place on the rail, but it is a route from day one because citations land
-// on it (docs/PLAN_READING_PANE.md, phase 4).
+// on it (docs/archive/PLAN_READING_PANE.md, phase 4).
 export type ReadSurface = 'brief' | 'tape' | 'chart' | 'canon' | 'essay' | 'library' | 'raw';
 
 // Tower item status
@@ -182,13 +182,6 @@ export const DEFAULT_HABITS: HabitDefinition[] = [
   },
 ];
 
-// Default app settings
-export const DEFAULT_SETTINGS: AppSettings = {
-  habits: DEFAULT_HABITS,
-  yearThemes: [],
-  weekStartsOn: 1, // Monday
-};
-
 // Create an empty day's data structure
 export function createEmptyDailyData(date: string): DailyData {
   return {
@@ -200,13 +193,5 @@ export function createEmptyDailyData(date: string): DailyData {
     },
     habits: {},
     reflection: '',
-  };
-}
-
-// Create the initial app state
-export function createInitialState(): AppState {
-  return {
-    settings: DEFAULT_SETTINGS,
-    dailyData: {},
   };
 }

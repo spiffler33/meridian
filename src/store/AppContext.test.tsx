@@ -34,7 +34,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { GITHUB_API_BASE, GITHUB_OWNER, GITHUB_REPO } from '../lib/github'
 import { closeDb, enqueue, outboxSize, setToken } from '../lib/db'
 import { resetSession } from '../lib/entities'
-import { deleteTask, getTasks, toggleCompletion } from '../services/data'
+import { toggleCompletion } from '../services/data'
 import { FLUSH_DEBOUNCE_MS, installSyncTriggers } from '../lib/sync'
 import { AppProvider, useApp } from './AppContext'
 import type { MitCategory } from '../types'
@@ -320,53 +320,4 @@ describe('reloading the window', () => {
       expect(screen.getByTestId('ticked')).toHaveTextContent('')
     })
   })
-
-  it('drops a MIT that was removed since the last read', async () => {
-    await setToken(TOKEN)
-    fakeGitHub()
-    const { createTask } = await import('../services/data')
-    const task = await createTask({ date: TODAY_ISO, category: 'work', text: 'Ship the fix' })
-
-    render(createElement(AppProvider, null, createElement(DayProbe, null)))
-    await waitFor(() => {
-      expect(screen.getByTestId('mits')).toHaveTextContent('work:Ship the fix')
-    })
-
-    await deleteTask(task.id)
-    expect(await getTasks(TODAY_ISO)).toHaveLength(0)
-    reload()
-
-    await waitFor(() => {
-      expect(screen.getByTestId('mits')).toHaveTextContent('')
-    })
-  })
-
-  it('clears the whole window when everything in it was removed', async () => {
-    await setToken(TOKEN)
-    fakeGitHub()
-    const { createTask } = await import('../services/data')
-    await toggleCompletion('habit-x', TODAY_ISO, true)
-    const task = await createTask({ date: TODAY_ISO, category: 'self', text: 'Only item' })
-
-    render(createElement(AppProvider, null, createElement(DayProbe, null)))
-    await waitFor(() => {
-      expect(screen.getByTestId('ticked')).toHaveTextContent('habit-x')
-    })
-    expect(screen.getByTestId('mits')).toHaveTextContent('self:Only item')
-
-    // Nothing left in the loaded range: both payloads come back empty, which is
-    // exactly the case a non-empty guard used to skip.
-    await toggleCompletion('habit-x', TODAY_ISO, false)
-    await deleteTask(task.id)
-    reload()
-
-    await waitFor(() => {
-      expect(screen.getByTestId('ticked')).toHaveTextContent('')
-    })
-    expect(screen.getByTestId('mits')).toHaveTextContent('')
-  })
 })
-
-// ============================================================================
-// A chip applied on the Pulse page writes past this provider
-// ============================================================================

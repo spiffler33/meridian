@@ -3,226 +3,133 @@
 @tailwind utilities;
 
 /*
- * Life Calendar - Design System
+ * Meridian — the design system.
  *
- * "Frictionless. Track, reflect, see patterns."
- * Terminal meets journal - clean, fast, keyboard-first.
+ * Source of truth for the reasoning is docs/DESIGN_PRINCIPLES.md. What lives
+ * here is the palette and the handful of things Tailwind cannot express.
  *
- * 5 Themes: Dark (default), Matrix, Paper, Midnight, Mono
+ * ONE design, two lightnesses. Night is the home turf; day is real parity,
+ * not an inversion. Both are the same warm hue family (~70), so the switch is
+ * a lightness move rather than a re-pick — which is why the tokens are OKLCH:
+ * in that space equal lightness numbers look equally light, and a palette can
+ * be reasoned about instead of eyeballed.
+ *
+ * Colour is earned. There are exactly three hues beyond the neutrals:
+ * `accent` (amber — the current thing, the live thing), `error` (terracotta —
+ * something needs the owner), and the two instrument hues `settled` / `cite`,
+ * which appear only inside the setpoint wave and citation marks. Nothing is
+ * coloured to "pop".
+ *
+ * Every ratio below was measured against its background with the WCAG formula,
+ * not estimated. Both themes pass at once: text 15.1:1 / 14.5:1, secondary
+ * 7.9 / 6.8, muted 4.6 / 4.8, accent 9.7 / 5.6, error 6.0 / 6.4. `text-faint`
+ * sits below the bar on purpose (2.6 / 2.8) — it is the whisper tier, and
+ * nothing load-bearing may be written in it.
  */
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   BASE THEME VARIABLES
+   PALETTE — day
    ═══════════════════════════════════════════════════════════════════════════ */
 
+/*
+ * Day sits on bare `:root` so it is also the fallback for a browser that has
+ * not been told anything. `ThemeProvider` always resolves the stored choice to
+ * an explicit `data-theme`, including following the OS for `system` — which is
+ * why each palette is written exactly once here rather than twice.
+ */
+:root,
+:root[data-theme='day'] {
+  color-scheme: light;
+
+  --color-bg: oklch(96.5% 0.010 85);
+  --color-bg-card: oklch(99.2% 0.005 85);
+  --color-bg-hover: oklch(93.5% 0.013 85);
+  --color-border: oklch(86% 0.015 82);
+  --color-border-focus: oklch(74% 0.018 80);
+
+  --color-text: oklch(25% 0.021 58);
+  --color-text-secondary: oklch(45% 0.022 62);
+  --color-text-muted: oklch(53% 0.021 66);
+  --color-text-faint: oklch(66% 0.017 70);
+
+  --color-accent: oklch(50% 0.105 66);
+  --color-accent-quiet: oklch(58% 0.080 68);
+  --color-error: oklch(48% 0.155 30);
+
+  /* The two instrument hues. Nothing outside the setpoint wave and the
+     citation marks may use them. */
+  --color-settled: oklch(48% 0.090 155);
+  --color-cite: oklch(48% 0.090 235);
+}
+
+:root[data-theme='night'] {
+  color-scheme: dark;
+
+  --color-bg: oklch(15% 0.008 68);
+  --color-bg-card: oklch(18.5% 0.009 68);
+  --color-bg-hover: oklch(22.5% 0.010 68);
+  --color-border: oklch(27.5% 0.011 68);
+  --color-border-focus: oklch(38% 0.014 68);
+
+  --color-text: oklch(91% 0.014 82);
+  --color-text-secondary: oklch(72% 0.016 76);
+  --color-text-muted: oklch(58% 0.015 72);
+  --color-text-faint: oklch(45% 0.013 70);
+
+  --color-accent: oklch(78% 0.105 72);
+  --color-accent-quiet: oklch(62% 0.070 72);
+  --color-error: oklch(66% 0.140 32);
+
+  --color-settled: oklch(76% 0.090 155);
+  --color-cite: oklch(74% 0.070 235);
+}
+
+/*
+ * Holding paint. The stored theme lives in IndexedDB, which cannot be read
+ * synchronously, so the first paint has to come from somewhere. Two properties
+ * only — enough that a dark-OS device does not flash white, and not so much
+ * that a third palette exists to drift out of step.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    background-color: oklch(15% 0.008 68);
+    color: oklch(91% 0.014 82);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DERIVED TINTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * Mixed from the tokens above rather than written out per theme, so they can
+ * never drift from the accent they are made of. Tailwind's `/opacity` syntax
+ * cannot do this: a token holding a whole colour value has no channels for it
+ * to modify, so `bg-accent/5` silently rendered as no rule at all.
+ */
 :root {
-  /*
-   * Holding paint, used only for the instant before React applies the stored
-   * theme. The stored theme lives in IndexedDB, which cannot be read
-   * synchronously, so the first paint has to come from somewhere: the system
-   * canvas, which is near-black on a dark OS and near-white on a light one.
-   * Naming a real theme's colours here is what made every paper and mono open
-   * flash dark first. Each theme block below overrides these.
-   */
-  color-scheme: light dark;
-  --color-bg: Canvas;
-  --color-text: CanvasText;
-  --font-family: var(--font-sans);
+  --color-accent-wash: color-mix(in oklab, var(--color-accent) 9%, transparent);
+  --color-accent-rim: color-mix(in oklab, var(--color-accent) 42%, transparent);
+  --color-cite-rim: color-mix(in oklab, var(--color-cite) 38%, transparent);
+  --color-cite-land: color-mix(in oklab, var(--color-cite) 17%, transparent);
 
-  /* Typography */
-  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  /* Typography. Two faces, and only two: mono is the instrument — anything
+     the app says — and the reading face is the voice, for anything the owner
+     wrote or is reading. Georgia first and deliberately: `ui-serif` is New
+     York on iOS, a different animal. */
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  --font-read: Georgia, 'Times New Roman', serif;
 
-  /* Spacing & Layout */
-  --radius: 8px;
+  --radius: 6px;
   --max-width: 680px;
-
-  /* Feedback colors (consistent across themes) */
-  --color-success: #34D399;
-  --color-warning: #FBBF24;
-  --color-error: #EF4444;
-
-  /* Category colors */
-  --color-work: #60A5FA;
-  --color-self: #34D399;
-  --color-family: #FBBF24;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   DARK THEME (Default) - Modern Terminal
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-[data-theme="dark"] {
-  color-scheme: dark;
-  --color-bg: #111111;
-  --color-bg-card: #1a1a1a;
-  --color-bg-hover: #222222;
-  --color-border: #2a2a2a;
-  --color-border-focus: #3a3a3a;
-  --color-text: #E4E4E7;
-  --color-text-secondary: #71717A;
-  --color-text-muted: #52525B;
-  --color-accent: #34D399;
-  --color-accent-hover: #6EE7B7;
-  --font-family: var(--font-sans);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   MATRIX THEME - Hacker Aesthetic
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-[data-theme="matrix"] {
-  color-scheme: dark;
-  --color-bg: #000000;
-  --color-bg-card: #0a0a0a;
-  --color-bg-hover: #111111;
-  --color-border: #00FF41;
-  --color-border-focus: #00FF41;
-  --color-text: #00FF41;
-  --color-text-secondary: #00cc33;
-  --color-text-muted: #009926;
-  --color-accent: #00FF41;
-  --color-accent-hover: #33FF66;
-  --font-family: var(--font-mono);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   PAPER THEME - Warm, Literary
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-[data-theme="paper"] {
-  color-scheme: light;
-  --color-bg: #FAF8F1;
-  --color-bg-card: #FFFFFF;
-  --color-bg-hover: #F5F3EC;
-  --color-border: #E8E4D9;
-  --color-border-focus: #D4CFC2;
-  --color-text: #5C4B3A;
-  --color-text-secondary: #8B7355;
-  --color-text-muted: #A89880;
-  --color-accent: #8B6914;
-  --color-accent-hover: #A67C00;
-  --font-family: var(--font-serif);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   MIDNIGHT THEME - Deep Blue Dark
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-[data-theme="midnight"] {
-  color-scheme: dark;
-  --color-bg: #0F0F23;
-  --color-bg-card: #161629;
-  --color-bg-hover: #1c1c36;
-  --color-border: #2a2a4a;
-  --color-border-focus: #3a3a5a;
-  --color-text: #CCCCDD;
-  --color-text-secondary: #8888AA;
-  --color-text-muted: #666688;
-  --color-accent: #58A6FF;
-  --color-accent-hover: #79B8FF;
-  --font-family: var(--font-sans);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   MONO THEME - Stark Minimalist
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-[data-theme="mono"] {
-  color-scheme: light;
-  --color-bg: #FFFFFF;
-  --color-bg-card: #FFFFFF;
-  --color-bg-hover: #F5F5F5;
-  --color-border: #000000;
-  --color-border-focus: #000000;
-  --color-text: #000000;
-  --color-text-secondary: #444444;
-  --color-text-muted: #888888;
-  --color-accent: #000000;
-  --color-accent-hover: #333333;
-  --font-family: var(--font-sans);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   SETPOINT TOKENS - the Read pane's palette
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-/*
- * The reading surface's own palette (docs/PLAN_READING_PANE.md, Appendix A).
- * Dark is canonical, so it sits on :root; the two light themes remap it below
- * — the same cascade and the same data-theme switch as every other token. The
- * pane never carries a theme of its own.
- *
- * Contrast on paper-white was measured, not assumed. The spec's light amber
- * (#b8860f, 3.1:1) and green (#1f8a5b, 4.1:1) both missed the 4.5:1 the plan
- * asks for as body-sized text, so both are darkened here to ~5.1:1. --sp-faint
- * sits below the bar in BOTH themes (2.4:1 dark, 2.5:1 light): that is the
- * whisper tier by design, and nothing load-bearing may be written in it.
- */
-:root {
-  --sp-bg: #07090d;
-  --sp-panel: #0d1117;
-  --sp-panel2: #11161f;
-  --sp-ink: #e9eef5;
-  --sp-muted: #7b8696;
-  --sp-faint: #46505f;
-  --sp-hair: #1a212b;
-  --sp-amber: #f0b04a;
-  --sp-green: #6ad29a;
-  --sp-ice: #6fa8d6;
-  /* Citation-chip rim: the ice accent at a third strength. A token rather than
-     an opacity utility, because --sp-ice is a var, not colour channels. */
-  --sp-rim: rgba(111, 168, 214, 0.35);
-  /* Where a citation lands. Same accent, weak enough to sit under prose. */
-  --sp-land: rgba(111, 168, 214, 0.16);
-
-  /* The reading face. Georgia first, deliberately: ui-serif is New York on
-     iOS, a different animal from the one the spec asks for. */
-  --font-read: Georgia, "Times New Roman", serif;
-}
-
-[data-theme="paper"],
-[data-theme="mono"] {
-  --sp-bg: #faf9f7;
-  --sp-panel: #ffffff;
-  --sp-panel2: #f2f0ec;
-  --sp-ink: #1a1f27;
-  --sp-muted: #6b7280;
-  --sp-faint: #9aa1ac;
-  --sp-hair: #e5e2dc;
-  --sp-amber: #8f6200;
-  --sp-green: #197a4f;
-  --sp-ice: #2f6fa3;
-  --sp-rim: rgba(47, 111, 163, 0.35);
-  --sp-land: rgba(47, 111, 163, 0.16);
-}
-
-/*
- * On the Read view the whole screen becomes the reading surface: the app's own
- * tokens resolve to setpoint values, so the existing chrome — header, backup
- * line — comes with it instead of leaving a seam around the pane. ReadView
- * sets this on <html>, so the body and the iOS overscroll area follow too.
- */
-[data-surface="read"] {
-  --color-bg: var(--sp-bg);
-  --color-bg-card: var(--sp-panel);
-  --color-bg-hover: var(--sp-panel2);
-  --color-border: var(--sp-hair);
-  --color-border-focus: var(--sp-muted);
-  --color-text: var(--sp-ink);
-  --color-text-secondary: var(--sp-muted);
-  --color-text-muted: var(--sp-faint);
-  --color-accent: var(--sp-amber);
-  --color-accent-hover: var(--sp-amber);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   BASE STYLES
+   BASE
    ═══════════════════════════════════════════════════════════════════════════ */
 
 html {
-  font-family: var(--font-family);
+  font-family: var(--font-mono);
   font-size: 16px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -233,80 +140,121 @@ body {
   background-color: var(--color-bg);
   color: var(--color-text);
   min-height: 100vh;
-  transition: background-color 0.2s ease, color 0.2s ease;
+  transition: background-color 150ms ease, color 150ms ease;
 }
 
-/* Focus styles */
+/* Never `outline: none` without a replacement. This is the replacement. */
 *:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
 
-/* Smooth transitions */
-button, input, textarea, [role="button"] {
-  transition: all 0.15s ease;
+/*
+ * Named properties, never `all`: transitioning `all` animates layout the
+ * moment any other property happens to change, which is how a hairline border
+ * ends up sliding.
+ */
+button,
+input,
+textarea,
+[role='button'] {
+  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 1ms !important;
+    animation-duration: 1ms !important;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   UTILITY CLASSES
+   THE READING FACE
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Card style */
-.card {
-  background-color: var(--color-bg-card);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
+/* Measure is capped here rather than at the layout, because it is a property
+   of the line, not of the column it happens to sit in. */
+.prose-read {
+  font-family: var(--font-read);
+  font-size: 16px;
+  line-height: 1.7;
+  max-width: 70ch;
 }
 
-/* Text sizes */
-.text-secondary {
-  color: var(--color-text-secondary);
-  font-size: 11px;
+/* ═══════════════════════════════════════════════════════════════════════════
+   INSTRUMENTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* The setpoint. Both moving parts settle over the same 0.8s — slowly enough
+   to read as a state change rather than a flicker. Deliberately outside the
+   100-200ms rule: this is an instrument reporting, not a control responding. */
+.sp-wave {
+  transition: transform 0.8s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.text-muted {
-  color: var(--color-text-muted);
+.sp-stateword {
+  transition: color 0.8s ease;
 }
 
-/* Success flash animation */
-@keyframes flash-success {
-  0% { background-color: var(--color-bg-card); }
-  50% { background-color: rgba(52, 211, 153, 0.2); }
-  100% { background-color: var(--color-bg-card); }
+/* Reduced motion: the instrument still reports, it just stops travelling. */
+.sp-still .sp-wave,
+.sp-still .sp-stateword {
+  transition: none;
 }
 
-.flash-success {
-  animation: flash-success 0.3s ease;
+/* Where a citation lands. The block lifts for a moment and settles back — long
+   enough to find the sentence on a phone, gone before it is decoration. */
+@keyframes cite-land {
+  0% {
+    background-color: var(--color-cite-land);
+  }
+  100% {
+    background-color: transparent;
+  }
 }
 
-/* Category badges */
-.badge-work {
-  background-color: rgba(96, 165, 250, 0.15);
-  color: var(--color-work);
-  border: 1px solid rgba(96, 165, 250, 0.3);
+.cite-mark {
+  animation: cite-land 1.8s ease-out;
+  border-radius: 3px;
+  box-decoration-break: clone;
 }
 
-.badge-self {
-  background-color: rgba(52, 211, 153, 0.15);
-  color: var(--color-self);
-  border: 1px solid rgba(52, 211, 153, 0.3);
+@media (prefers-reduced-motion: reduce) {
+  /* Still marked, just not moving: the landing has to stay findable. */
+  .cite-mark {
+    animation: none;
+    background-color: var(--color-cite-land);
+  }
 }
 
-.badge-family {
-  background-color: rgba(251, 191, 36, 0.15);
-  color: var(--color-family);
-  border: 1px solid rgba(251, 191, 36, 0.3);
+/* The heat ramp, mixed from the accent so a density chart is the same colour
+   as everything else that means "live". Referenced as `heat-${n}`, which
+   Tailwind cannot see, which is why these are hand-written classes. */
+.heat-0 {
+  background-color: var(--color-bg-hover);
+}
+.heat-1 {
+  background-color: color-mix(in oklab, var(--color-accent) 16%, transparent);
+}
+.heat-2 {
+  background-color: color-mix(in oklab, var(--color-accent) 32%, transparent);
+}
+.heat-3 {
+  background-color: color-mix(in oklab, var(--color-accent) 50%, transparent);
+}
+.heat-4 {
+  background-color: color-mix(in oklab, var(--color-accent) 70%, transparent);
+}
+.heat-5 {
+  background-color: var(--color-accent);
 }
 
-/* Heatmap colors */
-.heat-0 { background-color: var(--color-bg-hover); }
-.heat-1 { background-color: rgba(52, 211, 153, 0.2); }
-.heat-2 { background-color: rgba(52, 211, 153, 0.4); }
-.heat-3 { background-color: rgba(52, 211, 153, 0.6); }
-.heat-4 { background-color: rgba(52, 211, 153, 0.8); }
-.heat-5 { background-color: var(--color-success); }
+/* ═══════════════════════════════════════════════════════════════════════════
+   CHROME
+   ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -325,60 +273,7 @@ button, input, textarea, [role="button"] {
   background: var(--color-border-focus);
 }
 
-/* Selection */
 ::selection {
   background-color: var(--color-accent);
   color: var(--color-bg);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   READING SURFACE
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-/* Monospace is the instrument face; this is the reading one. Measure is capped
-   here rather than at the layout, because it is a property of the line, not of
-   the column it happens to sit in. */
-.prose-read {
-  font-family: var(--font-read);
-  font-size: 16px;
-  line-height: 1.68;
-  max-width: 70ch;
-}
-
-/* The setpoint instrument. Both of its moving parts settle over the same 0.8s,
-   slowly enough to read as a state change rather than a flicker. */
-.sp-wave {
-  transition: transform 0.8s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.sp-stateword {
-  transition: color 0.8s ease;
-}
-
-/* Reduced motion: the instrument still reports, it just stops travelling. */
-.sp-still .sp-wave,
-.sp-still .sp-stateword {
-  transition: none;
-}
-
-/* Where a citation lands. The block lifts for a moment and settles back — long
-   enough to find the sentence on a phone, short enough that it is gone before
-   it becomes decoration. */
-@keyframes cite-land {
-  0% { background-color: var(--sp-land); }
-  100% { background-color: transparent; }
-}
-
-.cite-mark {
-  animation: cite-land 1.8s ease-out;
-  border-radius: 3px;
-  box-decoration-break: clone;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  /* Still marked, just not moving: the landing has to stay findable. */
-  .cite-mark {
-    animation: none;
-    background-color: var(--sp-land);
-  }
 }

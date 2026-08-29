@@ -15,6 +15,7 @@
  * holes in it or a phone re-downloading the corpus on every open.
  */
 
+import { singleFlight } from './async';
 import { getCachedContent, getMeta, putCachedContent, cachedContentShas, setMeta } from './db';
 import {
   NEWSLETTERS,
@@ -24,6 +25,7 @@ import {
   selectStale,
   type TreeEntry,
 } from './gitread';
+import { compareCodeUnits } from './order';
 
 /**
  * Fetched on every sync: everything the pane renders from. Tens of files, and
@@ -139,7 +141,7 @@ export function buildLibrary(tree: readonly TreeEntry[], gistsText: string): Lib
   const gists = parseGists(gistsText, new Set(slugs));
   return slugs
     .map(slug => ({ slug, ...splitSlug(slug), gist: gists.get(slug) ?? null }))
-    .sort((a, b) => (a.slug < b.slug ? 1 : a.slug > b.slug ? -1 : 0));
+    .sort((a, b) => compareCodeUnits(b.slug, a.slug));
 }
 
 function cachedTree(value: unknown): TreeEntry[] {
@@ -164,20 +166,11 @@ export interface SyncResult {
   head: string;
 }
 
-let running: Promise<SyncResult> | null = null;
-
 /**
  * One sync at a time per tab. Opening the pane and focusing the window in the
  * same moment would otherwise run two of these over the same files.
  */
-export function syncNewsletters(token: string): Promise<SyncResult> {
-  if (!running) {
-    running = runSync(token).finally(() => {
-      running = null;
-    });
-  }
-  return running;
-}
+export const syncNewsletters = singleFlight(runSync);
 
 async function runSync(token: string): Promise<SyncResult> {
   const head = await getHeadSha(token, NEWSLETTERS);

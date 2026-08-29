@@ -7,7 +7,7 @@
  *
  * The request plumbing below — `call`, `failure`, `readJson`, `fromBase64` and
  * the two failure reasons — is GitHub's, not meridian-data's, and is shared
- * with the read-only newsletters transport in `newsletters.ts`. Everything
+ * with the read-only newsletters transport in `gitread.ts`. Everything
  * else in this file is the journal repo's alone.
  */
 
@@ -28,17 +28,20 @@ export const REQUEST_TIMEOUT_MS = 30_000;
 /** Total attempts (first try + retries) for an append that keeps conflicting. */
 const MAX_APPEND_ATTEMPTS = 3;
 
-/** Delay before retry 2 and retry 3. Back-to-back retries trip GitHub's secondary rate limit. */
-const RETRY_BACKOFF_MS = [250, 750];
+/**
+ * Delay before retry 2 and retry 3. Back-to-back retries trip GitHub's secondary rate limit.
+ * Shared with gitread.ts, which retries reads on the same ladder.
+ */
+export const RETRY_BACKOFF_MS = [250, 750];
 
 /** Random share of a backoff added on top, so two devices do not retry in lockstep. */
-const RETRY_JITTER = 0.25;
+export const RETRY_JITTER = 0.25;
 
 /** A server-supplied retry-after is honoured only up to this; the push lock is held while waiting. */
 const MAX_RETRY_DELAY_MS = 5_000;
 
 /** GitHub answered, but the body it sent cannot be used. Not a status GitHub reported. */
-const UNUSABLE_RESPONSE_STATUS = 502;
+export const UNUSABLE_RESPONSE_STATUS = 502;
 
 /** Over the contents-API 1 MB read limit. Not a status GitHub reported. */
 const TOO_LARGE_STATUS = 413;
@@ -176,7 +179,7 @@ function toBase64(text: string): string {
 
 export function fromBase64(data: string): string {
   // The contents API wraps base64 at 60 columns.
-  const compact = data.split('\n').join('').split('\r').join('').split(' ').join('');
+  const compact = data.replaceAll('\n', '').replaceAll('\r', '').replaceAll(' ', '');
   const binary = atob(compact);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) {
@@ -561,10 +564,6 @@ async function putFileRaw(token: string, path: string, text: string, sha: string
   return { sha: requireSha(parsed.content?.sha, action) };
 }
 
-export function putFile(token: string, path: string, text: string, sha: string | null): Promise<PutResult> {
-  return withPushLock(() => putFileRaw(token, path, text, sha));
-}
-
 /** Exactly one trailing newline, and no blank line where the file already ended in one. */
 function appendTo(existing: string, lines: string[]): string {
   const addition = lines.map((line) => `${line}\n`).join('');
@@ -592,7 +591,7 @@ function assertAppendable(lines: string[], path: string): void {
   }
 }
 
-function sleep(ms: number): Promise<void> {
+export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 

@@ -12,6 +12,7 @@
  *     events GitHub actually accepted, and never advances `lastBackupAt`.
  */
 
+import { queued } from './async'
 import {
   allCachedFiles,
   deleteMeta,
@@ -49,8 +50,9 @@ export const FLUSH_DEBOUNCE_MS = 5_000
  * below does, and it must agree with the write rule.
  */
 function monthOf(epochMs: number): string {
-  const at = new Date(epochMs)
-  return `${at.getUTCFullYear()}-${String(at.getUTCMonth() + 1).padStart(2, '0')}`
+  // `toISOString` is UTC by definition and zero-pads the month, which is
+  // exactly the two fields wanted.
+  return new Date(epochMs).toISOString().slice(0, 7)
 }
 
 /** The current month and the one before it. Handles the January rollover. */
@@ -129,17 +131,30 @@ function describe(error: unknown): string {
  * session. The edit the owner just made vanishes from the view until the next
  * foreground. Every entry point below goes through here instead.
  */
-let syncQueue: Promise<unknown> = Promise.resolve()
+const serialized = queued()
 
-function serialized<T>(work: () => Promise<T>): Promise<T> {
-  const next = syncQueue.then(work)
-  // The queue must never carry a rejection forward, or one failure poisons
-  // every turn after it. The caller still sees `next` exactly as it settled.
-  syncQueue = next.then(
-    () => undefined,
-    () => undefined
-  )
-  return next
+/**
+ * One run at a time, and every caller who arrives mid-run joins it.
+ *
+ * Distinct from `singleFlight` in async.ts, which the two mirror syncs use:
+ * that one memoises the `finally` chain, this one memoises the attempt itself
+ * and clears the memo only if it is still the attempt that finished. Both
+ * shapes are load-bearing where they are; neither was worth changing to share
+ * a helper with the other.
+ */
+function onceInFlight<T>(work: () => Promise<T>): () => Promise<T> {
+  let inFlight: Promise<T> | null = null
+  return () => {
+    if (inFlight === null) {
+      const attempt = work()
+      inFlight = attempt
+      const release = () => {
+        if (inFlight === attempt) inFlight = null
+      }
+      attempt.then(release, release)
+    }
+    return inFlight
+  }
 }
 
 // ============================================================================
@@ -169,19 +184,7 @@ export interface SyncDownResult {
  * Returns null when no token is configured. Throws whatever `github.ts`
  * throws; the caller decides whether the owner needs to hear about it.
  */
-export function syncDown(): Promise<SyncDownResult | null> {
-  if (downInFlight === null) {
-    const attempt = serialized(runSyncDown)
-    downInFlight = attempt
-    const release = () => {
-      if (downInFlight === attempt) downInFlight = null
-    }
-    attempt.then(release, release)
-  }
-  return downInFlight
-}
-
-let downInFlight: Promise<SyncDownResult | null> | null = null
+export const syncDown = onceInFlight(() => serialized(runSyncDown))
 
 async function runSyncDown(): Promise<SyncDownResult | null> {
   const token = await getToken()
@@ -256,19 +259,7 @@ export interface FlushResult {
  *
  * Returns null when no token is configured.
  */
-export function flushOutbox(): Promise<FlushResult | null> {
-  if (flushInFlight === null) {
-    const attempt = serialized(runFlush)
-    flushInFlight = attempt
-    const release = () => {
-      if (flushInFlight === attempt) flushInFlight = null
-    }
-    attempt.then(release, release)
-  }
-  return flushInFlight
-}
-
-let flushInFlight: Promise<FlushResult | null> | null = null
+export const flushOutbox = onceInFlight(() => serialized(runFlush))
 
 async function runFlush(): Promise<FlushResult | null> {
   let token: string | undefined

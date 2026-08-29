@@ -121,24 +121,10 @@ export function isToday(dateStr: string): boolean {
 }
 
 /**
- * Check if a date is in the past.
- */
-export function isPast(dateStr: string): boolean {
-  return dateStr < getToday();
-}
-
-/**
  * Check if a date is in the future.
  */
 export function isFuture(dateStr: string): boolean {
   return dateStr > getToday();
-}
-
-/**
- * Get the year from a date string.
- */
-export function getYear(dateStr: string): number {
-  return parseDate(dateStr).getFullYear();
 }
 
 /**
@@ -151,7 +137,7 @@ export function getYearCalendarGrid(year: number, weekStartsOn: 0 | 1 = 1): stri
   const weeks: string[][] = [];
 
   // Start from the first day of the year
-  let current = new Date(year, 0, 1);
+  const current = new Date(year, 0, 1);
 
   // Adjust to the start of that week
   const firstDayOfWeek = current.getDay();
@@ -202,4 +188,35 @@ export function getDaysUntilEndOfYear(dateStr: string = getToday()): number {
   const endOfYear = new Date(date.getFullYear(), 11, 31);
   const diff = endOfYear.getTime() - date.getTime();
   return Math.ceil(diff / (1000 * 60 * 60 * 24));
+}
+
+// ============================================================================
+// Relative time
+// ============================================================================
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+/**
+ * The largest unit that still reads as a number: seconds under a minute,
+ * minutes under an hour, hours under a day, days after that.
+ */
+function relativeParts(deltaMs: number): [number, Intl.RelativeTimeFormatUnit] {
+  const size = Math.abs(deltaMs);
+  if (size < MINUTE_MS) return [Math.round(deltaMs / 1000), 'second'];
+  if (size < HOUR_MS) return [Math.round(deltaMs / MINUTE_MS), 'minute'];
+  if (size < DAY_MS) return [Math.round(deltaMs / HOUR_MS), 'hour'];
+  return [Math.round(deltaMs / DAY_MS), 'day'];
+}
+
+/**
+ * "5 minutes ago" for a negative delta, "in 5 minutes" for a positive one.
+ *
+ * One copy. Three components were each carrying their own identical pair of
+ * this and `relativeParts`, along with their own millisecond constants.
+ */
+export function relativeTime(deltaMs: number): string {
+  const [value, unit] = relativeParts(deltaMs);
+  return new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' }).format(value, unit);
 }

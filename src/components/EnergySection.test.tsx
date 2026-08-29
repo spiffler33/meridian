@@ -89,11 +89,15 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('the energy section', () => {
-  it('says what it has nothing of rather than drawing an empty frame', async () => {
+  it('says the empty week once, rather than four ways of saying the same thing', async () => {
     show();
-    expect(await screen.findByText('no coded blocks this week')).toBeInTheDocument();
-    expect(screen.getByText('no events this week')).toBeInTheDocument();
-    expect(screen.getByText('nothing coded to an activity yet')).toBeInTheDocument();
+    expect(await screen.findByText('nothing coded this week')).toBeInTheDocument();
+    // A sub-section with nothing in it is not drawn at all — not its label,
+    // and not an apology under it.
+    expect(screen.queryByText('spent by domain')).toBeNull();
+    expect(screen.queryByText('needed by calendar')).toBeNull();
+    expect(screen.queryByText('calories by day')).toBeNull();
+    expect(screen.queryByText('activity timing')).toBeNull();
   });
 
   it("draws the week's hours by domain, with the number outside the bar", async () => {
@@ -111,7 +115,8 @@ describe('the energy section', () => {
   it('counts nothing from another week', async () => {
     mocks.pulses = [block('a', 'db', '2026-08-17T01:00:00.000Z', '2026-08-17T03:00:00.000Z')];
     show();
-    expect(await screen.findByText('no coded blocks this week')).toBeInTheDocument();
+    expect(await screen.findByText('nothing coded this week')).toBeInTheDocument();
+    expect(screen.queryByText('spent by domain')).toBeNull();
   });
 
   it('shows an unclaimed home hour as zero, and says how many were not claimed', async () => {
@@ -308,11 +313,15 @@ describe('calories by day', () => {
     expect(await screen.findByText('2 items eaten, not counted')).toBeInTheDocument();
   });
 
-  it('says so plainly when nothing eaten was logged, rather than drawing seven empty bars', async () => {
+  it('draws no calorie block at all when nothing eaten was logged, rather than seven empty bars', async () => {
     mocks.pulses = [block('work', 'db', '2026-08-26T01:00:00.000Z', '2026-08-26T03:00:00.000Z')];
 
     show();
 
-    expect(await screen.findByText('nothing eaten was logged this week')).toBeInTheDocument();
+    // The week is not empty — the hours are drawn — but the food half of it is,
+    // and an empty sub-section is left out rather than apologised for.
+    expect(await screen.findByText('spent by domain')).toBeInTheDocument();
+    expect(screen.queryByText('calories by day')).toBeNull();
+    expect(screen.queryByText('nothing coded this week')).toBeNull();
   });
 });

@@ -117,11 +117,11 @@ export function HabitsView({ selectedDate, onPrevious, onNext, onDateSelect }: H
 
       {/* Status line with holiday toggle */}
       {habits.length > 0 && (
-        <div className="flex items-center justify-between text-xs text-text-muted font-mono">
+        <div className="flex items-center justify-between text-xs text-text-muted">
           <div>
             {!dayData.isHoliday && (
               <>
-                {completedCount}/{habits.length} habits completed
+                <span className="tabular-nums">{completedCount}/{habits.length}</span> habits completed
                 {loadingStats && <span className="ml-2">...</span>}
               </>
             )}
@@ -131,9 +131,9 @@ export function HabitsView({ selectedDate, onPrevious, onNext, onDateSelect }: H
           </div>
           <button
             onClick={() => toggleHoliday(selectedDate)}
-            className={`text-xs font-mono transition-colors ${
+            className={`text-xs transition-colors ${
               dayData.isHoliday
-                ? 'text-accent hover:text-accent/80'
+                ? 'text-accent hover:text-accent-quiet'
                 : 'text-text-muted hover:text-text-secondary'
             }`}
           >

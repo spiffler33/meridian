@@ -13,6 +13,7 @@
 
 import { dayKey } from './calendar';
 import type { PulseEffect, PulseRow, PulseVocabProposal } from './entities';
+import { compareCodeUnits } from './order';
 
 /**
  * Oldest first — the day reads downward and the newest line ends up next to
@@ -29,9 +30,9 @@ import type { PulseEffect, PulseRow, PulseVocabProposal } from './entities';
  * never locale-aware.
  */
 export function compareOldestFirst(a: PulseRow, b: PulseRow): number {
-  if (a.at !== b.at) return a.at < b.at ? -1 : 1;
-  if (a.id !== b.id) return a.id < b.id ? -1 : 1;
-  return 0;
+  const byAt = compareCodeUnits(a.at, b.at);
+  if (byAt !== 0) return byAt;
+  return compareCodeUnits(a.id, b.id);
 }
 
 /**

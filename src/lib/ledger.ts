@@ -21,6 +21,8 @@
 import { dayKey } from './calendar';
 import type { CalendarEvent, CalendarMirror } from './calendar';
 import type { PulseCorrection, PulseRow, PulseSignal } from './entities';
+import { partsOf, zoneFormat } from './intlParts';
+import { compareCodeUnits } from './order';
 import { compareOldestFirst } from './pulse';
 import { addDays, getWeekDates } from '../utils/dates';
 
@@ -78,29 +80,6 @@ export type LedgerWindow = { startMs: number; endMs: number };
 // Local time, without trusting a formatted string
 // ============================================================================
 
-const PARTS_CACHE = new Map<string, Intl.DateTimeFormat>();
-
-/**
- * `Intl.DateTimeFormat` construction is the expensive part of every call
- * below, and a week's fold asks for hundreds. One formatter per zone, reused.
- */
-function zoneFormat(timeZone: string): Intl.DateTimeFormat {
-  const cached = PARTS_CACHE.get(timeZone);
-  if (cached) return cached;
-  const format = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hourCycle: 'h23',
-  });
-  PARTS_CACHE.set(timeZone, format);
-  return format;
-}
-
 type WallClock = { year: number; month: number; day: number; hour: number; minute: number; second: number };
 
 /**
@@ -112,7 +91,7 @@ type WallClock = { year: number; month: number; day: number; hour: number; minut
  */
 function wallClockOf(instantMs: number, timeZone: string): WallClock {
   const parts = zoneFormat(timeZone).formatToParts(new Date(instantMs));
-  const find = (type: string) => Number(parts.find(part => part.type === type)?.value ?? '0');
+  const find = (type: string) => Number(partsOf(parts, type) ?? '0');
   return {
     year: find('year'),
     month: find('month'),
@@ -240,7 +219,7 @@ export function closeSpans(pulses: readonly PulseRow[], timeZone: string): Close
   // closed which. Array order would make the answer depend on fetch order.
   open.sort((a, b) => {
     if (a.startMs !== b.startMs) return a.startMs - b.startMs;
-    return a.pulse.id < b.pulse.id ? -1 : a.pulse.id > b.pulse.id ? 1 : 0;
+    return compareCodeUnits(a.pulse.id, b.pulse.id);
   });
 
   const closed: ClosedSpan[] = [];
@@ -317,9 +296,7 @@ export function spentByDomain(spans: readonly ClosedSpan[], window: LedgerWindow
 function compareBars(a: { domain: string | null; hours: number }, b: { domain: string | null; hours: number }): number {
   if (a.domain === null !== (b.domain === null)) return a.domain === null ? 1 : -1;
   if (a.hours !== b.hours) return b.hours - a.hours;
-  const left = a.domain ?? '';
-  const right = b.domain ?? '';
-  return left < right ? -1 : left > right ? 1 : 0;
+  return compareCodeUnits(a.domain ?? '', b.domain ?? '');
 }
 
 // ============================================================================
@@ -404,7 +381,7 @@ export function neededByCalendar(
   }
   return [...totals.values()].sort((a, b) => {
     if (a.hours !== b.hours) return b.hours - a.hours;
-    return a.calendar < b.calendar ? -1 : a.calendar > b.calendar ? 1 : 0;
+    return compareCodeUnits(a.calendar, b.calendar);
   });
 }
 
@@ -508,7 +485,7 @@ export function activityTiming(
     if (a.total !== b.total) return b.total - a.total;
     // Plain code-unit comparison, never locale-aware: two devices showing the
     // same twelve weeks must order the rows the same way.
-    return a.activity < b.activity ? -1 : a.activity > b.activity ? 1 : 0;
+    return compareCodeUnits(a.activity, b.activity);
   });
 
   return { rows: ordered.slice(0, TIMING_ROWS), hidden: Math.max(0, ordered.length - TIMING_ROWS) };

@@ -1,10 +1,11 @@
 /**
  * Layout
  *
- * Minimal shell. Nav tabs at top.
+ * The shell: a rail across the top, the view in the middle, and a sticky foot
+ * that holds whatever the view docks there plus the backup line.
  */
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import type { ViewType } from '../types';
 import { DockContext } from '../hooks/useDock';
 import { isToday } from '../utils/dates';
@@ -18,35 +19,39 @@ interface LayoutProps {
   children: React.ReactNode;
 }
 
-interface NavItemProps {
+const RAIL: { view: ViewType; label: string; shortcut: string }[] = [
+  { view: 'tower', label: 'tower', shortcut: 't' },
+  { view: 'pulse', label: 'pulse', shortcut: 'p' },
+  { view: 'habits', label: 'habits', shortcut: 'h' },
+  { view: 'year', label: 'year', shortcut: 'y' },
+  { view: 'read', label: 'read', shortcut: 'r' },
+];
+
+function NavItem({
+  label,
+  shortcut,
+  isActive,
+  onClick,
+}: {
   label: string;
   shortcut: string;
   isActive: boolean;
   onClick: () => void;
-}
-
-function NavItem({ label, shortcut, isActive, onClick }: NavItemProps) {
+}) {
   return (
     <button
       onClick={onClick}
-      className={`
-        px-2 sm:px-3 py-2 text-sm transition-colors
-        ${isActive
-          ? 'text-accent'
-          : 'text-text-muted hover:text-text'
-        }
-      `}
       aria-label={label}
+      aria-current={isActive ? 'page' : undefined}
+      className={`px-2 py-2 text-sm transition-colors sm:px-3 ${
+        isActive ? 'text-accent' : 'text-text-muted hover:text-text'
+      }`}
     >
       <span>{label}</span>
-      {shortcut && (
-        <span className="ml-1 text-xs opacity-40 hidden sm:inline">[{shortcut}]</span>
-      )}
+      <span className="ml-1 hidden text-2xs text-text-faint sm:inline">[{shortcut}]</span>
     </button>
   );
 }
-
-const MERIDIAN_SYMBOLS = ['◐', '☉', '│', '✦', '◉'];
 
 export function Layout({
   currentView,
@@ -55,30 +60,29 @@ export function Layout({
   onTodayClick,
   children,
 }: LayoutProps) {
-  const [symbolIndex, setSymbolIndex] = useState(0);
   // The slot a view docks its capture bar into. See `useDock`.
   const [dock, setDock] = useState<HTMLElement | null>(null);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setSymbolIndex(i => (i + 1) % MERIDIAN_SYMBOLS.length);
-    }, 60000);
-    return () => clearInterval(interval);
-  }, []);
 
   // Show "back to today" when viewing a past date on the day view
   const showTodayButton = currentView === 'habits' && !isToday(selectedDate);
 
   return (
-    <div className="min-h-screen flex flex-col bg-bg text-text">
-      {/* Header */}
+    <div className="flex min-h-screen flex-col bg-bg text-text">
       <header className="border-b border-border">
-        <div className="max-w-content mx-auto px-4">
-          <div className="flex items-center justify-between h-12">
-            {/* The mark is the way into settings. A tab called "settings"
-                sits in the rail claiming to be a place you go, when it is a
-                drawer you open twice a year — and the rail is for the places
-                the day actually runs through. */}
+        <div className="mx-auto max-w-content px-4">
+          <div className="flex h-12 items-center justify-between">
+            {/*
+              The mark is the way into settings. A tab called "settings" sits
+              in the rail claiming to be a place you go, when it is a drawer
+              you open twice a year — and the rail is for the places the day
+              actually runs through.
+
+              One glyph, always the same one. It used to cycle through five on
+              a sixty-second timer: motion in the corner of every screen,
+              carrying no information, in an app whose whole job is to not be
+              the thing that annoys you. A mark you cannot recognise is not a
+              mark.
+            */}
             <button
               onClick={() => onViewChange('settings')}
               aria-label="Settings"
@@ -86,55 +90,33 @@ export function Layout({
               className={`text-lg transition-colors ${
                 currentView === 'settings'
                   ? 'text-accent'
-                  : 'text-text-secondary opacity-50 hover:opacity-100'
+                  : 'text-text-muted hover:text-text'
               }`}
             >
-              {MERIDIAN_SYMBOLS[symbolIndex]}
+              ◐
             </button>
 
             <nav className="flex items-center">
-              <NavItem
-                label="tower"
-                shortcut="t"
-                isActive={currentView === 'tower'}
-                onClick={() => onViewChange('tower')}
-              />
-              <NavItem
-                label="pulse"
-                shortcut="p"
-                isActive={currentView === 'pulse'}
-                onClick={() => onViewChange('pulse')}
-              />
-              <NavItem
-                label="habits"
-                shortcut="h"
-                isActive={currentView === 'habits'}
-                onClick={() => onViewChange('habits')}
-              />
-              <NavItem
-                label="year"
-                shortcut="y"
-                isActive={currentView === 'year'}
-                onClick={() => onViewChange('year')}
-              />
-              <NavItem
-                label="read"
-                shortcut="r"
-                isActive={currentView === 'read'}
-                onClick={() => onViewChange('read')}
-              />
+              {RAIL.map(item => (
+                <NavItem
+                  key={item.view}
+                  label={item.label}
+                  shortcut={item.shortcut}
+                  isActive={currentView === item.view}
+                  onClick={() => onViewChange(item.view)}
+                />
+              ))}
             </nav>
           </div>
         </div>
       </header>
 
-      {/* Back to today */}
       {showTodayButton && (
         <div className="border-b border-border">
-          <div className="max-w-content mx-auto px-4 py-2">
+          <div className="mx-auto max-w-content px-4 py-2">
             <button
               onClick={onTodayClick}
-              className="text-xs text-text-muted hover:text-accent transition-colors"
+              className="text-xs text-text-muted transition-colors hover:text-accent"
             >
               ← today
             </button>
@@ -145,7 +127,7 @@ export function Layout({
       {/* Main. The dock provider wraps the views, so a view can render its
           capture bar into the footer below rather than over it. */}
       <main className="flex-1">
-        <div className="max-w-content mx-auto px-4 py-6">
+        <div className="mx-auto max-w-content px-4 py-6">
           <DockContext.Provider value={dock}>{children}</DockContext.Provider>
         </div>
       </main>
@@ -165,8 +147,8 @@ export function Layout({
       >
         {/* The view's own bar, above the backup line and never over it. Empty
             and zero-height on every view that docks nothing. */}
-        <div ref={setDock} className="max-w-content mx-auto px-4" />
-        <div className="max-w-content mx-auto px-4 py-2">
+        <div ref={setDock} className="mx-auto max-w-content px-4" />
+        <div className="mx-auto max-w-content px-4 py-2">
           <BackupStatus />
         </div>
       </footer>

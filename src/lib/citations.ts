@@ -48,8 +48,20 @@ export type Citation =
   | { grammar: 'phrase'; entry: string; phrase: string }
   | { grammar: 'slug'; slug: string };
 
-const RAW_PREFIX = 'raw/';
-const FIGURES_FILE = 'figures.md';
+/*
+ * The source-entry layout, owned here because this is the module that reads an
+ * address written in it. `newslettersRead.ts` builds paths in the same layout
+ * and imports these rather than restating them: a corpus that renamed the
+ * directory would otherwise resolve citations to one place and fetch from
+ * another.
+ */
+
+/** Every source entry lives in `raw/<slug>/`. */
+export const RAW_PREFIX = 'raw/';
+
+/** The one file in an entry directory that is not the prose. */
+export const FIGURES_FILE = 'figures.md';
+
 const SECTION = '§';
 
 /** Straight and curly, because the tape writes one and the canon the other. */

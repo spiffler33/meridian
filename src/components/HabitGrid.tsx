@@ -9,7 +9,25 @@
  */
 
 import { useRef } from 'react';
+import { Section } from './Section';
 import type { HabitDefinition, HabitId } from '../types';
+
+/**
+ * The row tone shared with `PacksSection`'s pack rows — the same "this one is
+ * on" statement in two lists, so it is written once.
+ *
+ * No `/opacity` on the tokens: `bg-accent/5` and `border-accent/50` compiled to
+ * no rule at all, which is why the active tint had never once rendered.
+ * `accent-wash` and `accent-rim` are mixed by name in `index.css`.
+ *
+ * Idle carries no fill. It used to be `bg-bg-card` on a `bg-bg-card` card,
+ * where it did nothing; with the card gone it would be a raised block on the
+ * page, and a block that means nothing is the one thing a fill must never be.
+ * The hairline is the tap target — the only frame left in this section — and
+ * the wash now says "on" and nothing else says anything.
+ */
+export const ROW_TONE_ACTIVE = 'border-accent-rim bg-accent-wash text-text';
+export const ROW_TONE_IDLE = 'border-border text-text-secondary hover:border-border-focus';
 
 interface HabitGridProps {
   habits: HabitDefinition[];
@@ -42,11 +60,8 @@ function HabitToggle({ habit, isCompleted, streak, onToggle, onStats }: HabitTog
     <div
       ref={rowRef}
       className={`
-        flex items-center gap-2 px-3 py-2 rounded border text-left transition-all text-sm
-        ${isCompleted
-          ? 'border-accent/50 bg-accent/5 text-text'
-          : 'border-border bg-bg-card text-text-secondary hover:border-border-focus'
-        }
+        flex items-center gap-2 px-3 py-2 rounded border text-left transition-colors text-sm
+        ${isCompleted ? ROW_TONE_ACTIVE : ROW_TONE_IDLE}
       `}
       title={habit.description}
     >
@@ -64,7 +79,7 @@ function HabitToggle({ habit, isCompleted, streak, onToggle, onStats }: HabitTog
         {habit.label}
       </button>
       {streak > 0 && (
-        <span className="text-xs text-text-muted font-mono flex-shrink-0">{streak}d</span>
+        <span className="text-xs text-text-muted flex-shrink-0 tabular-nums">{streak}d</span>
       )}
     </div>
   );
@@ -76,30 +91,36 @@ export function HabitGrid({ habits, completedHabits, streaks, isHoliday, onToggl
   const completedCount = Object.values(completedHabits).filter(Boolean).length;
 
   return (
-    <div className={`bg-bg-card rounded border border-border p-4 ${isHoliday ? 'opacity-60' : ''}`}>
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">
-          habits {isHoliday && <span className="text-text-muted normal-case">(rest day)</span>}
-        </span>
-        {!isHoliday && (
-          <span className="text-xs text-text-muted font-mono">
-            {completedCount}/{habits.length}
-          </span>
-        )}
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-        {habits.map(habit => (
-          <HabitToggle
-            key={habit.id}
-            habit={habit}
-            isCompleted={completedHabits[habit.id] || false}
-            streak={streaks[habit.id] || 0}
-            onToggle={() => onToggle(habit.id)}
-            onStats={onHabitStats ? (rect) => onHabitStats(habit.id, rect) : undefined}
-          />
-        ))}
-      </div>
+    // The rest-day dimming is the whole section's, label included, so it sits
+    // outside the rule rather than on the grid alone.
+    <div className={isHoliday ? 'opacity-60' : undefined}>
+      <Section
+        label={
+          <>
+            habits {isHoliday && <span className="normal-case">(rest day)</span>}
+          </>
+        }
+        aside={
+          isHoliday ? undefined : (
+            <span className="text-xs text-text-muted tabular-nums">
+              {completedCount}/{habits.length}
+            </span>
+          )
+        }
+      >
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+          {habits.map(habit => (
+            <HabitToggle
+              key={habit.id}
+              habit={habit}
+              isCompleted={completedHabits[habit.id] || false}
+              streak={streaks[habit.id] || 0}
+              onToggle={() => onToggle(habit.id)}
+              onStats={onHabitStats ? (rect) => onHabitStats(habit.id, rect) : undefined}
+            />
+          ))}
+        </div>
+      </Section>
     </div>
   );
 }

@@ -60,15 +60,17 @@ import type {
   TowerItemRow,
   YearTheme,
 } from '../lib/entities';
+import { queued } from '../lib/async';
 import { allCachedFiles, getMeta, setMeta } from '../lib/db';
 import type { MetaKey } from '../lib/db';
 import { dayKey, deviceTimeZone, eventsForDay } from '../lib/calendar';
 import { loadCalendar } from '../lib/calendarSync';
+import { compareCodeUnits } from '../lib/order';
 import { compareOldestFirst, effectKey, effectString } from '../lib/pulse';
 import { scheduleFlush } from '../lib/sync';
 import { APPROX_COST_PER_PULSE_USD, CODER_REV, codePulse } from './coder';
 import type { Coding, CoderContext, PulseEnrichment, RecentPulse } from './coder';
-import type { HabitCategory, MitCategory, TowerStatus, TowerEffort, TowerItem, Pack, PackSession, PackWithCount } from '../types';
+import type { HabitCategory, TowerStatus, TowerEffort, TowerItem, Pack, PackSession, PackWithCount } from '../types';
 
 // ============================================================================
 // Error Handling
@@ -103,24 +105,18 @@ function nowIso(): string {
 // Ordering
 // ============================================================================
 
-/** Code-unit comparison, so every device orders a list the same way. */
-function compareText(a: string, b: string): number {
-  if (a === b) return 0;
-  return a < b ? -1 : 1;
-}
-
 /** Ascending, with nulls after every value — Postgres `ASC NULLS LAST`. */
 function compareNullsLast(a: string | null, b: string | null): number {
   if (a === null) return b === null ? 0 : 1;
   if (b === null) return -1;
-  return compareText(a, b);
+  return compareCodeUnits(a, b);
 }
 
 /** Descending, with nulls before every value — Postgres `DESC NULLS FIRST`. */
 function compareDescNullsFirst(a: string | null, b: string | null): number {
   if (a === null) return b === null ? 0 : -1;
   if (b === null) return 1;
-  return compareText(b, a);
+  return compareCodeUnits(b, a);
 }
 
 const dailyEntryKeyOf = (row: DailyEntry): string => dailyEntryKey(row.date);
@@ -136,18 +132,11 @@ function inRange(date: string, startDate: string, endDate: string): boolean {
 // Input Types
 // ============================================================================
 
-export interface HabitInput {
+interface HabitInput {
   label: string;
   description?: string | null;
   category: HabitCategory;
   emoji?: string | null;
-}
-
-export interface TaskInput {
-  date: string;
-  category: MitCategory;
-  text: string;
-  firstStep?: string | null;
 }
 
 export interface TowerItemInput {
@@ -164,13 +153,13 @@ export interface TowerItemInput {
 // ============================================================================
 
 /**
- * Get all habits for the current user (non-archived by default)
+ * Get all habits (non-archived by default)
  */
 export async function getHabits(includeArchived = false): Promise<Habit[]> {
   await hydrate();
 
   const rows = readHabits().filter((habit) => includeArchived || habit.archived_at === null);
-  return rows.sort((a, b) => a.sort_order - b.sort_order || compareText(a.id, b.id));
+  return rows.sort((a, b) => a.sort_order - b.sort_order || compareCodeUnits(a.id, b.id));
 }
 
 /**
@@ -211,7 +200,7 @@ export async function createHabit(habit: HabitInput): Promise<Habit> {
 /**
  * Update an existing habit
  */
-export async function updateHabit(id: string, updates: Partial<Omit<Habit, 'id' | 'user_id' | 'created_at'>>): Promise<Habit> {
+export async function updateHabit(id: string, updates: Partial<Omit<Habit, 'id' | 'created_at'>>): Promise<Habit> {
   await hydrate();
 
   required(
@@ -240,43 +229,9 @@ export async function deleteHabit(id: string): Promise<void> {
   ]);
 }
 
-/**
- * Reorder habits by providing the new order of habit IDs
- */
-export async function reorderHabits(habitIds: string[]): Promise<void> {
-  await hydrate();
-
-  // An id no habit answers to matched zero rows and updated nothing. Here the
-  // same upsert would fold into a nameless habit the owner can see and never
-  // get rid of. The surviving ids keep the positions they were handed, so
-  // dropping one changes nobody else's order.
-  const known = new Set(readHabits().map((row) => row.id));
-
-  await commit(
-    habitIds
-      .map((id, index) => ({
-        entity: ENTITY.habit,
-        entityId: id,
-        type: 'upsert' as const,
-        fields: { sort_order: index },
-      }))
-      .filter((draft) => known.has(draft.entityId))
-  );
-}
-
 // ============================================================================
 // Daily Entries (focus + reflection)
 // ============================================================================
-
-/**
- * Get the daily entry for a specific date
- */
-export async function getDailyEntry(date: string): Promise<DailyEntry | null> {
-  await hydrate();
-
-  const rows = readMergedDailyEntries();
-  return rows.find((row) => row.date === date) ?? null;
-}
 
 /**
  * Create or update a daily entry
@@ -320,22 +275,7 @@ export async function getCompletions(startDate: string, endDate: string): Promis
 
   return readMergedHabitCompletions()
     .filter((row) => inRange(row.date, startDate, endDate))
-    .sort((a, b) => compareText(a.date, b.date) || compareText(a.id, b.id));
-}
-
-/**
- * Get habit completions for a specific date as a map of habitId -> completed
- */
-export async function getCompletionsForDate(date: string): Promise<Record<string, boolean>> {
-  await hydrate();
-
-  // Presence indicates completion.
-  const completions: Record<string, boolean> = {};
-  for (const row of readHabitCompletions()) {
-    if (row.date === date) completions[row.habit_id] = true;
-  }
-
-  return completions;
+    .sort((a, b) => compareCodeUnits(a.date, b.date) || compareCodeUnits(a.id, b.id));
 }
 
 /**
@@ -375,139 +315,27 @@ export async function toggleCompletion(
 // ============================================================================
 
 /**
- * Reading order for a span of days: date, then category, then the position the
- * owner dragged the task to. Skipping `sort_order` would leave the list in
- * whatever order the uuids happened to fall in, which is the order the MITs
- * render in — so `createTask`'s max + 1 has to be honoured by every reader,
- * not just the one the views happen to call first.
+ * Reading order for a span of days: date, then category, then `sort_order` —
+ * the position the owner dragged the task to, as recorded in the journal.
+ * Skipping it would leave the list in whatever order the uuids happened to
+ * fall in, which is the order the MITs render in.
+ *
+ * The write path that assigned `sort_order` is gone: nothing has created a
+ * task since the MIT editor was retired. This reader stays because the
+ * journal still holds those rows and the week view still draws them.
  */
 function compareTasks(a: Task, b: Task): number {
   return (
-    compareText(a.date, b.date) ||
-    compareText(a.category, b.category) ||
+    compareCodeUnits(a.date, b.date) ||
+    compareCodeUnits(a.category, b.category) ||
     a.sort_order - b.sort_order ||
-    compareText(a.id, b.id)
+    compareCodeUnits(a.id, b.id)
   );
-}
-
-/**
- * Get all tasks for a specific date
- */
-export async function getTasks(date: string): Promise<Task[]> {
-  await hydrate();
-
-  return readTasks()
-    .filter((row) => row.date === date)
-    .sort(
-      (a, b) =>
-        compareText(a.category, b.category) ||
-        a.sort_order - b.sort_order ||
-        compareText(a.id, b.id)
-    );
-}
-
-/**
- * Get all tasks within a date range
- */
-export async function getTasksRange(startDate: string, endDate: string): Promise<Task[]> {
-  await hydrate();
-
-  return readTasks()
-    .filter((row) => inRange(row.date, startDate, endDate))
-    .sort(compareTasks);
-}
-
-/**
- * Create a new task
- */
-export async function createTask(task: TaskInput): Promise<Task> {
-  await hydrate();
-
-  // Append at the end of this date's category, not of the whole day.
-  const siblings = readTasks().filter(
-    (row) => row.date === task.date && row.category === task.category
-  );
-  const nextSortOrder =
-    siblings.length > 0 ? Math.max(...siblings.map((row) => row.sort_order)) + 1 : 0;
-
-  const entityId = newId();
-  await commit([
-    {
-      entity: ENTITY.task,
-      entityId,
-      type: 'upsert',
-      fields: {
-        date: task.date,
-        category: task.category,
-        text: task.text,
-        first_step: task.firstStep ?? null,
-        sort_order: nextSortOrder,
-        completed: false,
-        created_at: nowIso(),
-        completed_at: null,
-      },
-    },
-  ]);
-
-  return required(
-    readTasks().find((row) => row.id === entityId),
-    'create task'
-  );
-}
-
-/**
- * Update an existing task
- */
-export async function updateTask(
-  id: string,
-  updates: Partial<Omit<Task, 'id' | 'user_id' | 'created_at'>>
-): Promise<Task> {
-  await hydrate();
-
-  required(
-    readTasks().find((row) => row.id === id),
-    'update task'
-  );
-
-  // If marking as completed, set completed_at timestamp
-  const updateData: Partial<Task> = { ...updates };
-  if (updates.completed === true && !updates.completed_at) {
-    updateData.completed_at = nowIso();
-  } else if (updates.completed === false) {
-    updateData.completed_at = null;
-  }
-
-  await commit([{ entity: ENTITY.task, entityId: id, type: 'upsert', fields: { ...updateData } }]);
-
-  return required(
-    readTasks().find((row) => row.id === id),
-    'update task'
-  );
-}
-
-/**
- * Delete a task
- */
-export async function deleteTask(id: string): Promise<void> {
-  await hydrate();
-
-  if (!readTasks().some((row) => row.id === id)) return;
-  await commit([{ entity: ENTITY.task, entityId: id, type: 'delete' }]);
 }
 
 // ============================================================================
 // Year Themes
 // ============================================================================
-
-/**
- * Get the theme for a specific year
- */
-export async function getYearTheme(year: number): Promise<string | null> {
-  await hydrate();
-
-  const row = readMergedYearThemes().find((candidate) => candidate.year === year);
-  return row?.theme ?? null;
-}
 
 /**
  * Set the theme for a specific year
@@ -525,7 +353,7 @@ export async function setYearTheme(year: number, theme: string): Promise<void> {
 // ============================================================================
 
 /**
- * Get the current user's profile
+ * Get the profile
  */
 export async function getProfile(): Promise<Profile> {
   await hydrate();
@@ -536,7 +364,7 @@ export async function getProfile(): Promise<Profile> {
 }
 
 /**
- * Update the current user's profile
+ * Update the profile
  */
 export async function updateProfile(
   updates: Partial<Omit<Profile, 'id' | 'created_at'>>
@@ -743,7 +571,7 @@ export async function enrichPulse(id: string, coding: Coding, scope: EnrichmentS
  * that clears the owner's inbox. A field this never mentions is a field
  * last-writer-wins leaves exactly as it was.
  */
-export type EnrichmentScope = 'full' | 'codingOnly';
+type EnrichmentScope = 'full' | 'codingOnly';
 
 /**
  * The coder's `links`, with anything already recorded on the row left alone.
@@ -850,71 +678,14 @@ const NO_LINKS: PulseLinks = { eventId: null };
  * concurrently — two chips tapped in the same second, or a tap landing while
  * the auto-apply pass walks a fresh coding's own effects — the second write
  * is built from a row read before the first one landed, and the first's work
- * is simply overwritten. Measured: `claimEvent` and `spawnTask` applied
- * together left `links.eventId` null and the claim's chip back on screen,
- * which phase 3's Needed-vs-Spent reads as "never claimed".
+ * is simply overwritten.
  *
  * The lock lives here rather than in the hook because the background
  * auto-apply path never goes near the hook, and a lock only one of the two
  * paths takes is not a lock. Same promise-chain shape as `entities.ts`'s
  * `serialize` and `sync.ts`'s `serialized`, for the same reason.
  */
-let pulseWriteQueue: Promise<void> = Promise.resolve();
-
-function serializePulseWrite<T>(work: () => Promise<T>): Promise<T> {
-  const run = pulseWriteQueue.then(work);
-  // The queue itself must never reject: one failed apply cannot be allowed to
-  // fail every apply queued behind it.
-  pulseWriteQueue = run.then(
-    () => undefined,
-    () => undefined
-  );
-  return run;
-}
-
-/**
- * Watchers of a write this layer made that `AppContext` cannot know about.
- *
- * Two paths reach it. A chip apply writes a `towerItem` or a `habitCompletion`
- * beside the pulse's own update; a Tower capture writes a `towerItem` beside
- * the pulse it records. Both are one commit, deliberately — routing either
- * through `createTowerItem`/`toggleCompletion` would be a second commit, the
- * exact split the one-commit rule exists to prevent — and both therefore go
- * straight past the provider that renders the row.
- *
- * `AppContext`'s reducer state is read once on open and refreshed only by a
- * pull that fetched something; a push never refreshes it. Without this the
- * owner taps "+ call the plumber", or types into Tower's own box, and the item
- * is not there until the app is reloaded: a durable write that reads exactly
- * like a failed one.
- *
- * A listener only re-reads what is already on the device. The write it is
- * told about has already landed; nothing here writes anything, and this is
- * deliberately not a second write path.
- *
- * Same shape as `github.ts`'s `onPushFailure`: a module-level set, no React,
- * nothing to clean up, and a listener that throws cannot disturb the write it
- * is watching.
- */
-const localWriteListeners = new Set<() => void>();
-
-/** Watch every write this layer made outside the pulse. Returns the unsubscribe. */
-export function onLocalWrite(listener: () => void): () => void {
-  localWriteListeners.add(listener);
-  return () => {
-    localWriteListeners.delete(listener);
-  };
-}
-
-function reportLocalWrite(): void {
-  for (const listener of localWriteListeners) {
-    try {
-      listener();
-    } catch {
-      // A watcher's problem is not the write's problem.
-    }
-  }
-}
+const serializePulseWrite = queued();
 
 /**
  * Per-effect auto-apply, one device-local `meta` key each (Appendix C: all
@@ -998,12 +769,6 @@ async function applyOneEffect(pulseId: string, target: PulseEffect): Promise<voi
 
   drafts.push({ entity: ENTITY.pulse, entityId: pulseId, type: 'upsert', fields: pulseFields });
   await commit(drafts);
-
-  // Anything beyond the pulse's own upsert is a row Tower or Habits shows,
-  // and neither of those reads this store directly. Told after the commit,
-  // never before: what is on screen must not claim a write that has not
-  // landed. See `onLocalWrite`.
-  if (drafts.length > 1) reportLocalWrite();
 }
 
 /**
@@ -1100,8 +865,8 @@ export async function dismissPulseVocabProposal(pulseId: string): Promise<void> 
  * Called from ONE place — `codeRow`, the moment a coding lands — and never
  * over stored effects. That is the whole guarantee behind the toggles: they
  * change what happens next, not what already happened. An owner who turns
- * `spawnTask` on after a fortnight of coded pulses gets no burst of Tower
- * items for proposals that have been sitting there; a sweep over the store
+ * `claimEvent` on after a fortnight of coded pulses gets no burst of claims
+ * against proposals that have been sitting there; a sweep over the store
  * would give exactly that, and there is deliberately no code path that could.
  *
  * The list is re-read each time round because every apply rewrites it, and the
@@ -1253,10 +1018,9 @@ function alreadyCoded(id: string): boolean {
  * taken before they started, and a sweep blocked on an earlier pulse resumes
  * into a list where the pulse it is about to code was coded, and its effects
  * applied, while it waited. Coding it again bills a second call, writes a
- * second set of proposals, and — with `spawnTask` auto-apply on — measured two
- * pulses in, three Tower items out. The second read is not a duplicate of the
- * first: `buildCoderContext` awaits the vocab seed and the calendar between
- * them, which is a second window of exactly the same shape.
+ * second set of proposals, and applies them again. The second read is not a
+ * duplicate of the first: `buildCoderContext` awaits the vocab seed and the
+ * calendar between them, which is a second window of exactly the same shape.
  */
 async function codeRow(row: PulseRow, allRows: readonly PulseRow[]): Promise<void> {
   if (codingInFlight.has(row.id)) return;
@@ -1459,19 +1223,6 @@ export async function backfillPulseCoding(
 // Bulk Data Loading
 // ============================================================================
 
-/**
- * Load all data needed for app initialization
- */
-export async function loadAllData(): Promise<{
-  habits: Habit[];
-  profile: Profile;
-}> {
-  await hydrate();
-
-  const [habits, profile] = await Promise.all([getHabits(), getProfile()]);
-  return { habits, profile };
-}
-
 // ============================================================================
 // Analytics Helper
 // ============================================================================
@@ -1491,11 +1242,11 @@ export async function getDailyDataRange(
 
   const entries = readMergedDailyEntries()
     .filter((row) => inRange(row.date, startDate, endDate))
-    .sort((a, b) => compareText(a.date, b.date) || compareText(a.id, b.id));
+    .sort((a, b) => compareCodeUnits(a.date, b.date) || compareCodeUnits(a.id, b.id));
 
   const completions = readMergedHabitCompletions()
     .filter((row) => inRange(row.date, startDate, endDate))
-    .sort((a, b) => compareText(a.date, b.date) || compareText(a.id, b.id));
+    .sort((a, b) => compareCodeUnits(a.date, b.date) || compareCodeUnits(a.id, b.id));
 
   const tasks = readTasks()
     .filter((row) => inRange(row.date, startDate, endDate))
@@ -1509,103 +1260,14 @@ export async function getDailyDataRange(
 // ============================================================================
 
 /**
- * Get all year themes for the current user
+ * Get all year themes
  */
 export async function getAllYearThemes(): Promise<YearTheme[]> {
   await hydrate();
 
   return readMergedYearThemes().sort(
-    (a, b) => b.year - a.year || compareText(a.id, b.id)
+    (a, b) => b.year - a.year || compareCodeUnits(a.id, b.id)
   );
-}
-
-/**
- * Delete a year theme
- */
-export async function deleteYearTheme(year: number): Promise<void> {
-  await hydrate();
-
-  await commit(
-    readYearThemes()
-      .filter((row) => row.year === year)
-      .map((row) => ({ entity: ENTITY.yearTheme, entityId: row.id, type: 'delete' as const }))
-  );
-}
-
-/**
- * Restore an archived habit
- */
-export async function restoreHabit(id: string): Promise<Habit> {
-  await hydrate();
-
-  required(
-    readHabits().find((row) => row.id === id),
-    'restore habit'
-  );
-  await commit([
-    { entity: ENTITY.habit, entityId: id, type: 'upsert', fields: { archived_at: null } },
-  ]);
-
-  return required(
-    readHabits().find((row) => row.id === id),
-    'restore habit'
-  );
-}
-
-/**
- * Get streak information for a habit
- * Returns the current streak and longest streak
- */
-export async function getHabitStreak(habitId: string): Promise<{ current: number; longest: number }> {
-  await hydrate();
-
-  const data = readMergedHabitCompletions().filter(
-    (row) => row.habit_id === habitId
-  );
-
-  if (data.length === 0) {
-    return { current: 0, longest: 0 };
-  }
-
-  const dates = data.map(d => d.date).sort((a, b) => b.localeCompare(a));
-  const today = new Date().toISOString().split('T')[0];
-  const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-
-  let currentStreak = 0;
-  let longestStreak = 0;
-  let tempStreak = 1;
-
-  // Check if streak is current (today or yesterday)
-  const isCurrentStreak = dates[0] === today || dates[0] === yesterday;
-
-  for (let i = 0; i < dates.length; i++) {
-    if (i === 0) {
-      tempStreak = 1;
-      continue;
-    }
-
-    const prevDate = new Date(dates[i - 1]);
-    const currDate = new Date(dates[i]);
-    const diffDays = Math.floor((prevDate.getTime() - currDate.getTime()) / 86400000);
-
-    if (diffDays === 1) {
-      tempStreak++;
-    } else {
-      if (i === 1 && isCurrentStreak) {
-        currentStreak = 1; // Streak broken, only today/yesterday counts
-      }
-      longestStreak = Math.max(longestStreak, tempStreak);
-      tempStreak = 1;
-    }
-  }
-
-  longestStreak = Math.max(longestStreak, tempStreak);
-
-  if (isCurrentStreak && currentStreak === 0) {
-    currentStreak = tempStreak;
-  }
-
-  return { current: currentStreak, longest: longestStreak };
 }
 
 /**
@@ -1617,7 +1279,7 @@ export async function getHabitCompletionDates(habitId: string): Promise<string[]
 
   return readMergedHabitCompletions()
     .filter((row) => row.habit_id === habitId)
-    .sort((a, b) => compareText(b.date, a.date) || compareText(a.id, b.id))
+    .sort((a, b) => compareCodeUnits(b.date, a.date) || compareCodeUnits(a.id, b.id))
     .map((row) => row.date);
 }
 
@@ -1634,30 +1296,18 @@ function compareTowerItems(a: TowerItemRow, b: TowerItemRow): number {
   return (
     compareNullsLast(a.expects_by, b.expects_by) ||
     compareNullsLast(a.last_touched, b.last_touched) ||
-    compareText(a.id, b.id)
+    compareCodeUnits(a.id, b.id)
   );
 }
 
 /**
- * Get all tower items for the current user (excludes done by default)
+ * Get all tower items (excludes done by default)
  */
 export async function getTowerItems(includeDone = false): Promise<TowerItem[]> {
   await hydrate();
 
   return readTowerItemRows()
     .filter((row) => includeDone || row.status !== 'done')
-    .sort(compareTowerItems)
-    .map(toTowerItem);
-}
-
-/**
- * Get tower items by status
- */
-export async function getTowerItemsByStatus(status: TowerStatus): Promise<TowerItem[]> {
-  await hydrate();
-
-  return readTowerItemRows()
-    .filter((row) => row.status === status)
     .sort(compareTowerItems)
     .map(toTowerItem);
 }
@@ -1785,7 +1435,7 @@ export interface PackSessionInput {
 }
 
 /**
- * Get all packs for the current user (non-archived by default)
+ * Get all packs (non-archived by default)
  * Returns packs with their used count
  */
 export async function getPacks(includeArchived = false): Promise<PackWithCount[]> {
@@ -1800,7 +1450,7 @@ export async function getPacks(includeArchived = false): Promise<PackWithCount[]
 
   return readPackRows()
     .filter((row) => includeArchived || row.archived_at === null)
-    .sort((a, b) => compareDescNullsFirst(a.created_at, b.created_at) || compareText(a.id, b.id))
+    .sort((a, b) => compareDescNullsFirst(a.created_at, b.created_at) || compareCodeUnits(a.id, b.id))
     .map((row) => ({ ...toPack(row), used: used.get(row.id) ?? 0 }));
 }
 
@@ -1834,29 +1484,6 @@ export async function createPack(pack: PackInput): Promise<Pack> {
 }
 
 /**
- * Update a pack
- */
-export async function updatePack(
-  id: string,
-  updates: Partial<PackInput>
-): Promise<Pack> {
-  await hydrate();
-
-  required(
-    readPackRows().find((row) => row.id === id),
-    'update pack'
-  );
-  await commit([{ entity: ENTITY.pack, entityId: id, type: 'upsert', fields: { ...updates } }]);
-
-  return toPack(
-    required(
-      readPackRows().find((row) => row.id === id),
-      'update pack'
-    )
-  );
-}
-
-/**
  * Archive a pack (soft delete)
  */
 export async function archivePack(id: string): Promise<void> {
@@ -1876,7 +1503,7 @@ export async function getPackSessions(packId: string): Promise<PackSession[]> {
 
   return readPackSessionRows()
     .filter((row) => row.pack_id === packId)
-    .sort((a, b) => compareText(b.date, a.date) || compareText(a.id, b.id))
+    .sort((a, b) => compareCodeUnits(b.date, a.date) || compareCodeUnits(a.id, b.id))
     .map(toPackSession);
 }
 
@@ -1912,34 +1539,6 @@ export async function createPackSession(session: PackSessionInput): Promise<Pack
     required(
       readPackSessionRows().find((row) => row.id === entityId),
       'create pack session'
-    )
-  );
-}
-
-/**
- * Update a pack session
- */
-export async function updatePackSession(
-  id: string,
-  updates: { date?: string; note?: string | null }
-): Promise<PackSession> {
-  await hydrate();
-
-  required(
-    readPackSessionRows().find((row) => row.id === id),
-    'update pack session'
-  );
-
-  const fields: Record<string, unknown> = {};
-  if (updates.date !== undefined) fields.date = updates.date;
-  if (updates.note !== undefined) fields.note = updates.note;
-
-  await commit([{ entity: ENTITY.packSession, entityId: id, type: 'upsert', fields }]);
-
-  return toPackSession(
-    required(
-      readPackSessionRows().find((row) => row.id === id),
-      'update pack session'
     )
   );
 }

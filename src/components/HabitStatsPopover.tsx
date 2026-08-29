@@ -5,9 +5,10 @@
  * Shows streaks, period stats, and mini calendar visualization.
  */
 
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
 import type { HabitDefinition } from '../types';
 import type { HabitStats } from '../utils/habitStats';
+import { useDismiss } from '../hooks/useDismiss';
 import { parseDate } from '../utils/dates';
 
 interface HabitStatsPopoverProps {
@@ -19,29 +20,8 @@ interface HabitStatsPopoverProps {
 export function HabitStatsPopover({ habit, stats, onClose }: HabitStatsPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
 
-  // Close on click outside
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (popoverRef.current && !popoverRef.current.contains(event.target as Node)) {
-        onClose();
-      }
-    }
-
-    // Close on escape key
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        onClose();
-      }
-    }
-
-    document.addEventListener('mousedown', handleClickOutside);
-    document.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [onClose]);
+  // Escape, or a press outside, closes it.
+  useDismiss(popoverRef, onClose);
 
   // Get month name for calendar header
   const monthName = stats.monthCalendar.length > 0
@@ -51,12 +31,12 @@ export function HabitStatsPopover({ habit, stats, onClose }: HabitStatsPopoverPr
   return (
     <div
       ref={popoverRef}
-      className="absolute z-50 bg-bg-card border border-border rounded shadow-lg p-4 min-w-[240px] max-w-[280px]"
+      className="absolute z-50 bg-bg-card border border-border rounded p-4 min-w-[240px] max-w-[280px]"
       role="dialog"
       aria-label={`Stats for ${habit.label}`}
     >
       {/* Header */}
-      <div className="text-sm font-medium text-text uppercase tracking-wide mb-4">
+      <div className="text-sm font-medium text-text uppercase tracking-caps mb-4">
         {habit.label}
       </div>
 
@@ -96,7 +76,7 @@ export function HabitStatsPopover({ habit, stats, onClose }: HabitStatsPopoverPr
 
       {/* Mini calendar */}
       <div>
-        <div className="text-xs text-text-muted mb-2 font-mono">{monthName}</div>
+        <div className="text-xs text-text-muted mb-2">{monthName}</div>
         <MiniCalendar days={stats.monthCalendar} />
       </div>
     </div>
@@ -109,9 +89,9 @@ export function HabitStatsPopover({ habit, stats, onClose }: HabitStatsPopoverPr
 
 function StatRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between text-sm font-mono">
+    <div className="flex items-center justify-between text-sm">
       <span className="text-text-muted">{label}</span>
-      <span className="text-text">{value}</span>
+      <span className="text-text tabular-nums">{value}</span>
     </div>
   );
 }
@@ -128,9 +108,9 @@ function PeriodRow({
   percentage: number;
 }) {
   return (
-    <div className="flex items-center justify-between text-sm font-mono">
+    <div className="flex items-center justify-between text-sm">
       <span className="text-text-muted">{label}</span>
-      <span className="text-text">
+      <span className="text-text tabular-nums">
         <span className="text-text-secondary">{completed}/{total}</span>
         <span className="text-text-muted ml-2">{percentage}%</span>
       </span>
@@ -140,7 +120,7 @@ function PeriodRow({
 
 function MiniCalendar({ days }: { days: HabitStats['monthCalendar'] }) {
   return (
-    <div className="font-mono text-xs leading-relaxed tracking-wider">
+    <div className="text-xs leading-relaxed tracking-label">
       {days.map((day) => (
         <span
           key={day.date}

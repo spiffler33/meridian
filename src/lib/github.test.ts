@@ -11,7 +11,6 @@ import {
   isJournalDeviceId,
   listJournal,
   onPushFailure,
-  putFile,
   verifyAccess,
 } from './github';
 import type { PushFailure } from './github';
@@ -616,36 +615,6 @@ describe('getFile', () => {
     github.failGets.push({ status: 200, body: { encoding: 'base64', content: encode('line\n') } });
 
     const error = await getFile(TOKEN, PATH).catch((caught: unknown) => caught);
-
-    expect(error).toBeInstanceOf(GitHubError);
-    expect((error as GitHubError).kind).toBe('http');
-    expect((error as GitHubError).status).toBeGreaterThanOrEqual(400);
-  });
-});
-
-describe('putFile', () => {
-  it('creates without a sha and updates with one', async () => {
-    const fresh = fakeGitHub();
-    const created = await putFile(TOKEN, PATH, 'one\n', null);
-    expect(fresh.puts()[0].body?.sha).toBeUndefined();
-    expect(fresh.text(PATH)).toBe('one\n');
-    expect(created.sha).toBe(fresh.sha(PATH));
-    vi.unstubAllGlobals();
-
-    const existing = fakeGitHub({ files: { [PATH]: 'one\n' } });
-    const updated = await putFile(TOKEN, PATH, 'one\ntwo\n', existing.sha(PATH) ?? null);
-    expect(existing.puts()[0].body?.sha).toBe('sha1');
-    expect(existing.text(PATH)).toBe('one\ntwo\n');
-    expect(updated.sha).toBe(existing.sha(PATH));
-  });
-
-  it('throws when GitHub accepts the write but returns no sha', async () => {
-    const github = fakeGitHub({ files: { [PATH]: 'one\n' } });
-    github.failPuts.push({ status: 200, body: {} });
-
-    const error = await putFile(TOKEN, PATH, 'two\n', github.sha(PATH) ?? null).catch(
-      (caught: unknown) => caught,
-    );
 
     expect(error).toBeInstanceOf(GitHubError);
     expect((error as GitHubError).kind).toBe('http');

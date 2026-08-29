@@ -48,6 +48,11 @@ const THREE_HOURS_MS = 3 * 3_600_000;
 /** The exact sentences the line is allowed to say. A progress message is not one. */
 const LINE = {
   unconfigured: 'backup not set up yet — add a github token in settings.',
+  // The healthy line whispers. The same fact stated beside a FAILURE keeps its
+  // full sentence, because there it is the thing the owner has to weigh.
+  healthyNothingYet: 'not backed up yet',
+  healthyFive: 'backed up 5 minutes ago',
+  healthyNow: 'backed up now',
   nothingYet: 'nothing backed up from this device yet.',
   fiveMinutes: 'last backed up 5 minutes ago from this device.',
   now: 'last backed up now from this device.',
@@ -145,7 +150,7 @@ describe('BackupStatus', () => {
 
     const view = await mountStatus();
 
-    await waitFor(() => expect(statusSentence(view)).toBe(LINE.fiveMinutes));
+    await waitFor(() => expect(statusSentence(view)).toBe(LINE.healthyFive));
     expect(screen.queryByRole('button', { name: 'retry' })).toBeNull();
   });
 
@@ -158,7 +163,7 @@ describe('BackupStatus', () => {
 
     const view = await mountStatus();
 
-    await waitFor(() => expect(statusSentence(view)).toBe(LINE.now));
+    await waitFor(() => expect(statusSentence(view)).toBe(LINE.healthyNow));
     expect(statusText()).not.toContain('in 3 hours');
   });
 
@@ -228,7 +233,7 @@ describe('BackupStatus', () => {
     await db.setToken(TOKEN);
     await db.setMeta('lastBackupAt', Date.now() - FIVE_MINUTES_MS);
     const view = await mountStatus();
-    await waitFor(() => expect(statusSentence(view)).toBe(LINE.fiveMinutes));
+    await waitFor(() => expect(statusSentence(view)).toBe(LINE.healthyFive));
 
     // No timer advanced, no store re-read: the push path said so itself.
     reportPushFailure('auth');
@@ -298,7 +303,7 @@ describe('BackupStatus', () => {
     await db.setToken(TOKEN);
     await db.setMeta('lastBackupAt', Date.now() - FIVE_MINUTES_MS);
     view = await mountStatus();
-    await waitFor(() => expect(statusSentence(view)).toBe(LINE.fiveMinutes));
+    await waitFor(() => expect(statusSentence(view)).toBe(LINE.healthyFive));
     expectNothingDrawnAsBusy(view);
     cleanup();
 
@@ -323,10 +328,10 @@ describe('BackupStatus', () => {
     });
     expect(statusSentence(view)).toBe(LINE.noReason);
     expectNothingDrawnAsBusy(view);
-    expect(screen.getByRole('button', { name: 'retrying...' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'retrying…' })).toBeDisabled();
 
     settle();
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'retrying...' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'retrying…' })).toBeNull());
   });
 
   it('acknowledges a retry and does not start a second one under it', async () => {
@@ -338,7 +343,7 @@ describe('BackupStatus', () => {
     const settle = hangingFlush();
     fireEvent.click(screen.getByRole('button', { name: 'retry' }));
 
-    const inFlight = screen.getByRole('button', { name: 'retrying...' });
+    const inFlight = screen.getByRole('button', { name: 'retrying…' });
     expect(inFlight).toBeDisabled();
     fireEvent.click(inFlight);
     expect(mocks.flushOutbox).toHaveBeenCalledTimes(1);
@@ -384,7 +389,7 @@ describe('BackupStatus', () => {
     mocks.flushOutbox.mockResolvedValue({ pushed: 0, remaining: 0, error: null });
     fireEvent.click(screen.getByRole('button', { name: 'retry' }));
 
-    await waitFor(() => expect(statusSentence(view)).toBe(LINE.fiveMinutes));
+    await waitFor(() => expect(statusSentence(view)).toBe(LINE.healthyFive));
     expect(view.container.querySelector('.text-error')).toBeNull();
     expect(screen.queryByRole('button', { name: 'retry' })).toBeNull();
     // Cleared in the store too, or the next open is red again.
@@ -402,7 +407,7 @@ describe('BackupStatus', () => {
 
     // The push is fine; this browser has stopped keeping its own copy.
     await waitFor(() => expect(statusText()).toContain(STATE_ERROR));
-    expect(statusSentence(view)).toBe(LINE.fiveMinutes);
+    expect(statusSentence(view)).toBe(LINE.healthyFive);
     expect(statusText()).not.toContain('backup failed');
     expect(screen.queryByRole('button', { name: 'retry' })).toBeNull();
   });
@@ -428,7 +433,7 @@ describe('BackupStatus', () => {
     mocks.flushOutbox.mockResolvedValue({ pushed: 0, remaining: 0, error: null });
     fireEvent.click(screen.getByRole('button', { name: 'retry' }));
 
-    await waitFor(() => expect(statusSentence(view)).toBe(LINE.nothingYet));
+    await waitFor(() => expect(statusSentence(view)).toBe(LINE.healthyNothingYet));
     // A push that lands says nothing about whether this browser can save.
     expect(statusText()).toContain(STATE_ERROR);
     expect(await db.getMeta<string>('lastStateError')).toEqual(expect.any(String));

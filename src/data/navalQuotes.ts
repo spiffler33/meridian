@@ -5,7 +5,7 @@
  * Rotates based on day of year.
  */
 
-export const NAVAL_QUOTES = [
+const NAVAL_QUOTES = [
   "Desire is a contract you make with yourself to be unhappy until you get what you want.",
   "The secret to doing good research is always to be a little underemployed.",
   "Learn to sell. Learn to build. If you can do both, you will be unstoppable.",

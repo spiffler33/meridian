@@ -22,16 +22,16 @@ export function DailyInspiration({ selectedDate, isHoliday }: DailyInspirationPr
   return (
     <div className="space-y-2">
       {/* Quote */}
-      <blockquote className="text-sm text-text-secondary italic border-l-2 border-border pl-3">
+      <blockquote className="font-read text-base text-text-secondary border-l-2 border-border pl-3">
         "{quote}"
         {!isHoliday && (
-          <cite className="block text-xs text-text-muted mt-1 not-italic">— Naval</cite>
+          <cite className="block font-mono text-xs text-text-muted mt-1">— Naval</cite>
         )}
       </blockquote>
 
       {/* Countdown */}
       {daysLeft > 0 && (
-        <div className="text-xs text-text-muted font-mono">
+        <div className="text-xs text-text-muted tabular-nums">
           {daysLeft} days left this year
         </div>
       )}

@@ -73,8 +73,8 @@ export function CalendarSettings() {
   const mirror = calendar.mirror;
 
   return (
-    <section className="bg-bg-card rounded border border-border p-4">
-      <div className="text-xs text-text-muted uppercase tracking-wide mb-3">calendar mirror</div>
+    <div className="space-y-2">
+      <div className="text-xs text-text-secondary">calendar mirror</div>
       <div className="space-y-3">
         <div className="flex gap-2">
           <button
@@ -107,13 +107,13 @@ export function CalendarSettings() {
         {calendar.error && <div className="text-xs text-error">{calendar.error}</div>}
 
         {calendar.stale && mirror && (
-          <div className="font-mono text-xs text-sp-amber">
+          <div className=" text-xs text-accent">
             mirror stale — last written {relative(mirror.generatedAt)}, and the action should have
             run since.
           </div>
         )}
 
-        <div className="font-mono text-xs text-text-muted">
+        <div className=" text-xs text-text-muted">
           {mirror
             ? `${mirror.events.length} events · ${mirror.calendars.join(' · ')} · ${mirror.window.start} → ${mirror.window.end}`
             : calendar.loaded
@@ -134,6 +134,6 @@ export function CalendarSettings() {
           events are created.
         </div>
       </div>
-    </section>
+    </div>
   );
 }

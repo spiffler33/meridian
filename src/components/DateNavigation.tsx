@@ -4,7 +4,9 @@
  * Minimal date display with prev/next.
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
+import type { ChangeEvent } from 'react';
+import { StepNav } from './StepNav';
 import { formatDisplayDate, isToday, isFuture } from '../utils/dates';
 
 interface DateNavigationProps {
@@ -22,7 +24,7 @@ export function DateNavigation({
 }: DateNavigationProps) {
   const [showPicker, setShowPicker] = useState(false);
 
-  const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleDateChange = (e: ChangeEvent<HTMLInputElement>) => {
     onDateSelect(e.target.value);
     setShowPicker(false);
   };
@@ -45,20 +47,13 @@ export function DateNavigation({
         )}
       </div>
 
-      <div className="flex items-center gap-1">
-        <button
-          onClick={onPrevious}
-          className="p-2 text-text-muted hover:text-text transition-colors"
-          aria-label="Previous day"
-        >
-          ‹
-        </button>
-
+      {/* The picker rides between the two arrows, which is where it already sat. */}
+      <StepNav onPrev={onPrevious} onNext={onNext} label="day">
         <div className="relative">
           <button
             onClick={() => setShowPicker(!showPicker)}
             className="p-2 text-text-muted hover:text-text transition-colors text-xs"
-            aria-label="Select date"
+            aria-label="select date"
           >
             ···
           </button>
@@ -78,15 +73,7 @@ export function DateNavigation({
             </>
           )}
         </div>
-
-        <button
-          onClick={onNext}
-          className="p-2 text-text-muted hover:text-text transition-colors"
-          aria-label="Next day"
-        >
-          ›
-        </button>
-      </div>
+      </StepNav>
     </div>
   );
 }

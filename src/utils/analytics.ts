@@ -19,13 +19,13 @@ export interface HabitAnalytics {
   trend: 'up' | 'down' | 'stable';
 }
 
-export interface HabitCorrelation {
+interface HabitCorrelation {
   habitA: string;
   habitB: string;
   correlation: number; // 0-100
 }
 
-export interface DayPatterns {
+interface DayPatterns {
   bestDay: string;
   worstDay: string;
   weekdayAvg: number;
@@ -186,7 +186,7 @@ function getTrend(
 /**
  * Compute analytics for all habits
  */
-export function computeHabitAnalytics(
+function computeHabitAnalytics(
   dailyData: Record<string, DailyData>,
   habits: HabitDefinition[],
   days: number = 30,
@@ -208,7 +208,7 @@ export function computeHabitAnalytics(
  * Compute correlations between habits (which habits are done together)
  * Returns top correlations only to minimize tokens
  */
-export function computeCorrelations(
+function computeCorrelations(
   dailyData: Record<string, DailyData>,
   habits: HabitDefinition[],
   days: number = 30,
@@ -262,7 +262,7 @@ export function computeCorrelations(
 /**
  * Compute day-of-week patterns across all habits
  */
-export function computeDayPatterns(
+function computeDayPatterns(
   dailyData: Record<string, DailyData>,
   habits: HabitDefinition[],
   days: number = 30,
@@ -319,7 +319,7 @@ export function computeDayPatterns(
 /**
  * Get recent non-empty reflections (last N days)
  */
-export function getRecentReflections(
+function getRecentReflections(
   dailyData: Record<string, DailyData>,
   days: number = 7,
   fromDate: string = getToday()

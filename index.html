@@ -5,15 +5,22 @@
     <!--
       Everything the app loads is same-origin and bundled. The only two hosts it
       may ever talk to are the GitHub contents API (journal sync) and the
-      Anthropic API (daily insight). style-src carries 'unsafe-inline' because
+      Anthropic API (the coder). style-src carries 'unsafe-inline' because
       the dev server injects Tailwind through a script-created <style> element;
       the production build links a same-origin stylesheet and needs only 'self'.
     -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://api.github.com https://api.anthropic.com; manifest-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'" />
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📅</text></svg>" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <!-- The meridian mark, the same one the header wears. Drawn rather than
+         set in an emoji font: a picture of a calendar is not what this is. -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><circle cx=%2216%22 cy=%2216%22 r=%2212.5%22 fill=%22none%22 stroke=%22%23e1ac69%22 stroke-width=%223%22/><path d=%22M16 3.5 A12.5 12.5 0 0 0 16 28.5 Z%22 fill=%22%23e1ac69%22/></svg>" />
+    <!-- Pinch-zoom stays available: locking it out of a text-dense app to save
+         a double-tap is the app getting in the way. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="description" content="Meridian - A personal dashboard for daily execution and long-term perspective" />
-    <meta name="theme-color" content="#fafaf9" />
+    <!-- Matches the palette's two backgrounds; ThemeProvider overwrites the
+         live one when the owner has chosen a side explicitly. -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f6f3ec" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0d0b08" />
     <!-- iOS PWA support -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />

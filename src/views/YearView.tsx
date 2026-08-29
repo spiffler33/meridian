@@ -8,11 +8,13 @@
  * line of arithmetic; open, it is the whole week view, unchanged.
  */
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { useApp } from '../store/AppContext';
 import { useReadState } from '../hooks/useReadState';
 import { WeekView } from './WeekView';
 import { EnergySection } from '../components/EnergySection';
+import { Section } from '../components/Section';
+import { StepNav } from '../components/StepNav';
 import { weekTotals } from '../utils/weekTotals';
 import type { CalendarMirror } from '../lib/calendar';
 import { getYearCalendarGrid, formatShortDate, getMonthAbbr, getWeekDates, getWeekNumber, isToday, isFuture, parseDate } from '../utils/dates';
@@ -63,7 +65,7 @@ function DayCell({ date, habitCount, totalHabits, didRead, onClick }: DayCellPro
     <button
       onClick={onClick}
       className={`
-        w-3 h-3 rounded-sm transition-all hover:ring-1 hover:ring-accent
+        w-3 h-3 rounded-sm transition-colors hover:ring-1 hover:ring-accent
         ${HEAT_COLORS[heatLevel]}
         ${today ? 'ring-1 ring-accent' : ''}
         ${future ? 'opacity-30' : ''}
@@ -84,11 +86,12 @@ export function YearView({
   onPreviousWeek,
   onNextWeek,
 }: YearViewProps) {
-  const { state, getDailyData, getHabitCount, getYearTheme, setYearTheme, profile, updateProfile } = useApp();
+  const { state, getDailyData, getHabitCount, getYearTheme, setYearTheme } = useApp();
   const [editingTheme, setEditingTheme] = useState(false);
-  const [themeInput, setThemeInput] = useState(getYearTheme(selectedYear));
-  const [editingContext, setEditingContext] = useState(false);
-  const [contextInput, setContextInput] = useState(profile?.personal_context || '');
+  // Seeded when the edit button is pressed rather than mirrored by an effect:
+  // the field only exists while editing, so the year's theme is read at the one
+  // moment it is about to be edited and never has to be kept in step.
+  const [themeInput, setThemeInput] = useState('');
 
   const habits = state.settings.habits;
   const weekStartsOn = state.settings.weekStartsOn;
@@ -100,11 +103,6 @@ export function YearView({
   // Read-only: the baseline is the reading pane's to establish, never this
   // view's, so nothing here writes.
   const read = useReadState();
-
-  // Update themeInput when year changes or themes load from the journal
-  useEffect(() => {
-    setThemeInput(getYearTheme(selectedYear));
-  }, [selectedYear, getYearTheme]);
 
   const calendarGrid = useMemo(
     () => getYearCalendarGrid(selectedYear, weekStartsOn),
@@ -178,11 +176,6 @@ export function YearView({
     setEditingTheme(false);
   };
 
-  const handleContextSave = () => {
-    updateProfile({ personal_context: contextInput });
-    setEditingContext(false);
-  };
-
   const dayLabels = weekStartsOn === 1
     ? ['M', '', 'W', '', 'F', '', 'S']
     : ['S', '', 'T', '', 'T', '', 'S'];
@@ -190,30 +183,42 @@ export function YearView({
   return (
     <div className="space-y-6">
       {/* This week — the lens, closed by default */}
-      <section className="bg-bg-card rounded border border-border">
-        <button
-          onClick={() => onWeekOpenChange(!weekOpen)}
-          aria-expanded={weekOpen}
-          className="flex w-full items-baseline justify-between gap-3 px-4 py-3 text-left"
-        >
-          <span className="text-xs text-text-muted uppercase tracking-wide">this week</span>
-          <span className="text-xs text-text-secondary font-mono">
-            week {getWeekNumber(selectedDate)} · tasks {totals.completedMits}/{totals.totalMits} ·
-            notes {totals.daysWithNotes}/7
-          </span>
-        </button>
+      {/*
+        A disclosure, not a panel: the same `[+]`/`[-]` the tower's drawers use,
+        so the one gesture that opens a closed list looks the same everywhere.
+        The whole label row stays the target — the arithmetic is what the owner
+        reaches for, and it is inside the button rather than beside it.
+      */}
+      <Section
+        label={
+          <button
+            onClick={() => onWeekOpenChange(!weekOpen)}
+            aria-expanded={weekOpen}
+            // `uppercase` is not inherited: preflight resets `text-transform`
+            // on every button, so the section's casing stops at this element.
+            className="flex w-full items-baseline justify-between gap-3 text-left uppercase transition-colors hover:text-text-secondary"
+          >
+            <span className="flex items-center gap-2">
+              <span>{weekOpen ? '[-]' : '[+]'}</span>
+              this week
+            </span>
+            <span className="normal-case tracking-normal text-text-secondary">
+              week {getWeekNumber(selectedDate)} · tasks {totals.completedMits}/{totals.totalMits} ·
+              notes {totals.daysWithNotes}/7
+            </span>
+          </button>
+        }
+      >
         {weekOpen && (
-          <div className="border-t border-border p-4">
-            <WeekView
-              mirror={mirror}
-              selectedDate={selectedDate}
-              onDateSelect={onDateSelect}
-              onPreviousWeek={onPreviousWeek}
-              onNextWeek={onNextWeek}
-            />
-          </div>
+          <WeekView
+            mirror={mirror}
+            selectedDate={selectedDate}
+            onDateSelect={onDateSelect}
+            onPreviousWeek={onPreviousWeek}
+            onNextWeek={onNextWeek}
+          />
         )}
-      </section>
+      </Section>
 
       {/* Energy — the ledger, on the same week as the lens above it */}
       <EnergySection
@@ -226,36 +231,32 @@ export function YearView({
 
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => onYearChange(selectedYear - 1)}
-            className="text-text-muted hover:text-text transition-colors"
-          >
-            ‹
-          </button>
-          <span className="text-lg font-medium text-text">{selectedYear}</span>
-          <button
-            onClick={() => onYearChange(selectedYear + 1)}
-            className="text-text-muted hover:text-text transition-colors"
-          >
-            ›
-          </button>
-        </div>
+        <StepNav
+          onPrev={() => onYearChange(selectedYear - 1)}
+          onNext={() => onYearChange(selectedYear + 1)}
+          label="year"
+        >
+          <span className="text-lg font-medium tabular-nums text-text">{selectedYear}</span>
+        </StepNav>
       </div>
 
       {/* Theme */}
-      <div className="bg-bg-card rounded border border-border p-4">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs text-text-muted uppercase tracking-wide">theme</span>
-          {!editingTheme && (
+      <Section
+        label="theme"
+        aside={
+          editingTheme ? undefined : (
             <button
-              onClick={() => setEditingTheme(true)}
+              onClick={() => {
+                setThemeInput(getYearTheme(selectedYear));
+                setEditingTheme(true);
+              }}
               className="text-xs text-text-muted hover:text-accent"
             >
               edit
             </button>
-          )}
-        </div>
+          )
+        }
+      >
         {editingTheme ? (
           <div className="flex gap-2">
             <input
@@ -267,7 +268,7 @@ export function YearView({
                 if (e.key === 'Escape') setEditingTheme(false);
               }}
               placeholder="year focus"
-              className="flex-1 text-sm text-text bg-transparent border-b border-border focus:border-accent outline-none"
+              className="flex-1 font-read text-base text-text bg-transparent border-b border-border focus:border-accent outline-none"
               autoFocus
             />
             <button onClick={handleThemeSave} className="text-xs text-accent">
@@ -275,131 +276,92 @@ export function YearView({
             </button>
           </div>
         ) : (
-          <p className="text-sm text-text-secondary">
+          <p className="font-read text-base text-text-secondary">
             {getYearTheme(selectedYear) || '—'}
           </p>
         )}
-      </div>
+      </Section>
 
-      {/* Personal Context */}
-      <div className="bg-bg-card rounded border border-border p-4">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs text-text-muted uppercase tracking-wide">what should the ai know about you?</span>
-          {!editingContext && (
-            <button
-              onClick={() => {
-                setContextInput(profile?.personal_context || '');
-                setEditingContext(true);
-              }}
-              className="text-xs text-text-muted hover:text-accent"
-            >
-              edit
-            </button>
-          )}
-        </div>
-        {editingContext ? (
-          <div className="space-y-2">
-            <textarea
-              value={contextInput}
-              onChange={e => setContextInput(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Escape') setEditingContext(false);
-              }}
-              onBlur={handleContextSave}
-              placeholder="health goals, struggles, what matters this year..."
-              className="w-full text-sm text-text bg-transparent border border-border rounded p-2 focus:border-accent outline-none resize-none"
-              rows={3}
-              autoFocus
-            />
-            <div className="flex justify-end">
-              <button onClick={handleContextSave} className="text-xs text-accent">
-                save
-              </button>
-            </div>
-          </div>
-        ) : (
-          <p className="text-sm text-text-secondary whitespace-pre-wrap">
-            {profile?.personal_context || '—'}
-          </p>
-        )}
-      </div>
-
-      {/* Stats - terminal style */}
-      <div className="bg-bg-card rounded border border-border p-4">
-        <div className="text-xs text-text-muted font-mono space-y-1">
+      {/*
+        The arithmetic and the picture of it, under one label. They were two
+        cards saying one thing — a year of days, counted and then drawn — and
+        two frames for one subject is exactly what the rule replaces.
+      */}
+      <Section label="consistency">
+        <div className="text-xs text-text-muted space-y-1">
           <div>current streak: {yearStats.currentStreak} days</div>
           <div>longest streak: {yearStats.longestStreak} days</div>
           <div>perfect days: {yearStats.perfectDays}</div>
           <div>active days: {yearStats.daysWithHabits}/{yearStats.totalDays}</div>
           <div>consistency: {yearStats.totalDays > 0 ? Math.round((yearStats.daysWithHabits / yearStats.totalDays) * 100) : 0}%</div>
         </div>
-      </div>
 
-      {/* Heatmap */}
-      <div className="bg-bg-card rounded border border-border p-4 overflow-x-auto">
-        <div className="min-w-[750px]">
-          {/* Months */}
-          <div className="flex mb-2 ml-6">
-            {monthLabels.map(({ month, weekIndex }, i) => (
-              <div
-                key={`${month}-${i}`}
-                className="text-xs text-text-muted"
-                style={{
-                  position: 'relative',
-                  left: `${weekIndex * 14}px`,
-                  width: i < monthLabels.length - 1
-                    ? `${(monthLabels[i + 1]?.weekIndex - weekIndex) * 14}px`
-                    : 'auto',
-                }}
-              >
-                {month}
-              </div>
-            ))}
-          </div>
-
-          <div className="flex gap-0.5">
-            {/* Day labels */}
-            <div className="flex flex-col gap-0.5 mr-1">
-              {dayLabels.map((label, i) => (
-                <div key={i} className="h-3 text-xs text-text-muted text-right pr-1 leading-3 w-4">
-                  {label}
+        {/* Heatmap */}
+        <div className="overflow-x-auto">
+          <div className="min-w-[750px]">
+            {/* Months */}
+            <div className="flex mb-2 ml-6">
+              {monthLabels.map(({ month, weekIndex }, i) => (
+                <div
+                  key={`${month}-${i}`}
+                  className="text-xs text-text-muted"
+                  style={{
+                    position: 'relative',
+                    left: `${weekIndex * 14}px`,
+                    width: i < monthLabels.length - 1
+                      ? `${(monthLabels[i + 1]?.weekIndex - weekIndex) * 14}px`
+                      : 'auto',
+                  }}
+                >
+                  {month}
                 </div>
               ))}
             </div>
 
-            {/* Grid */}
             <div className="flex gap-0.5">
-              {calendarGrid.map((week, weekIndex) => (
-                <div key={weekIndex} className="flex flex-col gap-0.5">
-                  {week.map((date, dayIndex) =>
-                    date ? (
-                      <DayCell
-                        key={date}
-                        date={date}
-                        habitCount={getHabitCount(date)}
-                        totalHabits={habits.length}
-                        didRead={read.days.has(date)}
-                        onClick={() => onDateSelect(date)}
-                      />
-                    ) : (
-                      <div key={`empty-${dayIndex}`} className="w-3 h-3" />
-                    )
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
+              {/* Day labels */}
+              <div className="flex flex-col gap-0.5 mr-1">
+                {dayLabels.map((label, i) => (
+                  <div key={i} className="h-3 text-xs text-text-muted text-right pr-1 leading-3 w-4">
+                    {label}
+                  </div>
+                ))}
+              </div>
 
-          {/* Legend */}
-          <div className="flex items-center justify-end mt-3 gap-1">
-            <span className="text-xs text-text-muted mr-1">less</span>
-            {HEAT_COLORS.map((color, i) => (
-              <div key={i} className={`w-3 h-3 rounded-sm ${color}`} />
-            ))}
-            <span className="text-xs text-text-muted ml-1">more</span>
+              {/* Grid */}
+              <div className="flex gap-0.5">
+                {calendarGrid.map((week, weekIndex) => (
+                  <div key={weekIndex} className="flex flex-col gap-0.5">
+                    {week.map((date, dayIndex) =>
+                      date ? (
+                        <DayCell
+                          key={date}
+                          date={date}
+                          habitCount={getHabitCount(date)}
+                          totalHabits={habits.length}
+                          didRead={read.days.has(date)}
+                          onClick={() => onDateSelect(date)}
+                        />
+                      ) : (
+                        <div key={`empty-${dayIndex}`} className="w-3 h-3" />
+                      )
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Legend */}
+            <div className="flex items-center justify-end mt-3 gap-1">
+              <span className="text-xs text-text-muted mr-1">less</span>
+              {HEAT_COLORS.map((color, i) => (
+                <div key={i} className={`w-3 h-3 rounded-sm ${color}`} />
+              ))}
+              <span className="text-xs text-text-muted ml-1">more</span>
+            </div>
           </div>
         </div>
-      </div>
+      </Section>
     </div>
   );
 }

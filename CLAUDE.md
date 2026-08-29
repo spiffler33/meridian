@@ -4,7 +4,7 @@ Single-user personal cockpit: iPhone home-screen PWA + laptop browser. React 19 
 
 **GitHub is the durable store; IndexedDB is the working copy.** Every state change is an append-only journal event in the private repo `spiffler33/meridian-data`; the app folds them locally, opens instantly offline, and syncs in the background.
 
-Code: `src/lib/` — `journal.ts` (event model + fold, pure) · `db.ts` · `github.ts` · `entities.ts` · `sync.ts`. `src/services/data.ts` is the app data API (~46 exports).
+Code: `src/lib/` — `journal.ts` (event model + fold, pure) · `db.ts` · `github.ts` · `entities.ts` · `sync.ts`. `src/services/data.ts` is the app data API.
 
 ## Event shape
 
@@ -17,13 +17,13 @@ One JSON object per line. Seven fields:
 | `seq` | number | per-device monotonic counter, committed before it is handed out |
 | `ts` | number | epoch ms at write time (`Date.now()`) |
 | `type` | `'upsert' \| 'delete'` | discriminant |
-| `entity` | string | one of nine, see `ENTITY` |
+| `entity` | string | one of twelve, see `ENTITY` |
 | `entityId` | string | |
 | `fields` | object | **required on an upsert, forbidden on a delete** |
 
 `JournalEvent` is discriminated on `type`: an upsert without `fields` is a compile error, not a runtime drop. In `fields`, an explicit `undefined` means **no write** (skipped — `JSON.stringify` erases it, so the record would not round-trip); `null` is a real value meaning **clear**.
 
-Nine entities: profile · habit · dailyEntry · habitCompletion · task · yearTheme · towerItem · pack · packSession. No `user_id` — no owner concept locally. Three were keyed in Postgres by a composite unique constraint, so locally the entity id **is** that natural key (dailyEntry: date; habitCompletion: habit+date; yearTheme: year); `resolveEntityId` adopts a seeded row's id when one already holds the key.
+Twelve entities: profile · habit · dailyEntry · habitCompletion · task · yearTheme · towerItem · pack · packSession · readItem · pulse · pulseVocab — the last three grown here, with no export behind them: `readItem` is read-state, its entity id **being** the natural key `<surface>:<itemKey>`; `pulse` is the capture primitive, one utterance; `pulseVocab` is the coder's vocabulary, a singleton under one fixed id. No `user_id` — no owner concept locally. Three were keyed in Postgres by a composite unique constraint, so locally the entity id **is** that natural key (dailyEntry: date; habitCompletion: habit+date; yearTheme: year); `resolveEntityId` adopts a seeded row's id when one already holds the key.
 
 ## Fold rule
 

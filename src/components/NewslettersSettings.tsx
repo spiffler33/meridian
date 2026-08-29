@@ -118,10 +118,8 @@ export function NewslettersSettings() {
   };
 
   return (
-    <section className="bg-bg-card rounded border border-border p-4">
-      <div className="text-xs text-text-muted uppercase tracking-wide mb-3">
-        newsletters (read-only)
-      </div>
+    <div className="space-y-2">
+      <div className="text-xs text-text-secondary">newsletters (read-only)</div>
       <div className="space-y-3">
         <div className="flex gap-2">
           <input
@@ -131,7 +129,7 @@ export function NewslettersSettings() {
             placeholder={stored ? '•••••••• stored on this device' : 'github_pat_...'}
             autoComplete="new-password"
             spellCheck={false}
-            className="flex-1 px-2 py-1.5 text-sm rounded border border-border bg-transparent text-text focus:border-accent outline-none font-mono"
+            className="flex-1 px-2 py-1.5 text-sm rounded border border-border bg-transparent text-text focus:border-accent outline-none"
           />
           <button
             onClick={handleSave}
@@ -168,6 +166,6 @@ export function NewslettersSettings() {
           never shown again once saved.
         </div>
       </div>
-    </section>
+    </div>
   );
 }

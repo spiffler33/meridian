@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import type { ReadSurface, ViewType } from '../types';
-import { getToday, formatDate, parseDate } from '../utils/dates';
+import { addDays, getToday } from '../utils/dates';
 
 /** Where the Read view is pointed: a surface, plus the item path inside it. */
 export interface ReadRoute {
@@ -167,37 +167,18 @@ export function useNavigation(): UseNavigationReturn {
     }));
   }, []);
 
-  const goToPreviousDay = useCallback(() => {
-    setState(prev => {
-      const date = parseDate(prev.selectedDate);
-      date.setDate(date.getDate() - 1);
-      return { ...prev, selectedDate: formatDate(date) };
-    });
+  // One stepper, four bindings. Each of these used to reimplement
+  // parse-mutate-format for itself, which is the same day arithmetic
+  // `addDays` already owns — and four copies is four places for a
+  // month boundary to be got wrong.
+  const step = useCallback((days: number) => {
+    setState(prev => ({ ...prev, selectedDate: addDays(prev.selectedDate, days) }));
   }, []);
 
-  const goToNextDay = useCallback(() => {
-    setState(prev => {
-      const date = parseDate(prev.selectedDate);
-      date.setDate(date.getDate() + 1);
-      return { ...prev, selectedDate: formatDate(date) };
-    });
-  }, []);
-
-  const goToPreviousWeek = useCallback(() => {
-    setState(prev => {
-      const date = parseDate(prev.selectedDate);
-      date.setDate(date.getDate() - 7);
-      return { ...prev, selectedDate: formatDate(date) };
-    });
-  }, []);
-
-  const goToNextWeek = useCallback(() => {
-    setState(prev => {
-      const date = parseDate(prev.selectedDate);
-      date.setDate(date.getDate() + 7);
-      return { ...prev, selectedDate: formatDate(date) };
-    });
-  }, []);
+  const goToPreviousDay = useCallback(() => step(-1), [step]);
+  const goToNextDay = useCallback(() => step(1), [step]);
+  const goToPreviousWeek = useCallback(() => step(-7), [step]);
+  const goToNextWeek = useCallback(() => step(7), [step]);
 
   return {
     ...state,

@@ -8,9 +8,11 @@
  * corpus for none of the benefit.
  */
 
+import { FIGURES_FILE, RAW_PREFIX } from './citations';
 import { getCachedContent, getMeta, putCachedContent } from './db';
 import { GitHubError } from './github';
 import { NEWSLETTERS, getBlob, type TreeEntry } from './gitread';
+import { compareCodeUnits } from './order';
 
 /** A file that is missing, unreadable, or not what it claimed to be — named. */
 export class ContentError extends Error {
@@ -32,8 +34,6 @@ const DAY_PREFIX = 'day-';
 const DAY_EXTENSION = '.json';
 const ESSAYS_PREFIX = 'wiki/essays/';
 const MARKDOWN_EXTENSION = '.md';
-const RAW_PREFIX = 'raw/';
-const FIGURES_FILE = 'figures.md';
 
 export const TAPE_PATH = 'state/tape.json';
 
@@ -170,7 +170,7 @@ function figuresPath(slug: string): string {
 
 /** Plain code-unit order, reversed. Slugs lead with their date. */
 function descending(a: string, b: string): number {
-  return a < b ? 1 : a > b ? -1 : 0;
+  return compareCodeUnits(b, a);
 }
 
 export interface SourceEntry {

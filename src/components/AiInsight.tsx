@@ -47,31 +47,21 @@ export function AiInsight({
 
   const hasPersonalContext = !!profile?.personal_context;
 
-  // `loadApiKey` reads the IndexedDB `meta` store, so it answers with a promise.
-  // Testing the promise itself was always true, which is why this panel showed
-  // up on devices with no key at all.
+  // Both answers come out of the IndexedDB `meta` store, so both are promises
+  // and one effect asks for both: whether a key is stored at all — testing the
+  // promise itself was always true, which is why this panel showed up on
+  // devices with no key — and whether the owner already waved the context
+  // prompt away. A store that cannot answer leaves each at what it started as.
   useEffect(() => {
     let live = true;
-    loadApiKey().then(
-      key => {
-        if (live) setHasApiKey(key.length > 0);
-      },
-      () => undefined
-    );
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  // Whether the owner already waved the context prompt away, from the store.
-  useEffect(() => {
-    let live = true;
-    getMeta<boolean>('skippedContextPrompt', false).then(
-      value => {
-        if (live) setHasSkippedPrompt(value === true);
-      },
-      () => undefined
-    );
+    void Promise.all([
+      loadApiKey().then(key => key.length > 0, () => false),
+      getMeta<boolean>('skippedContextPrompt', false).then(value => value === true, () => null),
+    ]).then(([keyStored, skipped]) => {
+      if (!live) return;
+      setHasApiKey(keyStored);
+      if (skipped !== null) setHasSkippedPrompt(skipped);
+    });
     return () => {
       live = false;
     };
@@ -145,7 +135,7 @@ export function AiInsight({
   if (showContextPrompt) {
     return (
       <div className="bg-bg-card rounded border border-border p-4">
-        <div className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-3">
+        <div className="text-xs font-medium text-text-secondary uppercase tracking-caps mb-3">
           ai insight
         </div>
         <div className="space-y-3">
@@ -160,7 +150,7 @@ export function AiInsight({
             value={contextInput}
             onChange={e => setContextInput(e.target.value)}
             placeholder="health goals, struggles, priorities..."
-            className="w-full px-2 py-1.5 text-sm rounded border border-border bg-transparent text-text focus:border-accent outline-none resize-none"
+            className="w-full px-2 py-1.5 font-read text-base rounded border border-border bg-transparent text-text focus:border-accent outline-none resize-none"
             rows={3}
             autoFocus
           />
@@ -173,7 +163,7 @@ export function AiInsight({
             </button>
             <button
               onClick={handleSaveContext}
-              className="px-3 py-1.5 text-xs text-accent hover:text-accent-hover transition-colors"
+              className="px-3 py-1.5 text-xs text-accent transition-colors"
             >
               save and get insight
             </button>
@@ -186,7 +176,7 @@ export function AiInsight({
   return (
     <div className="bg-bg-card rounded border border-border p-4">
       <div className="flex items-center justify-between mb-3">
-        <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">
+        <span className="text-xs font-medium text-text-secondary uppercase tracking-caps">
           ai insight
         </span>
         <button

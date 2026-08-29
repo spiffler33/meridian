@@ -3,15 +3,24 @@
  *
  * Surfaces what needs attention now, hides the rest accountably.
  * Core loop: Open -> See 1-3 items -> Act or Hold -> Trust the system
+ *
+ * One grammar for the whole page: an uppercase mono label, its content, and a
+ * hairline rule where two sections genuinely need separating. No card inside a
+ * section and no dashed frame around an absence — a box around a box says the
+ * same thing twice, and the day's one hero is marked by the accent caret in
+ * front of it rather than by a border around it.
  */
 
 import { useCallback, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useApp } from '../store/AppContext';
+import { Section } from '../components/Section';
 import { TwoMinuteTimer } from '../components/TwoMinuteTimer';
 import { DayShape } from '../components/DayShape';
 import { Dock } from '../components/Dock';
 import { deviceTimeZone } from '../lib/calendar';
 import { getToday } from '../utils/dates';
+import { dueLabel, getAge, sortByUrgency } from '../utils/tower';
 import type { CalendarMirror } from '../lib/calendar';
 import type { TowerItem } from '../types';
 
@@ -68,10 +77,6 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
     }
     setIsCapturing(false);
   }, [captureText, isCapturing, addTowerItem]);
-
-  const handleComplete = useCallback(async (id: string) => {
-    await completeTowerItemById(id);
-  }, [completeTowerItemById]);
 
   const handleHold = useCallback(async (id: string, waitingOn?: string) => {
     await updateTowerItemById(id, {
@@ -137,15 +142,11 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
       <DayShape mirror={mirror} date={today} timeZone={timeZone} now={Date.now()} />
 
       {/* NOW Section - Hero Item */}
-      <section>
-        <h2 className="text-xs uppercase tracking-widest text-text-muted mb-3">
-          Now
-        </h2>
-
+      <Section label="Now">
         {nowItem ? (
-          <NowCard
+          <NowItem
             item={nowItem}
-            onComplete={() => handleComplete(nowItem.id)}
+            onComplete={() => completeTowerItemById(nowItem.id)}
             onHold={(waitingOn) => handleHold(nowItem.id, waitingOn)}
             onSomeday={() => handleSomeday(nowItem.id)}
             onStartTimer={() => handleStartTimer(nowItem.id)}
@@ -153,18 +154,18 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
             onEdit={(text) => handleEdit(nowItem.id, text)}
           />
         ) : (
-          <div className="text-text-muted text-sm py-8 text-center border border-dashed border-border rounded">
-            Nothing needs attention right now
-          </div>
+          // A sentence, in the app's own register. An absence is a fact about
+          // the day, not something to frame and centre.
+          <p className="text-sm text-text-muted">nothing needs attention right now</p>
         )}
-      </section>
+      </Section>
 
       {/* Queue - Next items */}
       {queueItems.length > 0 && (
         <section>
           <QueueList
             items={queueItems}
-            onComplete={handleComplete}
+            onComplete={completeTowerItemById}
           />
         </section>
       )}
@@ -182,7 +183,7 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
             <div className="mt-2">
               <QueueList
                 items={overflowItems}
-                onComplete={handleComplete}
+                onComplete={completeTowerItemById}
               />
             </div>
           )}
@@ -191,18 +192,55 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
 
       {/* Follow Up (blocked items) */}
       {waitingItems.length > 0 && (
-        <FollowUpSection
-          items={waitingItems}
-          onReactivate={handleReactivate}
-        />
+        <Drawer label="Follow Up" count={waitingItems.length}>
+          {waitingItems.map((item) => (
+            <li key={item.id} className="group text-sm text-text-muted">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="font-read text-text-secondary">{item.text}</span>
+                  {item.waitingOn && (
+                    <span className="text-xs">· {item.waitingOn}</span>
+                  )}
+                  {item.expectsBy && (
+                    <span className="text-xs">· {dueLabel(item.expectsBy)}</span>
+                  )}
+                </div>
+                <button
+                  onClick={() => handleReactivate(item.id)}
+                  className="text-xs opacity-0 group-hover:opacity-100 text-accent hover:underline transition-opacity"
+                >
+                  reactivate
+                </button>
+              </div>
+            </li>
+          ))}
+        </Drawer>
       )}
 
       {/* Someday */}
-      <SomedaySection
-        items={somedayItems}
-        onReactivate={handleReactivate}
-        onDelete={deleteTowerItemById}
-      />
+      <Drawer label="Someday" count={somedayItems.length}>
+        {somedayItems.map((item) => (
+          <li key={item.id} className="group text-sm text-text-muted">
+            <div className="flex items-center justify-between">
+              <span className="font-read">{item.text}</span>
+              <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  onClick={() => handleReactivate(item.id)}
+                  className="text-xs text-accent hover:underline"
+                >
+                  activate
+                </button>
+                <button
+                  onClick={() => deleteTowerItemById(item.id)}
+                  className="text-xs text-error hover:underline"
+                >
+                  delete
+                </button>
+              </div>
+            </div>
+          </li>
+        ))}
+      </Drawer>
 
       {/* Docked at the foot of the screen, above the backup line rather than
           underneath it — which is what `fixed` was doing to its placeholder. */}
@@ -231,7 +269,7 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
 // Sub-components
 // ============================================================================
 
-interface NowCardProps {
+interface NowItemProps {
   item: TowerItem;
   onComplete: () => void;
   onHold: (waitingOn?: string) => void;
@@ -240,7 +278,12 @@ interface NowCardProps {
   isTimerRunning: boolean;
 }
 
-function NowCard({ item, onComplete, onHold, onSomeday, onStartTimer, isTimerRunning, onEdit }: NowCardProps & { onEdit: (text: string) => void }) {
+/**
+ * The one thing. Marked by the caret and by the reading face, not by a frame:
+ * the section it sits in is already labelled, and a bordered card inside a
+ * labelled section is the second frame saying the first frame's sentence.
+ */
+function NowItem({ item, onComplete, onHold, onSomeday, onStartTimer, isTimerRunning, onEdit }: NowItemProps & { onEdit: (text: string) => void }) {
   const [showHoldInput, setShowHoldInput] = useState(false);
   const [waitingOnText, setWaitingOnText] = useState('');
   const [isEditing, setIsEditing] = useState(false);
@@ -262,11 +305,13 @@ function NowCard({ item, onComplete, onHold, onSomeday, onStartTimer, isTimerRun
   const age = getAge(item.createdAt);
 
   return (
-    <div className="bg-bg-card border border-accent/30 rounded p-4 space-y-3">
+    <div className="space-y-3">
       <div className="flex items-start gap-3">
         <span className="text-accent font-bold">&gt;</span>
         <div className="flex-1">
           {isEditing ? (
+            // Same face and size as the line it replaces, so nothing jumps
+            // when the text becomes editable.
             <input
               type="text"
               value={editText}
@@ -279,20 +324,22 @@ function NowCard({ item, onComplete, onHold, onSomeday, onStartTimer, isTimerRun
                 }
               }}
               onBlur={handleEditSubmit}
-              className="w-full bg-bg border border-border rounded px-2 py-1 text-text focus:outline-none focus:border-accent"
+              className="w-full bg-bg border border-border rounded px-2 py-1 font-read text-base text-text focus:outline-none focus:border-accent"
               autoFocus
             />
           ) : (
+            // The owner's own sentence — the reading face, at reading size.
             <p
-              className="text-text cursor-pointer hover:text-accent transition-colors"
+              className="font-read text-base text-text cursor-pointer hover:text-accent transition-colors"
               onClick={() => setIsEditing(true)}
               title="Click to edit"
             >
               {item.text}
             </p>
           )}
+          {/* Its metadata is the instrument's, so it stays mono. */}
           <p className="text-xs text-text-muted mt-1">
-            {item.expectsBy && `${formatDate(item.expectsBy, item.isEvent)} · `}
+            {item.expectsBy && `${dueLabel(item.expectsBy, item.isEvent)} · `}
             {age && `added ${age}`}
             {item.effort && ` · ${item.effort}`}
           </p>
@@ -365,22 +412,22 @@ interface QueueListProps {
 
 function QueueList({ items, onComplete }: QueueListProps) {
   return (
-    <ul className="space-y-2 border-l-2 border-border pl-4 ml-2">
+    <ul className="space-y-2 border-l border-border pl-4 ml-2">
       {items.map((item) => (
         <li key={item.id} className="text-text-secondary group">
           <div className="flex items-center gap-3">
             <button
               onClick={() => onComplete(item.id)}
-              className="w-4 h-4 border border-border rounded-sm hover:border-accent transition-colors flex items-center justify-center"
+              className="w-4 h-4 border border-border rounded hover:border-accent transition-colors flex items-center justify-center"
               title="Mark done"
             >
               <span className="opacity-0 group-hover:opacity-100 text-xs text-accent">
                 +
               </span>
             </button>
-            <span className="text-sm">{item.text}</span>
+            <span className="font-read text-sm">{item.text}</span>
             {item.expectsBy && (
-              <span className="text-xs text-text-muted">· {formatDate(item.expectsBy, item.isEvent)}</span>
+              <span className="text-xs text-text-muted">· {dueLabel(item.expectsBy, item.isEvent)}</span>
             )}
           </div>
         </li>
@@ -389,98 +436,49 @@ function QueueList({ items, onComplete }: QueueListProps) {
   );
 }
 
-interface FollowUpSectionProps {
-  items: TowerItem[];
-  onReactivate: (id: string) => void;
-}
-
-function FollowUpSection({ items, onReactivate }: FollowUpSectionProps) {
+/**
+ * A closed list with a count on it.
+ *
+ * Follow Up and Someday are the same object — a label, how many sit behind it,
+ * and the rows once it is open. They were two copies of that, which is two
+ * places for the disclosure to drift apart. Only the rows differ, so only the
+ * rows are passed in.
+ *
+ * An empty drawer does not draw. A zero is not a fact about the day — it is
+ * the absence of one, and `someday (0)` under `follow up (0)` is two rows of
+ * furniture on a page whose whole job is to be nearly empty. Nothing is lost:
+ * the way into either list is the button on the item being parked, not the
+ * drawer it lands in, and the drawer appears the moment it holds something.
+ */
+function Drawer({
+  label,
+  count,
+  children,
+}: {
+  label: string;
+  count: number;
+  children: ReactNode;
+}) {
   const [expanded, setExpanded] = useState(false);
 
-  return (
-    <section className="border-t border-border pt-4">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="text-xs uppercase tracking-widest text-text-muted hover:text-text-secondary transition-colors flex items-center gap-2"
-      >
-        <span>{expanded ? '[-]' : '[+]'}</span>
-        Follow Up ({items.length})
-      </button>
-
-      {expanded && items.length > 0 && (
-        <ul className="mt-3 space-y-2">
-          {items.map((item) => (
-            <li key={item.id} className="text-text-muted text-sm group">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="text-text-secondary">{item.text}</span>
-                  {item.waitingOn && (
-                    <span className="text-xs">· {item.waitingOn}</span>
-                  )}
-                  {item.expectsBy && (
-                    <span className="text-xs">· {formatDate(item.expectsBy)}</span>
-                  )}
-                </div>
-                <button
-                  onClick={() => onReactivate(item.id)}
-                  className="text-xs opacity-0 group-hover:opacity-100 text-accent hover:underline transition-opacity"
-                >
-                  reactivate
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-interface SomedaySectionProps {
-  items: TowerItem[];
-  onReactivate: (id: string) => void;
-  onDelete: (id: string) => void;
-}
-
-function SomedaySection({ items, onReactivate, onDelete }: SomedaySectionProps) {
-  const [expanded, setExpanded] = useState(false);
+  if (count === 0) return null;
 
   return (
-    <section className="border-t border-border pt-4">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="text-xs uppercase tracking-widest text-text-muted hover:text-text-secondary transition-colors flex items-center gap-2"
-      >
-        <span>{expanded ? '[-]' : '[+]'}</span>
-        Someday ({items.length})
-      </button>
-
-      {expanded && items.length > 0 && (
-        <ul className="mt-3 space-y-2">
-          {items.map((item) => (
-            <li key={item.id} className="text-text-muted text-sm group">
-              <div className="flex items-center justify-between">
-                <span>{item.text}</span>
-                <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button
-                    onClick={() => onReactivate(item.id)}
-                    className="text-xs text-accent hover:underline"
-                  >
-                    activate
-                  </button>
-                  <button
-                    onClick={() => onDelete(item.id)}
-                    className="text-xs text-red-400 hover:underline"
-                  >
-                    delete
-                  </button>
-                </div>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+    <Section
+      label={
+        <button
+          onClick={() => setExpanded(!expanded)}
+          // `uppercase` is not inherited: preflight resets `text-transform` on
+          // every button, so the section's own casing stops at this element.
+          className="uppercase hover:text-text-secondary transition-colors flex items-center gap-2"
+        >
+          <span>{expanded ? '[-]' : '[+]'}</span>
+          {label} ({count})
+        </button>
+      }
+    >
+      {expanded && <ul className="space-y-2">{children}</ul>}
+    </Section>
   );
 }
 
@@ -491,9 +489,14 @@ interface CaptureInputProps {
   isCapturing?: boolean;
 }
 
+/**
+ * Where the owner writes, so it is the reading face — and `focus:outline-none`
+ * on the field is paid for by the rule above it, which takes the accent while
+ * the box has focus. The affordance moves; it does not disappear.
+ */
 function CaptureInput({ value, onChange, onSubmit, isCapturing }: CaptureInputProps) {
   return (
-    <div className="border-t border-border py-3">
+    <div className="border-t border-border py-3 transition-colors focus-within:border-accent">
       <div className="flex gap-2">
         <span className="text-text-muted py-2">{isCapturing ? '+' : '_'}</span>
         <input
@@ -508,135 +511,9 @@ function CaptureInput({ value, onChange, onSubmit, isCapturing }: CaptureInputPr
           }}
           placeholder="what needs doing?"
           disabled={isCapturing}
-          className="flex-1 bg-transparent text-text placeholder:text-text-muted focus:outline-none disabled:opacity-50"
+          className="flex-1 bg-transparent font-read text-base text-text placeholder:text-text-muted focus:outline-none disabled:opacity-50"
         />
       </div>
     </div>
   );
-}
-
-// ============================================================================
-// Utilities
-// ============================================================================
-
-/**
- * Smart sorting for active items using isEvent-aware logic:
- *
- * Priority order:
- * 1. Overdue actions (deadline passed) - MUST do
- * 2. Actions due today - urgent
- * 3. Stale actions (no date) - actionable NOW, sorted by staleness
- * 4. Events TODAY - time-bound reminders
- * 5. Actions due within 3 days - approaching deadlines
- * 6. Events tomorrow - advance notice
- * 7. Actions 4-7 days out
- * 8. Future items (>7 days for actions, >1 day for events)
- *
- * Key insight: Stale actions beat same-day events because actions
- * are immediately actionable, while events are time-bound.
- */
-function sortByUrgency(items: TowerItem[]): TowerItem[] {
-  const today = new Date();
-
-  // Helper to get days until date
-  const daysUntil = (dateStr: string | undefined): number | null => {
-    if (!dateStr) return null;
-    const target = new Date(dateStr);
-    const diff = target.getTime() - today.getTime();
-    return Math.ceil(diff / (1000 * 60 * 60 * 24));
-  };
-
-  // Helper to get staleness (days since last touched)
-  const staleness = (item: TowerItem): number => {
-    const touched = new Date(item.lastTouched);
-    const diff = today.getTime() - touched.getTime();
-    return Math.floor(diff / (1000 * 60 * 60 * 24));
-  };
-
-  // Assign priority bucket to each item
-  const getPriority = (item: TowerItem): number => {
-    const days = daysUntil(item.expectsBy);
-    const isEvent = item.isEvent ?? false;
-
-    // Actions (isEvent: false)
-    if (!isEvent) {
-      if (days !== null) {
-        if (days < 0) return 0;  // Overdue - highest priority
-        if (days === 0) return 1;  // Due today
-        if (days <= 3) return 4;  // Due soon
-        if (days <= 7) return 6;  // This week
-        return 7;  // Far future
-      }
-      return 2;  // No date - stale actions are actionable NOW
-    }
-
-    // Events (isEvent: true)
-    if (days !== null) {
-      if (days <= 0) return 3;  // Event today (or past)
-      if (days === 1) return 5;  // Event tomorrow
-      return 7;  // Future events hidden
-    }
-    return 2;  // Event with no date (rare, treat as stale)
-  };
-
-  return [...items].sort((a, b) => {
-    const priorityA = getPriority(a);
-    const priorityB = getPriority(b);
-
-    // Different priority buckets - sort by bucket
-    if (priorityA !== priorityB) {
-      return priorityA - priorityB;
-    }
-
-    // Same bucket - secondary sorting
-    const daysA = daysUntil(a.expectsBy);
-    const daysB = daysUntil(b.expectsBy);
-
-    // For items with dates, sort by date
-    if (daysA !== null && daysB !== null) {
-      return daysA - daysB;
-    }
-
-    // For no-date items (stale bucket), sort by staleness (older first)
-    if (daysA === null && daysB === null) {
-      return staleness(b) - staleness(a);  // More stale = higher priority
-    }
-
-    // Items with dates before items without
-    return daysA !== null ? -1 : 1;
-  });
-}
-
-function getAge(timestamp: string): string {
-  const now = new Date();
-  const created = new Date(timestamp);
-  const diffMs = now.getTime() - created.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffDays <= 0) return 'today';
-  if (diffDays === 1) return '1d ago';
-  if (diffDays < 7) return `${diffDays}d ago`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
-  return `${Math.floor(diffDays / 30)}mo ago`;
-}
-
-function formatDate(dateStr: string, isEvent?: boolean): string {
-  const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
-  const tomorrowStr = new Date(today.getTime() + 86400000).toISOString().split('T')[0];
-
-  if (dateStr === todayStr) return 'today';
-  if (dateStr === tomorrowStr) return 'tomorrow';
-
-  const date = new Date(dateStr);
-  const day = date.toLocaleDateString('en-US', { weekday: 'short' }).toLowerCase();
-  const month = date.toLocaleDateString('en-US', { month: 'short' }).toLowerCase();
-  const dayNum = date.getDate();
-
-  // For events, show more context
-  if (isEvent) {
-    return `${day} ${dayNum} ${month}`;
-  }
-
-  return day;
 }
