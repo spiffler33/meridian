@@ -134,6 +134,16 @@ interface should have made unnecessary.
 
 **Zero is not a fact — it is the absence of one.** A tally of nothing does not render.
 
+**A surface read in passing carries one number; provenance belongs where the reviewing happens.**
+The owner glances at the capture page thirty times a day and studies Energy once a week, and those
+are different jobs. A readout that answers "how much of this rests on a guess" beside a readout that
+answers "how much" makes neither legible at a glance — measured on the nutrition line, which printed
+five figures until the owner had lived with it for a day: *"a nightmare for an ADHD brain"*. Move the
+breakdown to the surface where it is actually asked for; do not shrink it, colour it, or hide it
+behind a tap. Where dropping a part outright would make the remaining number **lie** — a total that
+omits food nobody could size — carry that fact as a mark on the number itself (`980+ kcal`), never as
+a second figure.
+
 ---
 
 ## Never

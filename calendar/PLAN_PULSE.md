@@ -45,6 +45,12 @@ remains is five gates, all of them the owner's, each verdict an amendment to thi
 **Gate 5's calibration week began 2026-08-29** — no further building is queued, and the
 next thing to happen to this plan is a verdict, not a phase.
 
+**Gate 5's first verdict landed the same day** (last run-log entry): a correction is a
+**waterline, not a lid**, and the Today line is now one number. Two of that gate's three
+questions are answered — correcting a day by saying so works in the hand, and the parked
+target display is settled. The estimate-quality question still needs the week, and the
+backfill is still unrun. Gate 5 stays open.
+
 ## How to execute this plan
 
 - **One phase per run. Stop at every gate.** Owner reviews on device between phases and
