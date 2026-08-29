@@ -36,8 +36,14 @@ they lifted it. The nutrition ledger, the Today line, the weekly kcal bars and t
 owner-invoked backfill are all on `main`. **Gate 5 is now open and is the owner's**: run
 the backfill, then a calibration week.
 
-**The plan is complete.** Every phase is built; what remains of it is five gates, all of
-them the owner's, each verdict an amendment to this file.
+**Coder rev 3 landed the same day**, hours after Phase 5, from a real failure on real data:
+`corrections` (day totals the owner asserts) and the `span.start` bucketing fix. Confirmed
+working on device. See the last run-log entry.
+
+**The plan is complete and the owner is living with it.** Every phase is built; what
+remains is five gates, all of them the owner's, each verdict an amendment to this file.
+**Gate 5's calibration week began 2026-08-29** — no further building is queued, and the
+next thing to happen to this plan is a verdict, not a phase.
 
 ## How to execute this plan
 
