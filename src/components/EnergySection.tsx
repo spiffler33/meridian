@@ -226,9 +226,11 @@ function TimingRow({ row }: { row: ActivityTiming }) {
  * laid over the left of it: the boundary between them lands where stated ends,
  * which is the only place it means anything.
  *
- * A day the owner corrected draws single-tone, with no estimate marker at all:
- * the number came from them, so there is no share of it that rests on a guess
- * and nothing for the two tones to separate.
+ * A day the owner corrected draws by the same rule as every other day, and
+ * that is deliberate. Their stated figure carries no estimated share, so the
+ * bar goes single-tone on its own — but a correction is a waterline and not a
+ * lid, so anything eaten after it is ordinary arithmetic again and its guessed
+ * part has to show. Branching on `corrected` here drew that share as stated.
  *
  * The value sits outside the bar, as everywhere on this page — inside, it is
  * unreadable at the short end and invisible on a day with nothing logged, and
@@ -236,8 +238,8 @@ function TimingRow({ row }: { row: ActivityTiming }) {
  */
 function KcalBar({ day, widest }: { day: DayKcal; widest: number }) {
   const scale = (amount: number) => (widest <= 0 ? 0 : Math.min(100, (amount / widest) * 100));
-  const stated = day.corrected ? day.kcal : day.kcal - day.estimatedKcal;
-  const showsEstimate = !day.corrected && day.estimatedKcal > 0;
+  const stated = day.kcal - day.estimatedKcal;
+  const showsEstimate = day.estimatedKcal > 0;
   return (
     <div className="grid grid-cols-[76px_1fr_44px] items-center gap-2.5 py-0.5 sm:grid-cols-[108px_1fr_52px]">
       <span className="truncate text-xs text-text-secondary">{weekdayLabel(day.date)}</span>

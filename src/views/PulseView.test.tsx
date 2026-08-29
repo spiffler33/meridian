@@ -325,7 +325,21 @@ describe('the nutrition line', () => {
    * per capture would answer that late call with the wrong line's food, or
    * with null.
    */
-  const menu = new Map<string, Pick<Coding, 'nutrition' | 'corrections'>>();
+  const menu = new Map<string, Pick<Coding, 'nutrition' | 'corrections'> & { span?: Coding['span'] }>();
+
+  /**
+   * A minute after the frozen clock, and the same local day in every zone:
+   * only a device sitting exactly on a midnight between `NOW` and `NOW + 1m`
+   * could disagree, and no offset puts one there.
+   *
+   * The coder's span is what says when food was EATEN, and the fixture's is
+   * `NOW` — so a meal that has to land after a waterline needs its own.
+   */
+  const A_MINUTE_LATER: Coding['span'] = {
+    start: new Date(NOW.getTime() + 60_000).toISOString(),
+    end: null,
+    approx: false,
+  };
 
   beforeEach(() => {
     menu.clear();
@@ -347,8 +361,14 @@ describe('the nutrition line', () => {
   }
 
   /** One coded pulse carrying nutrition, captured through the real path. */
-  async function captureFood(text: string, nutrition: Coding['nutrition']): Promise<void> {
-    menu.set(text, { nutrition, corrections: [] });
+  async function captureFood(
+    text: string,
+    nutrition: Coding['nutrition'],
+    span?: Coding['span']
+  ): Promise<void> {
+    // Set only when given: an explicit `span: undefined` would spread OVER the
+    // fixture's span and leave the pulse with none at all.
+    menu.set(text, span === undefined ? { nutrition, corrections: [] } : { nutrition, corrections: [], span });
     const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
     fireEvent.change(box, { target: { value: text } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -366,15 +386,28 @@ describe('the nutrition line', () => {
     expect(screen.queryByText(/kcal/)).not.toBeInTheDocument();
   });
 
-  it('prints the total, the estimated share, the uncounted count and protein, separated', async () => {
+  it('prints one number, whatever that number is made of', async () => {
     renderPulse();
     await captureFood('620 kcal burrito', { kcal: 620, kcalSource: 'stated', proteinG: 42, proteinSource: 'stated' });
     await captureFood('two eggs on toast', { kcal: 300, kcalSource: 'estimated', proteinG: 18, proteinSource: 'estimated' });
+
+    // 920 counted, 300 of it estimated, 60 g of protein between them — and the
+    // line says none of that. How much of a total rests on a guess is a
+    // question asked while reviewing a week, and Energy's bars answer it there.
+    expect(await screen.findByText('920 kcal')).toBeInTheDocument();
+    expect(screen.queryByText(/est/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/protein/)).not.toBeInTheDocument();
+  });
+
+  it('marks the total with a + when something eaten could not be counted', async () => {
+    renderPulse();
+    await captureFood('620 kcal burrito', { kcal: 620, kcalSource: 'stated' });
     await captureFood('ate something at the buffet', { kcal: null, kcalSource: 'estimated' });
 
-    // 920 counted, 300 of it estimated, one recognised and unsizeable.
-    expect(await screen.findByText('920 kcal · 300 est · 1 uncounted')).toBeInTheDocument();
-    expect(screen.getByText('60 g protein')).toBeInTheDocument();
+    // Dropping the unsizeable meal outright would make the line lie: this is
+    // not the day a bare 620 describes. One character, and no word to decode.
+    expect(await screen.findByText('620+ kcal')).toBeInTheDocument();
+    expect(screen.queryByText(/uncounted/)).not.toBeInTheDocument();
   });
 
   it('drops the estimated and uncounted parts when there are none, rather than printing zeros', async () => {
@@ -389,20 +422,25 @@ describe('the nutrition line', () => {
     expect(screen.queryByText(/protein/)).not.toBeInTheDocument();
   });
 
-  it('shows the owner\'s own total on a day they corrected, with no estimate marker', async () => {
+  it('takes the owner\'s stated total, and keeps counting what they eat after it', async () => {
     renderPulse();
     await captureFood('two eggs on toast', { kcal: 300, kcalSource: 'estimated' });
     await captureFood('ate something at the buffet', { kcal: null, kcalSource: 'estimated' });
-    expect(await screen.findByText('300 kcal · 300 est · 1 uncounted')).toBeInTheDocument();
+    expect(await screen.findByText('300+ kcal')).toBeInTheDocument();
 
-    // The owner reads that and says what today actually came to. The estimate
-    // and the unsizeable meal are both subsumed by the number they gave.
+    // The owner reads that and says what the day has come to so far. The
+    // estimate and the unsizeable meal are both subsumed by their number, and
+    // the `+` goes with them: nothing uncounted is left outside it.
     const today = getToday();
     await captureCorrection('today was 2200', [{ date: today, kcal: 2200 }]);
-
     expect(await screen.findByText('2,200 kcal')).toBeInTheDocument();
-    expect(screen.queryByText(/est/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/uncounted/)).not.toBeInTheDocument();
+
+    // Then they eat again. The correction was a waterline and not a lid, so
+    // the tofu lands on top of it. Read as a lid — which is how this shipped —
+    // the line stayed at 2,200 for the rest of the day with nothing on screen
+    // to say why, and every meal after lunch was silently discarded.
+    await captureFood('100 cals worth of tofu', { kcal: 100, kcalSource: 'stated' }, A_MINUTE_LATER);
+    expect(await screen.findByText('2,300 kcal')).toBeInTheDocument();
   });
 
   it('appends the target only when the owner has set one, as a plain number', async () => {

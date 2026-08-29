@@ -176,39 +176,41 @@ function PulseChips({ pulse, actions }: { pulse: PulseRow; actions: Pulses }) {
 /**
  * The day's eating, on one line above the box.
  *
- * An instrument, not a message. It reports four numbers and says nothing
- * about any of them — no color that changes with the total, no word for over
- * or under, no encouragement (fence 6). The target, when the owner has set
- * one, is printed in the same face and weight as everything else: a number
- * beside a number.
+ * An instrument, not a message. It says nothing about the number — no colour
+ * that changes with the total, no word for over or under, no encouragement
+ * (fence 6). The target, when the owner has set one, is printed in the same
+ * face and weight: a number beside a number.
+ *
+ * **One number, and the owner's own words for it.** This line used to print
+ * as many as five — total, target, estimated share, uncounted tally, protein —
+ * and the owner's verdict on living with it was that it is unreadable at a
+ * glance (2026-08-29). Estimated share and protein are gone from here: how
+ * much of a total rests on a guess is a question asked while reviewing a week,
+ * and Energy's bars already answer it in the one place it is asked. This line
+ * is read thirty times a day, in passing, and it has one job.
+ *
+ * The uncounted tally survives as a `+`, because dropping it outright would
+ * make the line lie: a day with an unsizeable meal in it is not the day the
+ * bare number describes. `980+ kcal` is that fact in one character — at least
+ * this much — with no second figure and no word to decode.
  *
  * Nothing renders on a day with no food logged. An empty instrument above the
  * box every morning would turn the capture page into a form with a blank
  * field at the top of it, and a zero is not a fact here — it is the absence
  * of one.
- *
- * The parts after the total are each conditional, and each disappears rather
- * than showing a zero: "0 uncounted" is noise on the ordinary day, and the
- * whole point of the uncounted tally is that it is unusual enough to notice.
  */
 function NutritionLine({ total, target }: { total: DayNutrition; target: number | null }) {
-  const logged = total.kcal > 0 || total.uncounted > 0 || total.proteinG > 0;
-  if (!logged) return null;
+  if (total.kcal <= 0 && total.uncounted === 0) return null;
 
-  const calories = [`${kcalLabel(total.kcal)} kcal`];
-  // Attached to the figure it qualifies, before the breakdown of that figure.
+  // "At least", and never "about": the counted calories are all there, and
+  // what the `+` stands for is the food that has no number rather than any
+  // doubt about this one.
+  const parts = [`${kcalLabel(total.kcal)}${total.uncounted > 0 ? '+' : ''} kcal`];
   // Provisional by the plan's own words — the shape of this is Gate 5's to
   // settle, and it is one array entry to move or delete.
-  if (target !== null) calories.push(`of ${kcalLabel(target)}`);
-  if (total.estimatedKcal > 0) calories.push(`${kcalLabel(total.estimatedKcal)} est`);
-  if (total.uncounted > 0) calories.push(`${total.uncounted} uncounted`);
+  if (target !== null) parts.push(`of ${kcalLabel(target)}`);
 
-  return (
-    <p className="flex flex-wrap items-baseline gap-x-4 pt-3 font-mono text-xs tabular-nums text-text-muted">
-      <span>{calories.join(' · ')}</span>
-      {total.proteinG > 0 && <span>{`${kcalLabel(total.proteinG)} g protein`}</span>}
-    </p>
-  );
+  return <p className="pt-3 font-mono text-xs tabular-nums text-text-muted">{parts.join(' · ')}</p>;
 }
 
 /**

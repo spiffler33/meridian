@@ -538,9 +538,11 @@ export type DayNutrition = {
   /** One best-effort total. Sources are stored per pulse but not surfaced in v1. */
   proteinG: number;
   /**
-   * The owner stated this day's total, so the arithmetic below it is not what
-   * is shown. Both surfaces read this to stop drawing provenance that no
-   * longer applies — there is no estimated share of a number the owner gave.
+   * Part of this day's total is a figure the owner stated rather than a sum —
+   * everything up to the waterline they set. `estimatedKcal` and `uncounted`
+   * still describe the rest honestly, so no surface needs to suppress them on
+   * the strength of this flag; it says where the number came from, not that
+   * the provenance beside it is wrong.
    */
   corrected: boolean;
 };
@@ -550,10 +552,23 @@ const NO_NUTRITION = { kcal: 0, estimatedKcal: 0, uncounted: 0, proteinG: 0 };
 /**
  * Sum one local day's nutrition.
  *
- * Two things are added up here and the first outranks the second: what the
- * owner SAID this day came to (`corrections`), and failing that, the items
- * they logged on it. Items bucket by `span.start` — the day the food was
- * eaten, not the day it was mentioned; see `eatenOn`.
+ * Two things are added up here: what the owner SAID this day came to
+ * (`corrections`), and the items they logged on it. Items bucket by
+ * `span.start` — the day the food was eaten, not the day it was mentioned;
+ * see `eatenOn`.
+ *
+ * **A correction is a waterline, not a lid.** It is the owner reading their
+ * ledger and saying what the day came to *as of that moment* — so it subsumes
+ * everything eaten up to the instant they said it, and everything eaten after
+ * it is added on top. Read as a lid it silently swallowed the rest of the day:
+ * *"saturday's 880 is right"* at 14:00 made every meal that followed invisible,
+ * with nothing on screen to say why (measured on real data, 2026-08-29).
+ *
+ * One rule covers both kinds of correction, which is why there is only one.
+ * A finished day — *"friday was 2400"*, said on Saturday — has nothing eaten
+ * after the waterline, so the sum is the owner's number and nothing else. A
+ * day still being lived keeps accruing. Nothing here has to know which is which,
+ * and nothing has to ask the coder to tell them apart.
  *
  * `kcal: null` is the uncounted case and adds nothing to the total — the
  * count of them is returned instead, so a day that dropped two meals reads as
@@ -566,24 +581,36 @@ export function dayNutrition(
   day: string,
   timeZone: string
 ): DayNutrition {
-  const items = sumNutrition(pulses.filter((pulse) => eatenOn(pulse, timeZone) === day));
+  const onDay = pulses.filter((pulse) => eatenOn(pulse, timeZone) === day);
+  const items = sumNutrition(onDay);
 
   const correction = newestCorrectionFor(pulses, day);
   if (correction === null) return { ...items, corrected: false };
 
-  // The owner's own number for the day, and it replaces the arithmetic rather
-  // than joining it. `estimatedKcal` and `uncounted` go to zero with it: both
-  // describe how the sum below was arrived at, and there is no estimated share
-  // of a figure the owner stated. A meal nobody could size is subsumed by it
-  // too — that is what stating a day's total means.
+  // Strictly after: an item eaten at the very instant of the utterance is
+  // inside the total it states. "had a burrito, 620 — so today's 1500 so far"
+  // is one breath, and the owner counted the burrito before saying 1500.
+  //
+  // An unreadable `at` leaves nothing after the waterline, which is the safe
+  // reading: the correction stands alone rather than double-counting the day.
+  // Nothing in the app writes one — the coder refuses to code such a pulse.
+  const after = sumNutrition(onDay.filter((pulse) => eatenAt(pulse) > correction.saidAtMs));
+
   return {
-    kcal: correction.kcal,
-    estimatedKcal: 0,
-    uncounted: 0,
+    // What they said, plus what they have eaten since saying it.
+    kcal: correction.kcal + after.kcal,
+    // Provenance describes only the part still being arrived at by arithmetic.
+    // There is no estimated share of a figure the owner stated, and a meal
+    // nobody could size from before the waterline is subsumed by it — that is
+    // what stating a day's total means. Both can be non-zero again the moment
+    // something is eaten after it, and then they are telling the truth.
+    estimatedKcal: after.estimatedKcal,
+    uncounted: after.uncounted,
     // Protein is corrected only when the correction says so. "friday was 2400"
-    // is a claim about calories and says nothing about protein, and throwing
-    // the item sum away would silently zero it.
-    proteinG: correction.proteinG ?? items.proteinG,
+    // is a claim about calories and says nothing about protein, so the whole
+    // item sum stands — throwing it away would silently zero a number the
+    // owner never disputed. When they DID state one, it is a waterline too.
+    proteinG: correction.proteinG === undefined ? items.proteinG : correction.proteinG + after.proteinG,
     corrected: true,
   };
 }
@@ -606,10 +633,33 @@ export function dayNutrition(
  * span whose start cannot be read, which nothing in the app writes.
  */
 function eatenOn(pulse: PulseRow, timeZone: string): string | null {
-  const spanStart = pulse.span === undefined ? NaN : Date.parse(pulse.span.start);
-  const at = Number.isFinite(spanStart) ? spanStart : Date.parse(pulse.at);
+  const at = eatenAt(pulse);
   return Number.isFinite(at) ? dayKey(at, timeZone) : null;
 }
+
+/**
+ * The instant the food happened, which is the day rule above before it is
+ * reduced to a date — `NaN` when neither the span nor `at` can be read.
+ *
+ * A day key alone cannot answer whether a meal came before or after a
+ * waterline said at 14:00 on that same day, so the two callers share this and
+ * the ordering can never disagree with the bucketing.
+ */
+function eatenAt(pulse: PulseRow): number {
+  const spanStart = pulse.span === undefined ? NaN : Date.parse(pulse.span.start);
+  return Number.isFinite(spanStart) ? spanStart : Date.parse(pulse.at);
+}
+
+/**
+ * A standing correction and the instant it was said — its waterline.
+ *
+ * `saidAtMs` is capture time (`at`), deliberately, and it is the one place in
+ * this file that is not `span.start`. A correction is not a thing that
+ * happened at a time; it is an assertion made at a time, and what it asserts
+ * is "everything up to *now*". A back-dated span on the correcting pulse
+ * would move the waterline into a past the owner was not talking about.
+ */
+type StandingCorrection = PulseCorrection & { saidAtMs: number };
 
 /**
  * The last thing the owner said about this day's total, or null.
@@ -623,8 +673,13 @@ function eatenOn(pulse: PulseRow, timeZone: string): string | null {
  * back to the item sum, or to the correction before it. There is no separate
  * uncorrect gesture and there should not be one — the correction is a thing
  * the owner said, and unsaying it is deleting the line.
+ *
+ * A second correction moves the waterline as well as the number, which is why
+ * "1500 so far" an hour after "880 so far" is not double counting: the items
+ * between the two are subsumed by the later one, exactly as the items before
+ * the first were.
  */
-function newestCorrectionFor(pulses: readonly PulseRow[], day: string): PulseCorrection | null {
+function newestCorrectionFor(pulses: readonly PulseRow[], day: string): StandingCorrection | null {
   let winner: PulseCorrection | null = null;
   let winningPulse: PulseRow | null = null;
   for (const pulse of pulses) {
@@ -640,7 +695,9 @@ function newestCorrectionFor(pulses: readonly PulseRow[], day: string): PulseCor
       winningPulse = pulse;
     }
   }
-  return winner;
+  return winner === null || winningPulse === null
+    ? null
+    : { ...winner, saidAtMs: Date.parse(winningPulse.at) };
 }
 
 /** The item sum over an already-chosen set of pulses. */

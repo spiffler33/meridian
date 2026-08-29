@@ -684,7 +684,7 @@ describe('items bucket by span.start — the day it was eaten, not the day it wa
 });
 
 describe('corrections', () => {
-  it('replaces the day\'s arithmetic, and drops the provenance that no longer applies', () => {
+  it('subsumes everything eaten before it, and drops the provenance that no longer applies', () => {
     const day = [
       ate('under', '2026-08-28T19:00:00.000Z', { kcal: 1220, kcalSource: 'estimated' }),
       ate('vague', '2026-08-28T22:00:00.000Z', { kcal: null, kcalSource: 'estimated' }),
@@ -780,6 +780,92 @@ describe('corrections', () => {
     // An older correction underneath a deleted newer one comes back the same way.
     const older = corrects('older', '2026-08-29T09:00:00.000Z', [{ date: '2026-08-28', kcal: 2000 }]);
     expect(dayNutrition([...items, older], '2026-08-28', LA).kcal).toBe(2000);
+  });
+});
+
+describe('a correction is a waterline, not a lid', () => {
+  it('adds what was eaten after it on top of the figure the owner stated', () => {
+    const day = [
+      ate('lunch', '2026-08-29T16:00:00.000Z', { kcal: 780, kcalSource: 'estimated' }),
+      // Midday, reading the ledger and saying what it has come to so far.
+      corrects('so-far', '2026-08-29T19:00:00.000Z', [{ date: '2026-08-29', kcal: 880 }]),
+      ate('tofu', '2026-08-29T21:00:00.000Z', { kcal: 100, kcalSource: 'stated' }),
+    ];
+
+    // Read as a lid this sat at 880 for the rest of the day and every meal
+    // after lunch was discarded, with nothing on screen to say why. Measured
+    // on real data, 2026-08-29, and it is the reason this rule exists.
+    expect(dayNutrition(day, '2026-08-29', LA).kcal).toBe(980);
+  });
+
+  it('reports the provenance of what came after it, and none for the stated part', () => {
+    const day = [
+      ate('morning', '2026-08-29T16:00:00.000Z', { kcal: 500, kcalSource: 'estimated' }),
+      corrects('so-far', '2026-08-29T19:00:00.000Z', [{ date: '2026-08-29', kcal: 880 }]),
+      ate('supper', '2026-08-29T20:00:00.000Z', { kcal: 400, kcalSource: 'estimated' }),
+      ate('vague', '2026-08-29T21:00:00.000Z', { kcal: null, kcalSource: 'estimated' }),
+    ];
+
+    expect(dayNutrition(day, '2026-08-29', LA)).toEqual({
+      kcal: 1280,
+      // The supper's, and only the supper's: there is no estimated share of a
+      // figure the owner stated, and the morning is inside that figure.
+      estimatedKcal: 400,
+      // Likewise — the unsizeable meal is after the waterline, so it is a fact
+      // about the day the number does not cover, and it has to show.
+      uncounted: 1,
+      proteinG: 0,
+      corrected: true,
+    });
+  });
+
+  it('subsumes a meal counted in the same breath as the total', () => {
+    // "had a burrito, 620 — so today's 1500 so far" is one utterance, and they
+    // counted the burrito before saying 1500. The instants are equal, so the
+    // comparison has to be strict or the 620 lands twice.
+    const pulse: PulseRow = {
+      ...corrects('same-breath', '2026-08-29T19:00:00.000Z', [{ date: '2026-08-29', kcal: 1500 }]),
+      nutrition: { kcal: 620, kcalSource: 'stated' },
+    };
+
+    expect(dayNutrition([pulse], '2026-08-29', LA).kcal).toBe(1500);
+  });
+
+  it('moves the waterline with the newer correction rather than counting the gap twice', () => {
+    const day = [
+      corrects('first', '2026-08-29T19:00:00.000Z', [{ date: '2026-08-29', kcal: 880 }]),
+      ate('snack', '2026-08-29T20:00:00.000Z', { kcal: 200, kcalSource: 'stated' }),
+      // Two hours on, they total again — and 1,200 already includes the snack.
+      corrects('second', '2026-08-29T21:00:00.000Z', [{ date: '2026-08-29', kcal: 1200 }]),
+      ate('supper', '2026-08-29T22:00:00.000Z', { kcal: 300, kcalSource: 'stated' }),
+    ];
+
+    expect(dayNutrition(day, '2026-08-29', LA).kcal).toBe(1500);
+  });
+
+  it('leaves a settled day settled when food is remembered for it afterwards', () => {
+    // "friday was 2400", said Saturday; on Sunday a Friday beer is remembered.
+    // It buckets to Friday, correctly — but it was EATEN under the waterline,
+    // and a total stated from memory of the whole day already covers it.
+    const beer: PulseRow = {
+      ...coded('beer', 'note', '2026-08-30T19:00:00.000Z'),
+      span: { start: '2026-08-29T03:00:00.000Z', end: null, approx: true },
+      nutrition: { kcal: 150, kcalSource: 'estimated' },
+    };
+    const fix = corrects('fix', '2026-08-29T19:00:00.000Z', [{ date: '2026-08-28', kcal: 2400 }]);
+
+    expect(dayNutrition([beer, fix], '2026-08-28', LA).kcal).toBe(2400);
+  });
+
+  it('adds protein eaten after a stated protein figure', () => {
+    const day = [
+      ate('lunch', '2026-08-29T16:00:00.000Z', { kcal: 700, kcalSource: 'estimated', proteinG: 40, proteinSource: 'estimated' }),
+      corrects('so-far', '2026-08-29T19:00:00.000Z', [{ date: '2026-08-29', kcal: 880, proteinG: 60 }]),
+      ate('shake', '2026-08-29T20:00:00.000Z', { kcal: 200, kcalSource: 'stated', proteinG: 25, proteinSource: 'stated' }),
+    ];
+
+    // The lunch's 40 g is inside the stated 60; the shake's 25 is not.
+    expect(dayNutrition(day, '2026-08-29', LA).proteinG).toBe(85);
   });
 });
 

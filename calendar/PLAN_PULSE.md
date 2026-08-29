@@ -487,6 +487,12 @@ confirm a number they just typed is a confirmation dialog for their own sentence
 deleting the pulse — the selector then falls back to the item sum, or to the correction
 before it. There is no separate uncorrect gesture and there should not be one.
 
+**A correction is a waterline, not a lid** *(amended 2026-08-29 after a day of living with
+it; see the last run-log entry)*. It states what the day came to as of the instant it was
+said, so it subsumes everything eaten up to that instant and everything after it is added
+on top. Read as a lid it silently swallowed the rest of the day. One rule serves a finished
+day and a day still being lived, and the coder is never asked which one it is looking at.
+
 ## Appendix D — Span closure
 
 1. Stated duration ("next 2h") ⇒ `end = start + duration`.
@@ -1242,3 +1248,66 @@ used by name. Reaching for `/50` on a theme colour is the regression to watch fo
 still owes its ~15 spot-checks, and the target display is still the parked decision. If the
 week's verdict is that the numbers are wrong, that is a `NUTRITION_RULES` question, not a
 typography one — read `schema-before-model` before proposing a model swap.
+
+### 2026-08-29 — a correction is a waterline, not a lid (Gate 5's first verdict)
+
+The calibration week's first day produced a real failure, and this is the amendment it
+earned. **The coder was not at fault** — it read *"I ate 100 cals worth of tofu"* as
+`nutrition: {kcal: 100, kcalSource: "stated"}` on the right day, at rev 3, and the earlier
+*"Saturday (today) 880 cals may be right .. but Friday it was more like 2400"* into two
+correct corrections. Every model-side answer in the failure was right. The arithmetic
+reading them was wrong.
+
+**What broke.** `dayNutrition` treated a correction as replacing the day's item sum
+outright. At 13:56 the owner ratified today at 880; at 14:39 they logged the tofu; the
+line still read `880 kcal · of 1,800`. It had **discarded every calorie logged after the
+ratification**, and — because `NutritionLine` never read `corrected` — it did so with
+nothing on screen to say why. The correct behaviour and the bug were pixel-identical, which
+is why this needed a day of living with it to find rather than a test.
+
+**The rule now.** A correction is the owner saying what the day came to **as of the moment
+they said it**. It subsumes everything eaten up to that instant and everything after it is
+added on top: `kcal = correction.kcal + Σ items eaten after the utterance`. Strictly after,
+so a meal counted in the same breath as the total ("had a burrito, 620 — so today's 1500 so
+far") is inside it rather than added twice.
+
+**One rule covers both kinds of correction, which is why there is only one.** A finished day
+— *"friday was 2400"*, said on Saturday — has nothing eaten after the waterline, so it lands
+on exactly the old answer; every one of the eight correction tests written at rev 3 passed
+unchanged. A day still being lived keeps accruing. Nothing had to ask the coder to tell the
+two apart, `PulseCorrection` did not change, and no event, prompt, migration or backfill was
+involved: this was a selector, and the journal re-reads correctly as it stands.
+
+**The waterline is capture time (`at`), and it is the one instant in `ledger.ts` that is not
+`span.start`.** A correction is not a thing that happened at a time, it is an assertion made
+at a time, and what it asserts is "everything up to *now*". Items keep bucketing by
+`span.start`, so a Friday beer remembered on Sunday still lands on Friday and still sits
+under a Saturday waterline — filed on the right day, and not added to a total that was
+stated from memory of the whole of it.
+
+**The Today line is now one number.** *"these multiple things like stated and estimated is a
+nightmare for an ADHD brain"* — the owner's verdict on living with it, and the parked target
+decision resolved with it. It printed as many as five figures (total · target · estimated
+share · uncounted tally · protein); it now prints `980 kcal · of 1,800`. The estimated share
+and protein are gone from this surface entirely: how much of a total rests on a guess is a
+question asked while reviewing a week, and Energy's two-tone bars already answer it in the
+one place it is asked. **The target stays**, still one array entry. The uncounted tally
+survives as a `+` — `980+ kcal` — because dropping it outright would make the line lie about
+a day with an unsizeable meal in it, and one character carries that fact with no second
+figure and no word to decode. **Protein now renders nowhere**; `DayNutrition.proteinG` is
+still summed and still tested, and giving it a home in Energy is unbuilt and unasked-for.
+
+**`KcalBar` stopped branching on `corrected`.** A corrected day can now legitimately carry an
+estimated share — the part eaten after the waterline — and the old branch drew that share as
+though the owner had stated it. The bar goes single-tone on its own when there is nothing
+after the waterline, which is every finished day. `DayKcal.corrected` is left in place and
+now has no reader; deleting it is a separate cleanup, not this one.
+
+Green: `vitest` 706 passed / 33 files (was 699 / 33; +6 waterline cases in `ledger.test.ts`,
++1 at the `PulseView` seam) · `tsc -b` clean · `npm run build` clean · `npm run lint` clean ·
+`grep -rn "localStorage" src/` → 0.
+
+**Gate 5 stays open.** This was one verdict out of three: correcting a day by saying so now
+works in the hand, and the target display is settled. The estimate-quality question — are the
+coder's numbers in believable range, is `uncounted` rare enough — still needs the week, and
+is still a `NUTRITION_RULES` question if the answer is no. The backfill is still unrun.
