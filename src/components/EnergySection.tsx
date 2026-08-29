@@ -21,15 +21,18 @@ import { useAsync } from '../hooks/useAsync';
 import { deviceTimeZone } from '../lib/calendar';
 import type { CalendarMirror } from '../lib/calendar';
 import {
+  activityTiming,
   claimedEventIds,
   closeSpans,
+  HISTOGRAM_WEEKS,
   ledgerHonesty,
   neededByCalendar,
   pairNeededSpent,
   spentByDomain,
+  trailingWindow,
   weekWindow,
 } from '../lib/ledger';
-import type { CalendarHours, DomainHours } from '../lib/ledger';
+import type { ActivityTiming, CalendarHours, DomainHours } from '../lib/ledger';
 import { getPulses } from '../services/data';
 import { getWeekNumber } from '../utils/dates';
 
@@ -169,6 +172,40 @@ function PairedChart({ paired }: { paired: Array<{ name: string; needed: number;
   );
 }
 
+/** The hours labelled under the strip. Four is enough to read it by; twenty-four is a wall. */
+const HOUR_TICKS = [0, 6, 12, 18];
+
+/**
+ * One activity's day, as twenty-four cells.
+ *
+ * A heat strip rather than bars: the question is "when", and at this size a bar
+ * chart of twenty-four columns is a picket fence. The ramp is the year
+ * heatmap's own, so the two instruments on this page read as one language.
+ */
+function TimingRow({ row }: { row: ActivityTiming }) {
+  const busiest = widestOf(row.hours);
+  return (
+    <div className="space-y-1">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="truncate font-mono text-[11.5px] text-text-secondary">{row.activity}</span>
+        <span className="font-mono text-[11px] tabular-nums text-text-muted">{row.total}</span>
+      </div>
+      <div className="flex gap-px" role="img" aria-label={`${row.activity}: ${row.total} logged`}>
+        {row.hours.map((count, hour) => {
+          const level = count === 0 ? 0 : Math.min(5, Math.ceil((count / busiest) * 5));
+          return (
+            <span
+              key={hour}
+              className={`h-3 flex-1 rounded-[1px] heat-${level}`}
+              title={`${String(hour).padStart(2, '0')}:00 - ${count}`}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function EnergySection({
   mirror,
   selectedDate,
@@ -200,6 +237,10 @@ export function EnergySection({
       needed,
       pairs: pairNeededSpent(needed, spent),
       honesty: ledgerHonesty(pulses, window),
+      // A wider window than everything above it, and deliberately so: a single
+      // week cannot say when something usually happens. The stepper still moves
+      // it — this is the twelve weeks ENDING with the week on screen.
+      timing: activityTiming(pulses, trailingWindow(window, HISTOGRAM_WEEKS, timeZone), timeZone),
     };
   }, [data.value, mirror, selectedDate, timeZone, weekStartsOn]);
 
@@ -259,6 +300,34 @@ export function EnergySection({
             </div>
           )}
 
+          <div className="space-y-3">
+            <div className="flex items-baseline justify-between gap-3">
+              <Label>activity timing</Label>
+              <span className="font-mono text-[11px] text-text-muted">
+                {HISTOGRAM_WEEKS} weeks, local hour
+              </span>
+            </div>
+            {ledger.timing.rows.length === 0 ? (
+              <Empty>nothing coded to an activity yet</Empty>
+            ) : (
+              <div className="space-y-3">
+                {ledger.timing.rows.map(row => (
+                  <TimingRow key={row.activity} row={row} />
+                ))}
+                <div className="flex justify-between font-mono text-[10px] text-text-muted tabular-nums">
+                  {HOUR_TICKS.map(hour => (
+                    <span key={hour}>{String(hour).padStart(2, '0')}</span>
+                  ))}
+                  <span>23</span>
+                </div>
+                {ledger.timing.hidden > 0 && (
+                  <p className="font-mono text-[11px] text-text-muted">
+                    {ledger.timing.hidden} quieter {ledger.timing.hidden === 1 ? 'activity' : 'activities'} not shown
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </section>

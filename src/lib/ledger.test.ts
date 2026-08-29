@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import type { CalendarEvent, CalendarMirror } from './calendar';
 import type { PulseRow, PulseSignal } from './entities';
 import {
+  activityTiming,
   claimedEventIds,
   closeSpans,
   endOfLocalDayMs,
@@ -28,6 +29,8 @@ import {
   pairNeededSpent,
   spentByDomain,
   startOfLocalDayMs,
+  TIMING_ROWS,
+  trailingWindow,
   weekWindow,
 } from './ledger';
 
@@ -106,6 +109,126 @@ describe('local time', () => {
     expect(new Date(week.endMs).toISOString()).toBe('2026-08-30T15:59:59.999Z');
   });
 
+  it('walks a trailing window back whole weeks and keeps the end', () => {
+    const week = weekWindow('2026-08-26', SGT);
+    const trailing = trailingWindow(week, 12, SGT);
+    expect(new Date(trailing.startMs).toISOString()).toBe('2026-06-07T16:00:00.000Z');
+    expect(trailing.endMs).toBe(week.endMs);
+  });
+});
+
+/**
+ * The activity histogram — phase 3's habit-timing strip, rebuilt after phase 4
+ * took habits away from the coder. The label the coder wrote is the whole
+ * input: no habit, no alias map, no vocabulary read.
+ */
+describe('activity timing', () => {
+  const window = trailingWindow(weekWindow('2026-08-26', SGT), 12, SGT);
+
+  const atActivity = (id: string, activity: string, start: string, signal: PulseSignal = 'block') =>
+    coded(id, signal, start, { activity });
+
+  it('buckets by the local hour of the span start, in the given zone', () => {
+    // 23:30 UTC is 07:30 the next morning in Singapore and 16:30 the same
+    // afternoon in Los Angeles: one instant, two answers, both correct.
+    const pulses = [atActivity('a', 'gym', '2026-08-24T23:30:00.000Z')];
+
+    const sgt = activityTiming(pulses, window, SGT);
+    expect(sgt.rows[0].hours[7]).toBe(1);
+    expect(sgt.rows[0].total).toBe(1);
+
+    const la = activityTiming(pulses, trailingWindow(weekWindow('2026-08-26', LA), 12, LA), LA);
+    expect(la.rows[0].hours[16]).toBe(1);
+  });
+
+  it('counts the span start, not when the line was typed', () => {
+    // Said at noon about the morning — the coder back-dated the span, and the
+    // strip must believe the span, or every back-dated block lands at lunch.
+    const rows = activityTiming(
+      [coded('a', 'block', '2026-08-24T04:00:00.000Z', {
+        activity: 'gym',
+        at: '2026-08-24T04:00:00.000Z',
+        span: { start: '2026-08-23T23:00:00.000Z', end: null, approx: true },
+      })],
+      window,
+      SGT
+    );
+    expect(rows.rows[0].hours[7]).toBe(1); // 23:00 UTC = 07:00 SGT
+  });
+
+  it('counts only the signals the bars above it are drawn from', () => {
+    const rows = activityTiming(
+      [
+        atActivity('b', 'gym', '2026-08-24T01:00:00.000Z', 'block'),
+        atActivity('e', 'gym', '2026-08-24T02:00:00.000Z', 'event'),
+        // A line ABOUT the gym is not the gym happening.
+        atActivity('n', 'gym', '2026-08-24T03:00:00.000Z', 'note'),
+        atActivity('s', 'gym', '2026-08-24T04:00:00.000Z', 'state'),
+        atActivity('p', 'gym', '2026-08-24T05:00:00.000Z', 'plan'),
+      ],
+      window,
+      SGT
+    );
+    expect(rows.rows[0].total).toBe(2);
+  });
+
+  it('ignores an uncoded pulse, one with no activity, and one outside the window', () => {
+    const rows = activityTiming(
+      [
+        { id: 'u', text: 'u', at: '2026-08-24T01:00:00.000Z' },
+        atActivity('none', '', '2026-08-24T01:00:00.000Z'),
+        coded('bare', 'block', '2026-08-24T01:00:00.000Z'),
+        atActivity('old', 'gym', '2026-01-02T01:00:00.000Z'),
+      ],
+      window,
+      SGT
+    );
+    expect(rows.rows).toEqual([]);
+    expect(rows.hidden).toBe(0);
+  });
+
+  it('ignores a span start that cannot be read rather than throwing', () => {
+    const rows = activityTiming(
+      [coded('x', 'block', '2026-08-24T01:00:00.000Z', {
+        activity: 'gym',
+        span: { start: 'nope', end: null, approx: false },
+      })],
+      window,
+      SGT
+    );
+    expect(rows.rows).toEqual([]);
+  });
+
+  it('orders by how often, then by name, and never by locale', () => {
+    const rows = activityTiming(
+      [
+        atActivity('a1', 'read', '2026-08-24T01:00:00.000Z'),
+        atActivity('a2', 'read', '2026-08-24T02:00:00.000Z'),
+        atActivity('b1', 'gym', '2026-08-24T03:00:00.000Z'),
+        atActivity('c1', 'admin', '2026-08-24T04:00:00.000Z'),
+      ],
+      window,
+      SGT
+    );
+    expect(rows.rows.map(row => row.activity)).toEqual(['read', 'admin', 'gym']);
+  });
+
+  it('draws the busiest and COUNTS the rest — a cap that hides its own existence is a lie', () => {
+    const pulses = Array.from({ length: TIMING_ROWS + 3 }, (_, index) =>
+      atActivity(`p${index}`, `activity-${index}`, '2026-08-24T01:00:00.000Z')
+    );
+
+    const rows = activityTiming(pulses, window, SGT);
+
+    expect(rows.rows).toHaveLength(TIMING_ROWS);
+    expect(rows.hidden).toBe(3);
+  });
+
+  it('gives every row twenty-four buckets, so an empty hour is drawn rather than missing', () => {
+    const rows = activityTiming([atActivity('a', 'gym', '2026-08-24T01:00:00.000Z')], window, SGT);
+    expect(rows.rows[0].hours).toHaveLength(24);
+    expect(rows.rows[0].hours.filter(count => count === 0)).toHaveLength(23);
+  });
 });
 
 describe('closing a span — Appendix D', () => {

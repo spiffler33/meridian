@@ -16,23 +16,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 import type { CalendarEvent, CalendarMirror } from '../lib/calendar';
-import type { Habit, PulseRow, PulseSignal, PulseVocabRow } from '../lib/entities';
+import type { PulseRow, PulseSignal } from '../lib/entities';
 
 const mocks = vi.hoisted(() => ({
   pulses: [] as PulseRow[],
-  habits: [] as Habit[],
-  vocab: null as PulseVocabRow | null,
 }));
 
+// The stream and nothing else. Energy stopped reading habits and the vocabulary
+// in phase 4, and mocking what it no longer touches would hide a regression
+// rather than prevent one.
 vi.mock('../services/data', async importOriginal => ({
   ...(await importOriginal<typeof import('../services/data')>()),
   getPulses: async () => mocks.pulses,
-  getHabits: async () => mocks.habits,
-}));
-
-vi.mock('../lib/entities', async importOriginal => ({
-  ...(await importOriginal<typeof import('../lib/entities')>()),
-  readPulseVocabRow: () => mocks.vocab,
 }));
 
 vi.mock('../lib/calendar', async importOriginal => ({
@@ -89,8 +84,6 @@ function show(props: Partial<Parameters<typeof EnergySection>[0]> = {}) {
 
 beforeEach(() => {
   mocks.pulses = [];
-  mocks.habits = [];
-  mocks.vocab = null;
 });
 
 afterEach(cleanup);
@@ -100,6 +93,7 @@ describe('the energy section', () => {
     show();
     expect(await screen.findByText('no coded blocks this week')).toBeInTheDocument();
     expect(screen.getByText('no events this week')).toBeInTheDocument();
+    expect(screen.getByText('nothing coded to an activity yet')).toBeInTheDocument();
   });
 
   it("draws the week's hours by domain, with the number outside the bar", async () => {
@@ -186,6 +180,44 @@ describe('the energy section', () => {
     show();
     expect(await screen.findByTitle('db')).toBeInTheDocument();
     expect(screen.queryByText(/uncoded/)).not.toBeInTheDocument();
+  });
+
+  it('plots an activity in the device zone, by the hour its span started', async () => {
+    // 23:30 UTC is 07:30 the next morning in Singapore — the zone the mock
+    // pins, so this reads the same on any machine.
+    mocks.pulses = [
+      coded('g', 'block', '2026-08-24T23:30:00.000Z', { activity: 'gym' }),
+      coded('g2', 'block', '2026-08-25T23:30:00.000Z', { activity: 'gym' }),
+      coded('r', 'block', '2026-08-25T14:00:00.000Z', { activity: 'read' }),
+    ];
+
+    show();
+
+    expect(await screen.findByLabelText('gym: 2 logged')).toBeInTheDocument();
+    expect(screen.getByTitle('07:00 - 2')).toBeInTheDocument();
+    expect(screen.getByLabelText('read: 1 logged')).toBeInTheDocument();
+    // No footnote: nothing was left out.
+    expect(screen.queryByText(/not shown/)).toBeNull();
+  });
+
+  it('reaches twelve weeks back, not just the week the stepper is on', async () => {
+    // Nine weeks before the selected week: outside every other chart on this
+    // page, inside this one.
+    mocks.pulses = [coded('old', 'block', '2026-06-22T23:30:00.000Z', { activity: 'gym' })];
+
+    show();
+
+    expect(await screen.findByLabelText('gym: 1 logged')).toBeInTheDocument();
+  });
+
+  it('says how many quieter activities it did not draw', async () => {
+    mocks.pulses = Array.from({ length: 11 }, (_, index) =>
+      coded(`p${index}`, 'block', '2026-08-25T01:00:00.000Z', { activity: `activity-${index}` })
+    );
+
+    show();
+
+    expect(await screen.findByText('3 quieter activities not shown')).toBeInTheDocument();
   });
 
   it('steps the week through the same handlers the lens above it uses', async () => {

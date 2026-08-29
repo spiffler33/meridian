@@ -248,7 +248,9 @@ Phases 4 and 5 follow, and both are gated on this gate.*
 addendum, which gated it behind Gate 3 — a gate the owner then lifted by hand. Gate 3 is
 still unrun. One departure from the letter of this phase, and it is not small: the habit
 timing strip was **deleted**, not preserved. See the run log entry for why the three
-options below collapsed to one.
+options below collapsed to one — and the entry after it, where the owner ordered the
+replacement built the same day: **an activity histogram**, which answers the same question
+with no habit knowledge at all.
 
 **Goal:** habits and Tower return to fully manual ritual spaces. The coder keeps
 classifying (including `signal: task` — the utterance is still worth recording); it
@@ -968,6 +970,53 @@ pre-existing. `grep -rn "localStorage" src/` → 0.
 **GATE 4, and it is the owner's.** Live with it several days. (a) Do you miss "done with the
 deck" closing the item from the box, or does walking to Tower feel right — is the
 intentionality tax worth it in practice, not just in principle? (b) With only claim and
-vocab chips left, is the stream calmer? And inherited from the collision above: (c) does
+vocab chips left, is the stream calmer? ~~And inherited from the collision above: (c) does
 Energy still say anything useful without the timing strip, or is the activity-histogram
-rebuild worth a phase? STOP.
+rebuild worth a phase?~~ **(c) is answered: the owner ordered the rebuild the same day and
+it shipped — see the entry below. What (c) now asks instead is whether the coder's activity
+labels hold still enough, across twelve weeks, for the strip to mean anything.** STOP.
+
+### 2026-08-29 — the timing strip, rebuilt on `activity`
+
+Ordered by the owner immediately after Phase 4 closed, and built the same session. Not a
+phase of its own: it restores a Phase 3 instrument that Phase 4 removed, on a different
+input, and it changes no contract — no entity, no field, no prompt, no journal write.
+
+**What it is.** `activityTiming(pulses, window, timeZone)` in `ledger.ts`, and an "activity
+timing" strip in Energy where "habit timing" used to sit: one 24-cell heat row per activity,
+the busiest first, over the trailing twelve weeks ending with the week the stepper is on.
+
+**Why it works where the habit version could not.** The old strip counted `links.habitId`,
+which the coder can no longer write — it never sees a habit. It still writes `activity`, a
+short label, on every coded pulse. That needs no habit, no alias map, and no vocabulary read
+at all, which also keeps Energy's promise not to seed anything by being opened. And it is
+strictly wider: it answers "when does this happen" for everything the owner talks about
+rather than only for the handful of things they had made a habit of and aliased.
+
+**Four readings, each one line, each meant to be flipped at a gate.**
+- **`SPENT_SIGNALS` decides what counts** — `block` and `event`, the same set the bars above
+  are drawn from, so the two instruments cannot disagree about what a week contained. A
+  `note` mentioning the gym is not the gym happening.
+- **`span.start`, not `at`.** The moment the activity began, so a block the coder back-dated
+  ("gym this morning", said at noon) lands in the morning.
+- **A row appears only where something was logged.** The habit strip drew empty rows on
+  purpose — a fixed roster the owner had configured, where "you have never logged this" was
+  the answer. Activities are an open set the coder can add to; a row per vocabulary word
+  would be a list of words, not an answer.
+- **`TIMING_ROWS = 8`, and the remainder is COUNTED, not dropped** — "n quieter activities
+  not shown". Twelve weeks of an ordinary life is more than eight labels, and twenty heat
+  strips on a phone answer nothing; a cap that hides its own existence would be the section
+  quietly lying about its scope.
+
+**Also cleaned up:** `EnergySection.test.tsx` had kept mocks for `getHabits` and
+`readPulseVocabRow` after Phase 4 stopped Energy calling either. Mocking what a component no
+longer touches hides a regression rather than preventing one, so both are gone and the file
+now mocks the stream alone.
+
+**Verified:** `vitest` 649 passed / 33 files, green three consecutive runs (637 → 649: nine
+arithmetic tests, three rendering ones, and `trailingWindow` restored). `tsc -b` exit 0,
+`npm run build` exit 0, `npm run lint` at the same 6 pre-existing errors, `localStorage` 0.
+
+**No gate of its own.** It reports to Gate 4's question (c), which is no longer "should this
+be rebuilt" but "do the coder's activity labels hold still enough, across twelve weeks, for
+the strip to mean anything" — a question only real coded weeks can answer.

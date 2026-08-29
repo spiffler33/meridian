@@ -49,6 +49,27 @@ const SPENT_SIGNALS: readonly PulseSignal[] = ['block', 'event'];
 /** Appendix A's calendar whose hours are not the owner's until a pulse claims one. */
 const HOME_CALENDAR = 'home';
 
+/**
+ * The timing histogram's trailing window, in weeks.
+ *
+ * One week is not enough to answer "when does this happen": a habit done three
+ * times gives three points across twenty-four buckets, which is noise wearing
+ * a chart's clothes. Twelve weeks is long enough to have a shape and short
+ * enough that a shape which changed is visible.
+ */
+export const HISTOGRAM_WEEKS = 12;
+
+/**
+ * How many activity rows the strip draws. The rest are counted in a footnote,
+ * never silently dropped.
+ *
+ * Unlike domains, activities are an open set: the coder answers a short label
+ * and may answer one the vocabulary does not hold yet. Twelve weeks of an
+ * ordinary life is a dozen or more of them, and a phone screen of twenty
+ * heat strips answers nothing. The busiest are the ones the question is about.
+ */
+export const TIMING_ROWS = 8;
+
 /** A half-open-ish instant range; both ends inclusive, `endMs` being the last ms of the last day. */
 export type LedgerWindow = { startMs: number; endMs: number };
 
@@ -152,6 +173,12 @@ export function weekWindow(date: string, timeZone: string, weekStartsOn: 0 | 1 =
     startMs: startOfLocalDayMs(days[0], timeZone),
     endMs: startOfLocalDayMs(addDays(days[6], 1), timeZone) - 1,
   };
+}
+
+/** The trailing `weeks` window ending with the one `window` belongs to. */
+export function trailingWindow(window: LedgerWindow, weeks: number, timeZone: string): LedgerWindow {
+  const firstDay = dayKey(window.startMs, timeZone);
+  return { startMs: startOfLocalDayMs(addDays(firstDay, -7 * (weeks - 1)), timeZone), endMs: window.endMs };
 }
 
 /** How much of a range falls inside a window, in ms. Zero when they miss each other. */
@@ -412,6 +439,78 @@ export function pairNeededSpent(needed: readonly CalendarHours[], spent: readonl
   const pairedNames = new Set(paired.map(pair => pair.name));
   const spentOnly = spent.filter(bar => bar.domain === null || !pairedNames.has(bar.domain));
   return { paired, neededOnly, spentOnly };
+}
+
+// ============================================================================
+// Timing — when an activity actually happens
+// ============================================================================
+
+/** One activity's 24 buckets of local start-hour, over the trailing window. */
+export type ActivityTiming = {
+  activity: string;
+  /** 24 counts, index = local hour. */
+  hours: number[];
+  total: number;
+};
+
+/** Every row the window holds, and how many of them the strip has room to draw. */
+export type ActivityTimingResult = { rows: ActivityTiming[]; hidden: number };
+
+/**
+ * When each activity actually happens.
+ *
+ * This is phase 3's habit-timing strip, rebuilt on the one thing the coder
+ * still knows after phase 4. The old one counted `links.habitId`, which fence 9
+ * retired along with the coder's view of habits; the label the coder writes
+ * into `activity` needs no habit, no alias map, and no vocabulary read, and it
+ * answers the same question — "when do I actually go to the gym" — for
+ * anything the owner talks about, not only for things they made a habit of.
+ *
+ * Counted over `span.start`, which is the moment the activity BEGAN, not the
+ * moment the line was typed. A block back-dated by the coder ("gym this
+ * morning", said at noon) lands in the morning where it belongs.
+ *
+ * Only `SPENT_SIGNALS` — the same set the bars above are drawn from, so the two
+ * instruments cannot disagree about what counted. A `note` mentioning the gym
+ * is not the gym happening, and `state`/`plan` are not either. That is one line
+ * to widen if a gate says so.
+ *
+ * A row appears only where something was logged. The habit strip drew empty
+ * rows on purpose — a fixed set of habits the owner had configured, where "you
+ * have never logged this" was itself the answer. Activities are an open set
+ * with no such roster: a row for every label the vocabulary happens to hold
+ * would be a list of words, not an answer.
+ */
+export function activityTiming(
+  pulses: readonly PulseRow[],
+  window: LedgerWindow,
+  timeZone: string
+): ActivityTimingResult {
+  const rows = new Map<string, ActivityTiming>();
+
+  for (const pulse of pulses) {
+    if (pulse.signal === undefined) continue;
+    if (!SPENT_SIGNALS.includes(pulse.signal)) continue;
+    const activity = pulse.activity ?? null;
+    if (activity === null || activity.length === 0) continue;
+    const startMs = Date.parse(pulse.span?.start ?? '');
+    if (!Number.isFinite(startMs)) continue;
+    if (startMs < window.startMs || startMs > window.endMs) continue;
+
+    const row = rows.get(activity) ?? { activity, hours: new Array<number>(24).fill(0), total: 0 };
+    row.hours[localHour(startMs, timeZone)] += 1;
+    row.total += 1;
+    rows.set(activity, row);
+  }
+
+  const ordered = [...rows.values()].sort((a, b) => {
+    if (a.total !== b.total) return b.total - a.total;
+    // Plain code-unit comparison, never locale-aware: two devices showing the
+    // same twelve weeks must order the rows the same way.
+    return a.activity < b.activity ? -1 : a.activity > b.activity ? 1 : 0;
+  });
+
+  return { rows: ordered.slice(0, TIMING_ROWS), hidden: Math.max(0, ordered.length - TIMING_ROWS) };
 }
 
 // ============================================================================
