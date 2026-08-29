@@ -11,11 +11,24 @@ of the owner's utterances. Authored-AI prose returns only where there is content
 synthesize (ask-the-library, its own future plan). The day-shape briefing is dead
 (see PLAN_CALENDAR amendment).
 
+## Status — all four phases built and deployed, 2026-08-29
+
+Phases 0, 1, 2 and 3 are on `main` and live at meridian.spiffler.xyz. **No coding work
+remains in this plan.** What is left is the owner's: **Gate 0** (does Read feel cleaner
+without Week as a view?), **Gate 2** (a week of coded living, then judge 20 pulses like an
+ATUS supervisor), and **Gate 3** (two weeks of ledger). Gate 2 was not run before Phase 3
+was built — recorded, with the reason, in that phase's run-log entry. Each gate's verdict
+is an amendment to this file, not a new plan.
+
 ## How to execute this plan
 
 - **One phase per run. Stop at every gate.** Owner reviews on device between phases and
   may amend this file before the next run.
-- Work lands on `local-first`. Never push `main` mid-phase.
+- ~~Work lands on `local-first`. Never push `main` mid-phase.~~ **Superseded 2026-08-29 by
+  the owner:** work is committed and pushed to `main` directly, and `local-first` is
+  fast-forwarded to match. Pushing `main` is what deploys, and IndexedDB is per-origin —
+  the PATs and the Claude key exist only on `meridian.spiffler.xyz`, so a gate cannot be
+  run from a branch or from localhost at all.
 - Each phase ends: `vitest` green, `grep -rn "localStorage" src/` → 0, gate checklist met.
 - Conflicts with `CLAUDE.md` ⇒ stop and ask. `CLAUDE.md` wins on journal, sync, tokens.
 

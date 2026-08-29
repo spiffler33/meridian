@@ -44,10 +44,10 @@ export const OPEN_BLOCK_CAP_MS = 4 * MS_PER_HOUR;
  * event onto the *Needed* side, where counting it again as Spent would be the
  * same hour billed twice. Gate 3 can overrule it by editing this line.
  */
-export const SPENT_SIGNALS: readonly PulseSignal[] = ['block', 'event'];
+const SPENT_SIGNALS: readonly PulseSignal[] = ['block', 'event'];
 
 /** Appendix A's calendar whose hours are not the owner's until a pulse claims one. */
-export const HOME_CALENDAR = 'home';
+const HOME_CALENDAR = 'home';
 
 /** The habit histogram's trailing window, in weeks. */
 export const HISTOGRAM_WEEKS = 12;
