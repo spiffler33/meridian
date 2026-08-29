@@ -24,13 +24,16 @@ plan.
 `calendar/PLAN_PULSE_PHASES_4_5.md`, together with **hard fence 9**. Phase 4 retires the
 coder's actuator effects; Phase 5 adds the nutrition ledger.
 
-**Phase 4 is built and deployed, 2026-08-29.** The addendum gated it behind Gate 3; the
+**Phase 4 is built and deployed, 2026-08-29**, along with the **activity histogram** that
+replaced the habit timing strip it removed. The addendum gated Phase 4 behind Gate 3; the
 owner lifted that gate the same day and ordered it built — *"i dont like this gating you
-choose - this is my decision not yours"* — so it shipped with Gate 3 still open. **Gate 4
-is now open and is the owner's**, and it inherits Gate 3's questions about Energy, which
-lost its habit timing strip in this phase. **Phase 5 remains gated on Gate 3** and nothing
-in `src/` implements it; where the appendices below carry a Phase 5 shape they say so
-inline.
+choose - this is my decision not yours"* — so it shipped with Gate 3 still open, and the
+same call governs what follows. **Gate 4 is now open and is the owner's.**
+
+**Phase 5 is next, by the owner's instruction, with Gate 3 still unrun.** The addendum
+gates it behind Gate 3; that gate is the owner's to lift and they have lifted it. Nothing
+in `src/` implements Phase 5 yet; where the appendices below carry a Phase 5 shape they say
+so inline, and the shipped code still matches the pre-Phase-5 shape.
 
 ## How to execute this plan
 
@@ -300,7 +303,9 @@ and vocab chips left, is the stream calmer? STOP.
 
 ## Phase 5 — Nutrition ledger (calories + protein; arithmetic only)
 
-**GATED: does not begin until GATE 3 has passed.** Added 2026-08-29 by the owner.
+**NEXT. Unbuilt.** Added 2026-08-29 by the owner, who lifted its Gate 3 gate the same day
+and ordered it built next — Gate 3 is still unrun, and Gate 5's calibration week is what
+will judge this phase instead. Nothing in `src/` implements any of it.
 
 **Goal:** daily kcal and protein totals from ordinary food pulses. Stated numbers win,
 estimates are marked, vague items are visibly uncounted. The ledger reads like something
