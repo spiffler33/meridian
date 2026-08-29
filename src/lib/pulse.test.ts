@@ -212,10 +212,11 @@ describe('the pulse fold', () => {
 
     await enqueue([revived]);
     resetSession();
-    // The pre-delete text does not survive the resurrection: the row mapping
-    // falls back to '' for a field nothing wrote after the tombstone, not the
-    // old value.
-    expect(await getPulses()).toEqual([{ id: 'p1', text: '', at: '2026-08-27T10:00:00.000Z' }]);
+    // The fold above still resurrects `p1` — that is the journal's contract for
+    // every entity and the assertions on `afterRevive` pin it. The row reader
+    // is where it stops: the resurrection carries no `text`, so on this replica
+    // there is no pulse to read, only an orphan the journal remembers.
+    expect(await getPulses()).toEqual([]);
   });
 });
 
@@ -386,29 +387,35 @@ describe('enrichPulse', () => {
     expect(row?.vocabProposal).toBeUndefined();
   });
 
-  it('does not read back or throw when the row is not found afterward — the write still lands (L4)', async () => {
-    // Simulates the race commit's generation guard allows: the row is not (or
-    // no longer) in this session, but the event must still be safe and queued
-    // rather than thrown away, unlike createPulse's read-back-and-throw.
+  it('writes nothing, and does not throw, when the row is not in this session (L4)', async () => {
+    // L4 used to pin the opposite: queue the event anyway, because a row absent
+    // from this session may still exist remotely (a `resetSession()` landing
+    // mid-call), and an event is safe where a throw loses the coding.
+    //
+    // The delete guard reverses it, because the two cases are indistinguishable
+    // from here — absent is absent. Skipping costs a coder round trip, since an
+    // uncoded pulse stays visible to the sweep and is picked up again. Writing
+    // blind costs a resurrected ghost the reader must then filter forever. The
+    // recoverable failure wins. Still resolves rather than throwing, unlike
+    // createPulse's read-back-and-throw.
     await expect(enrichPulse('never-created', SAMPLE_CODING)).resolves.toBeUndefined();
 
     const queued = await peekOutbox<JournalEvent & OutboxRecord>();
-    expect(queued.some((event) => event.entityId === 'never-created' && event.type === 'upsert')).toBe(true);
+    expect(queued.some((event) => event.entityId === 'never-created')).toBe(false);
   });
 
-  it("an enrichment landing after a delete resurrects the pulse with text and at both falling back — pinned P2 behaviour, sharpened by fence 1's own ban on carrying `at`", async () => {
+  it('an enrichment landing after a delete does not bring the pulse back — a folded row with no text was never captured here', async () => {
     const created = await createPulse('temporary note');
     await deletePulse(created.id);
 
     await enrichPulse(created.id, SAMPLE_CODING);
 
+    // Was pinned the other way (P2): the enrichment resurrected the row and it
+    // read back with text '' and an epoch `at`. The ledger is what reversed it
+    // — a ghost with nutrition kept counting kcal for a deleted meal, and a
+    // ghost correction stood at the epoch floor, outranking every real one.
     const rows = await getPulses();
-    const resurrected = rows.find((r) => r.id === created.id);
-    // Fence 1 forbids enrichPulse from carrying `at`, so unlike the
-    // hand-crafted revival in "the pulse fold" above (which deliberately
-    // supplied a fresh `at`), here BOTH text and at fall back — text to '',
-    // at to the epoch floor toPulseRow uses for a field nothing wrote.
-    expect(resurrected).toMatchObject({ id: created.id, text: '', at: '1970-01-01T00:00:00.000Z', signal: 'task' });
+    expect(rows.some((r) => r.id === created.id)).toBe(false);
   });
 });
 

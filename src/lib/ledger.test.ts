@@ -8,15 +8,23 @@
  * owner for the household's dentist, and an hour bucketed by UTC so every
  * evening habit west of Greenwich plots at dawn.
  *
- * Pure throughout — no IndexedDB, no fetch. Two zones on either side of UTC
- * are used deliberately: a bug that reads a local day off `slice(0, 10)`
+ * Pure until the last block — no IndexedDB, no fetch. Two zones on either side
+ * of UTC are used deliberately: a bug that reads a local day off `slice(0, 10)`
  * passes in Europe and fails in both of them.
+ *
+ * The final block is the exception, and says why in its own comment: the ghost
+ * a deleted-then-enriched pulse leaves is a row nothing constructs on purpose,
+ * so it can only be reached through the real capture path.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { CalendarEvent, CalendarMirror } from './calendar';
+import { closeDb, enqueue } from './db';
+import { ENTITY, resetSession } from './entities';
 import type { PulseRow, PulseSignal } from './entities';
+import { fold } from './journal';
+import type { JournalEvent } from './journal';
 import {
   activityTiming,
   claimedEventIds,
@@ -36,6 +44,9 @@ import {
   weekNutrition,
   weekWindow,
 } from './ledger';
+import { CODER_REV } from '../services/coder';
+import type { Coding } from '../services/coder';
+import { createPulse, deletePulse, enrichPulse, getPulses } from '../services/data';
 
 const SGT = 'Asia/Singapore';
 const LA = 'America/Los_Angeles';
@@ -923,5 +934,157 @@ describe('weekNutrition with corrections', () => {
     // Monday's unsizeable meal is inside the owner's stated total now. Tuesday's
     // is still genuinely uncounted.
     expect(weekNutrition(pulses, '2026-08-26', LA, 1).uncounted).toBe(1);
+  });
+});
+
+/**
+ * The ghost a deleted-then-enriched pulse used to leave in the ledger.
+ *
+ * Not pure, unlike everything above: the whole point is the seam between the
+ * fold and the row reader, so these drive the real service — capture, delete,
+ * enrich — and read back through `getPulses`, which is `readPulseRows`. Hand-
+ * built rows could not show it, because the row that used to reach the ledger
+ * was one nothing in the app ever constructed on purpose.
+ *
+ * `fold` still resurrects such an entity, and test three pins that it does.
+ * Journal-level resurrection is the contract for all twelve entities; what
+ * changed is that a folded pulse with no `text` is not a pulse this replica
+ * captured, so no reader returns it.
+ */
+describe('a deleted pulse enriched afterwards never reaches the ledger', () => {
+  beforeEach(() => {
+    resetSession();
+  });
+  afterEach(async () => {
+    resetSession();
+    await closeDb();
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.deleteDatabase('meridian');
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error ?? new Error('deleteDatabase failed'));
+      request.onblocked = () => reject(new Error('deleteDatabase was blocked: a test leaked a connection'));
+    });
+  });
+
+  /** A coding carrying only what the ledger reads. */
+  function coding(nutrition: Coding['nutrition'], corrections: Coding['corrections'] = []): Coding {
+    return {
+      signal: 'note',
+      domain: null,
+      activity: null,
+      people: [],
+      span: { start: '2026-08-28T19:00:00.000Z', end: null, approx: false },
+      links: { eventId: null },
+      nutrition,
+      corrections,
+      coderRev: CODER_REV,
+      effects: [],
+      vocabProposal: null,
+    };
+  }
+
+  it('does not count a deleted meal\'s calories, while the meal beside it still counts', async () => {
+    const deleted = await createPulse('a burrito');
+    const kept = await createPulse('an apple');
+    await deletePulse(deleted.id);
+
+    // The coder was already running when the delete landed. Both enrichments
+    // are written; only one of them has a pulse left to attach to.
+    await enrichPulse(deleted.id, coding({ kcal: 620, kcalSource: 'estimated' }));
+    await enrichPulse(kept.id, coding({ kcal: 500, kcalSource: 'stated' }));
+
+    const rows = await getPulses();
+    expect(rows.map((row) => row.id)).toEqual([kept.id]);
+
+    // 620 + 500 was the old number, and nothing on screen said where the 620
+    // came from — the line it was eaten with had been deleted hours earlier.
+    expect(dayNutrition(rows, '2026-08-28', LA)).toEqual({
+      kcal: 500,
+      estimatedKcal: 0,
+      uncounted: 0,
+      proteinG: 0,
+      corrected: false,
+    });
+  });
+
+  it('lets no deleted correction stand: the day falls back to the sum of its items', async () => {
+    const meal = await createPulse('an apple');
+    await enrichPulse(meal.id, coding({ kcal: 500, kcalSource: 'stated' }));
+
+    const correction = await createPulse('scratch that, tuesday was 2400');
+    await deletePulse(correction.id);
+    await enrichPulse(correction.id, coding(null, [{ date: '2026-08-28', kcal: 2400 }]));
+
+    const rows = await getPulses();
+    expect(rows.map((row) => row.id)).toEqual([meal.id]);
+
+    // The worst shape of the ghost. A correction is a waterline — it subsumes
+    // what came before and adds what came after — and a resurrected one has no
+    // `at`, so it sits at the epoch floor with the whole day after it. The old
+    // reading was 2400 + 500, from a sentence the owner had already retracted.
+    const total = dayNutrition(rows, '2026-08-28', LA);
+    expect(total.corrected).toBe(false);
+    expect(total.kcal).toBe(500);
+  });
+
+  it('excludes it across devices too: A captures and deletes, B enriches, and the fold still resurrects it', async () => {
+    const captured: JournalEvent = {
+      id: 'e-capture',
+      device: 'a',
+      seq: 1,
+      ts: 100,
+      type: 'upsert',
+      entity: ENTITY.pulse,
+      entityId: 'p-ghost',
+      fields: { text: 'a burrito', at: '2026-08-28T19:00:00.000Z' },
+    };
+    const removed: JournalEvent = {
+      id: 'e-delete',
+      device: 'a',
+      seq: 2,
+      ts: 200,
+      type: 'delete',
+      entity: ENTITY.pulse,
+      entityId: 'p-ghost',
+    };
+    // B had not synced the delete when it coded the pulse, so its enrichment is
+    // the newest event and resurrects the entity. Fence 1 keeps `text` out of
+    // it, which is exactly what makes the ghost recognisable.
+    const enriched: JournalEvent = {
+      id: 'e-enrich',
+      device: 'b',
+      seq: 1,
+      ts: 300,
+      type: 'upsert',
+      entity: ENTITY.pulse,
+      entityId: 'p-ghost',
+      fields: {
+        signal: 'note',
+        span: { start: '2026-08-28T19:00:00.000Z', end: null, approx: false },
+        nutrition: { kcal: 620, kcalSource: 'estimated' },
+        coderRev: CODER_REV,
+      },
+    };
+
+    // The journal's own answer is unchanged, and must stay unchanged: the
+    // entity is back, carrying only what B wrote, with no `text` among it.
+    const folded = fold([captured, removed, enriched]);
+    expect(folded.warnings).toEqual([]);
+    expect(folded.state.pulse?.['p-ghost']).toMatchObject({ nutrition: { kcal: 620 } });
+    expect(folded.state.pulse?.['p-ghost']).not.toHaveProperty('text');
+
+    // The reader's answer is where it stops.
+    await enqueue([captured, removed, enriched]);
+    resetSession();
+    const rows = await getPulses();
+    expect(rows).toEqual([]);
+
+    expect(dayNutrition(rows, '2026-08-28', LA)).toEqual({
+      kcal: 0,
+      estimatedKcal: 0,
+      uncounted: 0,
+      proteinG: 0,
+      corrected: false,
+    });
   });
 });

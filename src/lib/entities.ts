@@ -1181,8 +1181,34 @@ export function readReadItemRows(): ReadItemRow[] {
   return rowsOf(ENTITY.readItem, toReadItemRow);
 }
 
+/**
+ * Every pulse this replica actually captured.
+ *
+ * A folded pulse carrying no `text` field was never captured here, and is not
+ * a pulse. The fold drops a deleted field's key outright, so an enrichment
+ * landing after a delete resurrects the entity holding only what the
+ * enrichment wrote — nutrition, corrections, a coderRev — and no utterance.
+ * The ledger would then count that ghost: a deleted meal keeps its kcal, and a
+ * deleted correction stands with an epoch waterline that outranks every real
+ * one. So the row reader excludes it, and every reader — stream, sweep,
+ * backfill, ledger, corrections — inherits the exclusion from this one gate.
+ *
+ * `fold` itself is untouched: journal-level resurrection is the contract for
+ * all twelve entities, and a replica that fetches the delete later must still
+ * converge on the same state. This is the pulse row reader's contract, not the
+ * journal's.
+ *
+ * Absence of the field, not an empty string: `''` is an utterance that folded
+ * to nothing, which is a capture, and stays visible.
+ */
 export function readPulseRows(): PulseRow[] {
-  return rowsOf(ENTITY.pulse, toPulseRow);
+  const records = bucket(ENTITY.pulse);
+  const rows: PulseRow[] = [];
+  for (const id of Object.keys(records)) {
+    if (!('text' in records[id])) continue;
+    rows.push(toPulseRow(id, records[id]));
+  }
+  return rows;
 }
 
 /**

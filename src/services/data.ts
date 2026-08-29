@@ -512,18 +512,19 @@ export async function deletePulse(id: string): Promise<void> {
  * Write the coder's derived fields to a pulse.
  *
  * Carries neither `text` nor `at` (fence 1): field-level last-writer-wins
- * then cannot clobber the verbatim line no matter when this lands — including
- * after the pulse has been deleted. An enrichment landing after a delete
- * resurrects the pulse carrying only these fields, so `text` falls back to
- * `''`; that is pinned behaviour in `pulse.test.ts`, not a bug this guards
- * against (P2), and this function does not check whether the pulse still
- * exists before writing.
+ * then cannot clobber the verbatim line no matter when this lands.
  *
- * No read-back. `createPulse`'s read-and-throw-`NOT_FOUND` is a live hazard
- * here, not a check: a concurrent `resetSession()` (a pull landing mid-call)
- * can leave this event durably enqueued without applying it to the current
- * session (L4), and that is fine as-is — the event is safe, and the next read
- * sees it.
+ * An enrichment landing after a delete still resurrects the entity at the
+ * journal level — that is the fold's contract for all twelve entities and is
+ * not negotiable here. What changed is that `readPulseRows` no longer returns
+ * such a row, and this guard keeps the orphan out of the journal in the first
+ * place on the one device that can see the delete.
+ *
+ * The guard is best-effort by construction. A row absent from this session is
+ * indistinguishable from one deleted a moment ago, so a `resetSession()`
+ * landing mid-call (L4) also skips the write. That costs a coder round trip —
+ * the pulse stays uncoded and the sweep picks it up again — where writing
+ * blind would cost a resurrected ghost. Still no throw and no log.
  *
  * `links` is the one field this MERGES rather than replaces (see `mergeLinks`),
  * and the read it needs is why this queues with the chip applies: the same
@@ -532,6 +533,12 @@ export async function deletePulse(id: string): Promise<void> {
 export async function enrichPulse(id: string, coding: Coding, scope: EnrichmentScope = 'full'): Promise<void> {
   return serializePulseWrite(async () => {
     await hydrate();
+    const existing = readPulseRows().find((row) => row.id === id);
+    // Belt for the single-device race: captured, coded, deleted while the coder
+    // ran, enrichment lands last. `readPulseRows` already hides the ghost from
+    // every reader, so this only keeps the orphan out of the journal. No throw,
+    // no log — a deleted pulse is not an error, it is the owner's decision.
+    if (existing === undefined) return;
     // Every field of the coding except the two fence 1 forbids. `effects` and
     // `vocabProposal` are stored rather than held in memory: a coded pulse is
     // invisible to the sweep forever, so a proposal that lived only in the
@@ -543,7 +550,7 @@ export async function enrichPulse(id: string, coding: Coding, scope: EnrichmentS
       activity: coding.activity,
       people: coding.people,
       span: coding.span,
-      links: mergeLinks(readPulseRows().find((row) => row.id === id)?.links, coding.links),
+      links: mergeLinks(existing.links, coding.links),
       nutrition: coding.nutrition,
       corrections: coding.corrections,
       coderRev: coding.coderRev,

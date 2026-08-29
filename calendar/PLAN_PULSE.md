@@ -1317,3 +1317,46 @@ Green: `vitest` 706 passed / 33 files (was 699 / 33; +6 waterline cases in `ledg
 works in the hand, and the target display is settled. The estimate-quality question — are the
 coder's numbers in believable range, is `uncounted` rare enough — still needs the week, and
 is still a `NUTRITION_RULES` question if the answer is no. The backfill is still unrun.
+
+### 2026-08-29 — pinned → guarded: an enrichment after a delete is not a pulse
+
+Gate 5's second finding, and the second time the ledger has convicted arithmetic that was
+behaving exactly as pinned. **This reverses a decision that was deliberate.** P2 pinned
+enrichment-after-delete as resurrection and `pulse.test.ts` asserted it twice: the row came
+back with `text: ''` and — since fence 1 forbids `enrichPulse` from carrying `at` — an epoch
+`at`. It was pinned as a curiosity of the fold. The ledger made it a number on screen.
+
+**What it cost.** A deleted food pulse kept its calories: the coder was already running when
+the line was deleted, its enrichment landed last, and the entity came back carrying nutrition
+and no utterance. The day's total counted a meal whose line the owner had removed, with
+nothing on screen to attribute it to. A deleted **correction** was worse — a resurrected one
+has no `at`, so its waterline sits at the epoch floor with the entire day after it, and a
+retracted sentence outranked every real correction on that day forever.
+
+**The rule now.** *A folded pulse that carries no `text` field was never captured on this
+replica, and is not a pulse.* Absence of the field, not an empty string: `''` is an utterance
+that folded to nothing, which is a capture, and stays visible. `readPulseRows` is the single
+gate, so stream, sweep, backfill, ledger and corrections all inherit it from one line.
+
+**`fold` is untouched, and must stay untouched.** Journal-level resurrection is a CLAUDE.md
+invariant for all twelve entities, and a replica that fetches the delete later has to converge
+on the same state as one that fetched it first. The fold still resurrects the entity; the row
+reader is where it stops. This is the pulse row reader's contract, not the journal's — which
+is why there is no schema change, no migration, no coder rev, and no fence touched. The
+journal re-reads correctly as it stands.
+
+**`enrichPulse` also returns without writing when the row is gone** — belt for the
+single-device race, keeping the orphan out of the journal rather than merely out of the
+reader. This one has a real cost and it is recorded on purpose: **L4 is reversed.** A row
+absent from this session used to be written blind, because absence may mean a `resetSession()`
+landed mid-call rather than a delete, and the two are indistinguishable from there. Skipping
+costs a coder round trip — an uncoded pulse stays visible to the sweep and is picked up again.
+Writing blind costs a ghost the reader must filter forever. The recoverable failure wins.
+
+**Tests.** The two P2 pins in `pulse.test.ts` now assert the opposite; the `fold()` half of the
+fold test is unchanged and still pins resurrection, which is the point. Three added to
+`ledger.test.ts` — a deleted meal beside a kept one, a deleted correction falling back to the
+item sum, and a hand-built cross-device journal (A captures, A deletes, B enriches) whose fold
+is asserted to still resurrect before the reader is asserted to exclude it. That last one is
+the only ledger test that fails if the reader gate alone is removed; the other two are covered
+by the `enrichPulse` guard, which is the division of labour the two deltas were written to.
