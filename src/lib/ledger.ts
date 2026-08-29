@@ -20,8 +20,8 @@
 
 import { dayKey } from './calendar';
 import type { CalendarEvent, CalendarMirror } from './calendar';
-import type { PulseRow, PulseSignal } from './entities';
-import { pulsesForDay } from './pulse';
+import type { PulseCorrection, PulseRow, PulseSignal } from './entities';
+import { compareOldestFirst } from './pulse';
 import { addDays, getWeekDates } from '../utils/dates';
 
 const MS_PER_HOUR = 60 * 60 * 1000;
@@ -560,18 +560,23 @@ export type DayNutrition = {
   uncounted: number;
   /** One best-effort total. Sources are stored per pulse but not surfaced in v1. */
   proteinG: number;
+  /**
+   * The owner stated this day's total, so the arithmetic below it is not what
+   * is shown. Both surfaces read this to stop drawing provenance that no
+   * longer applies — there is no estimated share of a number the owner gave.
+   */
+  corrected: boolean;
 };
 
-const NO_NUTRITION: DayNutrition = { kcal: 0, estimatedKcal: 0, uncounted: 0, proteinG: 0 };
+const NO_NUTRITION = { kcal: 0, estimatedKcal: 0, uncounted: 0, proteinG: 0 };
 
 /**
  * Sum one local day's nutrition.
  *
- * Bucketed by `at` through `pulsesForDay`, which is the same rule the stream
- * itself uses — the line sits directly above the box and must add up exactly
- * the lines visible above it. Not `span.start`: a span can be back-dated
- * ("had lunch at noon" said at four), and a total that silently disagrees
- * with the day it is printed on is worse than one that is merely coarse.
+ * Two things are added up here and the first outranks the second: what the
+ * owner SAID this day came to (`corrections`), and failing that, the items
+ * they logged on it. Items bucket by `span.start` — the day the food was
+ * eaten, not the day it was mentioned; see `eatenOn`.
  *
  * `kcal: null` is the uncounted case and adds nothing to the total — the
  * count of them is returned instead, so a day that dropped two meals reads as
@@ -584,11 +589,85 @@ export function dayNutrition(
   day: string,
   timeZone: string
 ): DayNutrition {
-  return sumNutrition(pulsesForDay(pulses, day, timeZone));
+  const items = sumNutrition(pulses.filter((pulse) => eatenOn(pulse, timeZone) === day));
+
+  const correction = newestCorrectionFor(pulses, day);
+  if (correction === null) return { ...items, corrected: false };
+
+  // The owner's own number for the day, and it replaces the arithmetic rather
+  // than joining it. `estimatedKcal` and `uncounted` go to zero with it: both
+  // describe how the sum below was arrived at, and there is no estimated share
+  // of a figure the owner stated. A meal nobody could size is subsumed by it
+  // too — that is what stating a day's total means.
+  return {
+    kcal: correction.kcal,
+    estimatedKcal: 0,
+    uncounted: 0,
+    // Protein is corrected only when the correction says so. "friday was 2400"
+    // is a claim about calories and says nothing about protein, and throwing
+    // the item sum away would silently zero it.
+    proteinG: correction.proteinG ?? items.proteinG,
+    corrected: true,
+  };
 }
 
-/** The same sum over an already-chosen set of pulses. */
-function sumNutrition(pulses: readonly PulseRow[]): DayNutrition {
+/**
+ * The local day a pulse's food belongs to: when it was EATEN, not when it was
+ * said.
+ *
+ * `span.start` and not `at`, which is the rest of this file's rule already
+ * (`activityTiming` counts by `span.start` for the same reason) and was this
+ * selector's own bug until 2026-08-29. The coder back-dates a span when the
+ * owner says so, and a supper logged the next morning belongs to the night it
+ * was eaten — bucketing it by capture time puts it permanently on the wrong
+ * day, and no correction can move it because it is not the day that is wrong.
+ *
+ * The stream still reads by `at`, which is right for the stream: it shows what
+ * was SAID today. The two questions are different and the answers may differ.
+ *
+ * `at` is the fallback for an uncoded pulse, which has no span — and for a
+ * span whose start cannot be read, which nothing in the app writes.
+ */
+function eatenOn(pulse: PulseRow, timeZone: string): string | null {
+  const spanStart = pulse.span === undefined ? NaN : Date.parse(pulse.span.start);
+  const at = Number.isFinite(spanStart) ? spanStart : Date.parse(pulse.at);
+  return Number.isFinite(at) ? dayKey(at, timeZone) : null;
+}
+
+/**
+ * The last thing the owner said about this day's total, or null.
+ *
+ * Newest wins, by capture order — a second correction is the owner changing
+ * their mind, and the one they said last is the one they meant. `at` is not a
+ * total order on its own, so ties break on id exactly as the fold and the
+ * stream do; two devices must agree on which correction stands.
+ *
+ * Undo is deleting the pulse: with its corrections gone the selector falls
+ * back to the item sum, or to the correction before it. There is no separate
+ * uncorrect gesture and there should not be one — the correction is a thing
+ * the owner said, and unsaying it is deleting the line.
+ */
+function newestCorrectionFor(pulses: readonly PulseRow[], day: string): PulseCorrection | null {
+  let winner: PulseCorrection | null = null;
+  let winningPulse: PulseRow | null = null;
+  for (const pulse of pulses) {
+    let found: PulseCorrection | null = null;
+    // Last entry wins within one pulse, for the same reason the newest pulse
+    // wins across them: a later assertion in the same utterance is the later one.
+    for (const correction of pulse.corrections ?? []) {
+      if (correction.date === day) found = correction;
+    }
+    if (found === null) continue;
+    if (winningPulse === null || compareOldestFirst(winningPulse, pulse) < 0) {
+      winner = found;
+      winningPulse = pulse;
+    }
+  }
+  return winner;
+}
+
+/** The item sum over an already-chosen set of pulses. */
+function sumNutrition(pulses: readonly PulseRow[]): Omit<DayNutrition, 'corrected'> {
   const total = { ...NO_NUTRITION };
   for (const pulse of pulses) {
     const nutrition = pulse.nutrition;
@@ -607,7 +686,7 @@ function sumNutrition(pulses: readonly PulseRow[]): DayNutrition {
 }
 
 /** One day's bar in the weekly chart. */
-export type DayKcal = { date: string; kcal: number; estimatedKcal: number };
+export type DayKcal = { date: string; kcal: number; estimatedKcal: number; corrected: boolean };
 
 /** Seven bars and the week's uncounted tally, which is a footnote and not a bar. */
 export type WeekNutrition = { days: DayKcal[]; uncounted: number };
@@ -633,7 +712,7 @@ export function weekNutrition(
   const days = getWeekDates(date, weekStartsOn).map((day) => {
     const total = dayNutrition(pulses, day, timeZone);
     uncounted += total.uncounted;
-    return { date: day, kcal: total.kcal, estimatedKcal: total.estimatedKcal };
+    return { date: day, kcal: total.kcal, estimatedKcal: total.estimatedKcal, corrected: total.corrected };
   });
   return { days, uncounted };
 }

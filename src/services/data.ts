@@ -717,6 +717,7 @@ export async function enrichPulse(id: string, coding: Coding, scope: EnrichmentS
       span: coding.span,
       links: mergeLinks(readPulseRows().find((row) => row.id === id)?.links, coding.links),
       nutrition: coding.nutrition,
+      corrections: coding.corrections,
       coderRev: coding.coderRev,
     };
     const fields: Record<string, unknown> =

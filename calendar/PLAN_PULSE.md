@@ -403,7 +403,8 @@ hand-rolled one, for nothing.
 | `span` | enrichment | coder — `{start, end?, approx?}`; start defaults to `ts`, back-dated when stated ("this morning" ⇒ approx) |
 | `links` | enrichment / chip apply | `{eventId?}`. *Amended 2026-08-29 (Phase 4), was `{habitId?, towerId?, eventId?}`; the two retired keys survive in historical journal events and are ignored.* |
 | `nutrition` | enrichment | coder — `{kcal, kcalSource, proteinG?, proteinSource?}`; `kcal: null` = recognized consumption, uncounted; absent = not food. *Added 2026-08-29 (Phase 5).* |
-| `coderRev` | enrichment | coder — schema revision of the coding; absent ⇒ pre-rev-2. *Added 2026-08-29 (Phase 5).* |
+| `corrections` | enrichment | coder — `[{date, kcal, proteinG?}]`, day totals the owner asserted. Local `YYYY-MM-DD`, resolved against `now`/`tz`. **No source field — a correction is owner-stated by definition.** Coexists with `nutrition` on the same pulse; one pulse may correct several days. *Added 2026-08-29 (Phase 5, rev 3).* |
+| `coderRev` | enrichment | coder — schema revision of the coding; absent ⇒ pre-rev-2. `CODER_REV = 3`. *Added 2026-08-29 (Phase 5); bumped to 3 the same day, see the run log.* |
 
 **#12 `pulseVocab`** — natural key `vocab`, one instance.
 
@@ -428,6 +429,11 @@ shipped build still sends all three; the allowlist subset test moves with the co
 **The nutrition feature adds nothing to the context — the text already carries everything.**
 Future sessions: do not "helpfully" enrich the context; this sentence exists so you don't.
 
+*Amended 2026-08-29 (Phase 5, rev 3): `corrections` is added to the OUTPUT schema and the
+**context allowlist is unchanged**. A correction is the owner stating a number, not the
+model being asked to check one, so it needs no yesterday, no running totals and no ledger
+read. A test asserts the payload's top-level keys are exactly the six above.*
+
 **Output (strict JSON, nothing else):**
 ```json
 {
@@ -437,7 +443,8 @@ Future sessions: do not "helpfully" enrich the context; this sentence exists so 
   "links": {"eventId": null},
   "nutrition": {"kcal": null, "kcalSource": "stated|estimated",
                 "proteinG": null, "proteinSource": "stated|estimated"},
-  "coderRev": 2,
+  "corrections": [{"date": "YYYY-MM-DD", "kcal": 0, "proteinG": null}],
+  "coderRev": 3,
   "effects": [{"type": "claimEvent", "...": "..."}],
   "vocabProposal": {"kind": "domain|activity|person", "value": "...", "mapsTo": null}
 }
@@ -464,6 +471,15 @@ resolved against `now` and `tz`; `mouth: tower` biases toward `task`.
 
 Chips are dismissible; dismiss drops the effect, keeps the coding. Auto-apply is a
 per-type Settings toggle, all off by default; `vocabProposal` has no auto option.
+
+**`corrections` is deliberately NOT an effect and has no chip** *(decided 2026-08-29,
+Phase 5 rev 3; recorded here so it is not revisited)*. An effect is a proposal to write
+something ELSEWHERE — another entity, another day's record — and it needs a tap because
+the owner has not yet agreed to it. A correction is neither: it is a fact the owner
+uttered, stored on the pulse that uttered it, exactly as `nutrition` is. Asking them to
+confirm a number they just typed is a confirmation dialog for their own sentence. Undo is
+deleting the pulse — the selector then falls back to the item sum, or to the correction
+before it. There is no separate uncorrect gesture and there should not be one.
 
 ## Appendix D — Span closure
 
@@ -1114,3 +1130,79 @@ run button, which shows the price before it does anything). Then a calibration w
 spot-check ~15 food pulses against your own knowledge of what you ate — are the estimates
 in believable range, and is uncounted rare enough that the total means something? Then the
 parked decision: finalize the target display — keep the plain `· of`, change it, or drop it.
+
+### 2026-08-29 — amendment: corrections, and the day food belongs to (coder rev 3)
+
+Ordered by the owner within hours of Phase 5 shipping, from a real failure on real data.
+They ran the backfill, read Friday as 1,220 and Saturday as 880, and typed into the box:
+*"mate friday is 2400 cals; saturday your 880 est is fine"*. The 2,400 was added to **today**.
+
+**Two bugs, stacked, and neither was the model's.**
+
+**1. The coder had no way to say "correction".** Its entire nutrition vocabulary was "the
+owner consumed N kcal", so faced with a sentence asserting a day's total it answered with
+the closest thing the schema allowed. A stronger model would at best have declined to
+answer — it still could not have fixed Friday, because there was no field for the answer.
+Model choice was not the lever, and swapping to Opus would have bought nothing.
+
+**2. `dayNutrition` bucketed by `at`, not `span.start`.** So even when the coder back-dates
+a span — which it already does, and which `activityTiming` has always counted by — the
+calories landed on the day the sentence was typed. The reasoning written into the code
+("the line sits directly above the box and must add up exactly the lines visible above
+it") was a UI-consistency argument, and it loses outright to "food must land on the day it
+was eaten". It also made ordinary retro logging silently wrong: *"big dinner last night,
+about 900"* went on today, permanently, and no correction could move it because the day
+was not what was wrong. **Fixed: items bucket by `span.start`, falling back to `at`.** The
+stream still reads by `at` — it shows what was SAID today, which is a different question.
+
+**What shipped**
+
+`pulse` gains a third enrichment field, `corrections: [{date, kcal, proteinG?}]` — an
+array, because one sentence can settle several days, and because empty is the ordinary
+answer. It coexists with `nutrition` on the same pulse: *"had a burrito, 620; friday was
+2400"* is one line making two kinds of claim and both are kept. **No source field** — a
+correction is owner-stated by definition, so a `stated | estimated` discriminant would
+have exactly one reachable value.
+
+Prompt: emit a correction when the owner asserts a specific day's total. **An override and
+a ratification are the same act** — *"friday was 2400, not 1220"* and *"saturday's 880 is
+fine"* both end with the owner having stated that day's total, and the second is not a
+no-op just because the number agrees. That is what lets a ratified day stop being drawn as
+an estimate. **An ambiguous day reference produces nothing**: a day guessed at here is
+silent, wrong, and outranks the arithmetic it replaced.
+
+Ledger selector, in order: the newest correction for day D wins; else the sum of items
+bucketed by `span.start`. Newest is by capture order with the id tiebreak, so two devices
+agree on which correction stands. On a corrected day `estimatedKcal` and `uncounted` both
+go to zero — both describe how the sum underneath was arrived at, and there is no
+estimated share of a figure the owner gave; an unsizeable meal is subsumed by it, which is
+what stating a day's total means. **Protein is corrected only when the correction says
+so**: *"friday was 2400"* is a claim about calories, and discarding the item protein sum
+would silently zero a number the owner never disputed. Corrected days render single-tone,
+value outside, no estimate marker.
+
+**The date is validated by round trip, not by a pattern**, and that is load-bearing rather
+than fence-compliance theatre: `Date.parse('2026-02-30T00:00:00Z')` returns **March 2**,
+and `'+002026-08-28'` parses fine. Both were measured. A correction naming a day that does
+not exist would sit in the journal applying to no day at all — present, invisible, and
+outranking real arithmetic. `parseCorrections` is exported from `entities.ts` and used by
+both the journal reader and the coder's parser: two copies would be two places to get that
+check wrong, and the one that drifted would be invisible.
+
+**`CODER_REV` → 3, and no backfill was run.** The bump makes every rev-2 pulse eligible for
+the owner-invoked backfill, which is correct and harmless: the tool is priced before it
+runs and nothing presses it on its own. **The ambient sweep still ignores the rev
+entirely**, re-pinned at the new rev by its own test — that invariant is what makes a bump
+safe, and it is a billing bug that would look perfectly correct on screen.
+
+**No chip, and the reasoning is in Appendix C so it is not revisited.** An effect proposes
+a write somewhere else and needs a tap because the owner has not agreed to it yet. A
+correction is a fact they just uttered, stored on the pulse that uttered it, exactly like
+`nutrition`. Undo is deleting the pulse; the selector falls back to the item sum, or to
+the correction before it.
+
+Green: `vitest` 719 passed / 33 files (was 688 / 33) · `tsc -b` clean · `npm run build`
+clean · `grep -rn "localStorage" src/` → 0 · lint 6 errors, all pre-existing.
+
+**Gate 5 is unchanged and still open**, and this amendment is inside it: the calibration
+week now also asks whether correcting a day by saying so actually works in the hand.

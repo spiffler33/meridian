@@ -82,6 +82,7 @@ const SAMPLE_CODING: Coding = {
   span: { start: '2026-08-28T09:00:00.000Z', end: null, approx: false },
   links: { eventId: null },
   nutrition: null,
+  corrections: [],
   coderRev: CODER_REV,
   effects: [],
   vocabProposal: null,

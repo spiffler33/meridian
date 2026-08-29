@@ -279,6 +279,24 @@ describe('calories by day', () => {
     expect(screen.getByTitle('600 kcal estimated')).toBeInTheDocument();
   });
 
+  it('draws a corrected day single-tone, with no estimate marker at all', async () => {
+    mocks.pulses = [
+      ate('guessed', '2026-08-26T04:00:00.000Z', { kcal: 1220, kcalSource: 'estimated' }),
+      // The owner, the next day, saying what Wednesday actually came to.
+      coded('fix', 'note', '2026-08-27T04:00:00.000Z', {
+        corrections: [{ date: '2026-08-26', kcal: 2400 }],
+      }),
+    ];
+
+    show();
+
+    expect(await screen.findByText('2,400')).toBeInTheDocument();
+    // The number came from the owner, so there is no share of it resting on a
+    // guess and nothing for the second tone to separate.
+    expect(screen.queryByTitle(/estimated/)).not.toBeInTheDocument();
+    expect(screen.queryByText('1,220')).not.toBeInTheDocument();
+  });
+
   it('footnotes the week\'s uncounted items, so a week that lost meals does not read as a light one', async () => {
     mocks.pulses = [
       ate('buffet', '2026-08-26T04:00:00.000Z', { kcal: null, kcalSource: 'estimated' }),

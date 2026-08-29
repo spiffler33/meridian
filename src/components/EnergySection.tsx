@@ -222,21 +222,28 @@ function TimingRow({ row }: { row: ActivityTiming }) {
  * laid over the left of it: the boundary between them lands where stated ends,
  * which is the only place it means anything.
  *
+ * A day the owner corrected draws single-tone, with no estimate marker at all:
+ * the number came from them, so there is no share of it that rests on a guess
+ * and nothing for the two tones to separate.
+ *
  * The value sits outside the bar, as everywhere on this page — inside, it is
  * unreadable at the short end and invisible on a day with nothing logged, and
  * an empty day is exactly the day the chart has to be able to show.
  */
 function KcalBar({ day, widest }: { day: DayKcal; widest: number }) {
   const scale = (amount: number) => (widest <= 0 ? 0 : Math.min(100, (amount / widest) * 100));
-  const stated = day.kcal - day.estimatedKcal;
+  const stated = day.corrected ? day.kcal : day.kcal - day.estimatedKcal;
+  const showsEstimate = !day.corrected && day.estimatedKcal > 0;
   return (
     <div className="grid grid-cols-[76px_1fr_44px] items-center gap-[10px] py-[3px] sm:grid-cols-[108px_1fr_52px]">
       <span className="truncate font-mono text-[11.5px] text-text-secondary">{weekdayLabel(day.date)}</span>
       <span className="relative block h-3 overflow-hidden rounded-[3px] bg-bg-hover">
-        <span
-          className={`absolute inset-y-0 left-0 rounded-[3px] ${SPENT_TONE} opacity-40`}
-          style={{ width: `${scale(day.kcal)}%` }}
-        />
+        {showsEstimate && (
+          <span
+            className={`absolute inset-y-0 left-0 rounded-[3px] ${SPENT_TONE} opacity-40`}
+            style={{ width: `${scale(day.kcal)}%` }}
+          />
+        )}
         <span
           className={`absolute inset-y-0 left-0 rounded-[3px] ${SPENT_TONE}`}
           style={{ width: `${scale(stated)}%` }}
@@ -244,7 +251,7 @@ function KcalBar({ day, widest }: { day: DayKcal; widest: number }) {
       </span>
       <span
         className="text-right font-mono text-[11.5px] tabular-nums text-text"
-        title={day.estimatedKcal > 0 ? `${kcalLabel(day.estimatedKcal)} kcal estimated` : undefined}
+        title={showsEstimate ? `${kcalLabel(day.estimatedKcal)} kcal estimated` : undefined}
       >
         {day.kcal > 0 ? kcalLabel(day.kcal) : ''}
       </span>

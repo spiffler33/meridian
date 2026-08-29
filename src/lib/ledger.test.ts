@@ -560,12 +560,19 @@ describe('dayNutrition', () => {
       estimatedKcal: 700,
       uncounted: 1,
       proteinG: 70,
+      corrected: false,
     });
   });
 
   it('counts protein from a pulse whose calories are uncounted — the two figures are independent', () => {
     const day = [ate('shake', '2026-08-28T16:00:00.000Z', { kcal: null, kcalSource: 'estimated', proteinG: 25, proteinSource: 'stated' })];
-    expect(dayNutrition(day, '2026-08-28', LA)).toEqual({ kcal: 0, estimatedKcal: 0, uncounted: 1, proteinG: 25 });
+    expect(dayNutrition(day, '2026-08-28', LA)).toEqual({
+      kcal: 0,
+      estimatedKcal: 0,
+      uncounted: 1,
+      proteinG: 25,
+      corrected: false,
+    });
   });
 
   it('buckets by the LOCAL day: 23:59 belongs to the day it was eaten on, 00:01 to the next', () => {
@@ -590,6 +597,7 @@ describe('dayNutrition', () => {
       estimatedKcal: 0,
       uncounted: 0,
       proteinG: 0,
+      corrected: false,
     });
   });
 });
@@ -624,5 +632,210 @@ describe('kcalLabel', () => {
     expect(kcalLabel(1240)).toBe('1,240');
     expect(kcalLabel(830.4)).toBe('830');
     expect(kcalLabel(0)).toBe('0');
+  });
+});
+
+// ============================================================================
+// Corrections, and the day food belongs to (rev 3)
+// ============================================================================
+
+/** A pulse carrying day totals the owner asserted. */
+function corrects(id: string, at: string, corrections: PulseRow['corrections']): PulseRow {
+  return { ...coded(id, 'note', at), corrections };
+}
+
+describe('items bucket by span.start — the day it was eaten, not the day it was said', () => {
+  it('puts last night\'s supper on last night, when the coder back-dated the span', () => {
+    // Said Saturday morning, eaten Friday evening. Bucketed by `at` this lands
+    // on Saturday and no correction can move it — the day is not what is wrong.
+    const retro: PulseRow = {
+      ...coded('supper', 'note', '2026-08-29T16:00:00.000Z'),
+      span: { start: '2026-08-29T03:00:00.000Z', end: null, approx: true },
+      nutrition: { kcal: 900, kcalSource: 'estimated' },
+    };
+
+    // 2026-08-29T03:00Z is 20:00 on the 28th in LA; 16:00Z is 09:00 on the 29th.
+    expect(dayNutrition([retro], '2026-08-28', LA).kcal).toBe(900);
+    expect(dayNutrition([retro], '2026-08-29', LA).kcal).toBe(0);
+  });
+
+  it('leaves a 00:30 supper on the day it was actually eaten, rather than pushing it back', () => {
+    // Eaten and said at 00:30 local, so the span starts there too. It belongs
+    // to the new day: the rule is when the food happened, not what it felt like.
+    const late: PulseRow = {
+      ...coded('midnight-supper', 'note', '2026-08-29T07:30:00.000Z'),
+      span: { start: '2026-08-29T07:30:00.000Z', end: null, approx: false },
+      nutrition: { kcal: 500, kcalSource: 'estimated' },
+    };
+
+    expect(dayNutrition([late], '2026-08-29', LA).kcal).toBe(500);
+    expect(dayNutrition([late], '2026-08-28', LA).kcal).toBe(0);
+  });
+
+  it('falls back to `at` for a pulse with no span at all', () => {
+    const noSpan: PulseRow = {
+      id: 'no-span',
+      text: 'no-span',
+      at: '2026-08-28T20:00:00.000Z',
+      nutrition: { kcal: 400, kcalSource: 'estimated' },
+    };
+    expect(dayNutrition([noSpan], '2026-08-28', LA).kcal).toBe(400);
+  });
+});
+
+describe('corrections', () => {
+  it('replaces the day\'s arithmetic, and drops the provenance that no longer applies', () => {
+    const day = [
+      ate('under', '2026-08-28T19:00:00.000Z', { kcal: 1220, kcalSource: 'estimated' }),
+      ate('vague', '2026-08-28T22:00:00.000Z', { kcal: null, kcalSource: 'estimated' }),
+      // Said the next day, about that day.
+      corrects('fix', '2026-08-29T18:00:00.000Z', [{ date: '2026-08-28', kcal: 2400 }]),
+    ];
+
+    expect(dayNutrition(day, '2026-08-28', LA)).toEqual({
+      kcal: 2400,
+      // No estimated share of a number the owner gave, and the unsizeable meal
+      // is subsumed by it — that is what stating a day's total means.
+      estimatedKcal: 0,
+      uncounted: 0,
+      proteinG: 0,
+      corrected: true,
+    });
+  });
+
+  it('ratifies a day exactly as it overrides one — the estimate stops being an estimate', () => {
+    const day = [
+      ate('sat', '2026-08-29T19:00:00.000Z', { kcal: 880, kcalSource: 'estimated' }),
+      corrects('ok', '2026-08-29T23:00:00.000Z', [{ date: '2026-08-29', kcal: 880 }]),
+    ];
+
+    const total = dayNutrition(day, '2026-08-29', LA);
+    // Same number, different fact: it is now the owner's, not the coder's, and
+    // a ratification that changed nothing would leave it drawn as a guess.
+    expect(total.kcal).toBe(880);
+    expect(total.estimatedKcal).toBe(0);
+    expect(total.corrected).toBe(true);
+  });
+
+  it('settles several days from one utterance', () => {
+    const pulse = corrects('both', '2026-08-30T18:00:00.000Z', [
+      { date: '2026-08-28', kcal: 2400 },
+      { date: '2026-08-29', kcal: 880 },
+    ]);
+
+    expect(dayNutrition([pulse], '2026-08-28', LA).kcal).toBe(2400);
+    expect(dayNutrition([pulse], '2026-08-29', LA).kcal).toBe(880);
+    // And says nothing about any other day.
+    expect(dayNutrition([pulse], '2026-08-30', LA).corrected).toBe(false);
+  });
+
+  it('carries item nutrition and a correction on the same pulse, each to its own day', () => {
+    // "had a burrito, 620; friday was 2400" — one line, two kinds of claim.
+    const pulse: PulseRow = {
+      ...corrects('both-kinds', '2026-08-29T19:00:00.000Z', [{ date: '2026-08-28', kcal: 2400 }]),
+      span: { start: '2026-08-29T19:00:00.000Z', end: null, approx: false },
+      nutrition: { kcal: 620, kcalSource: 'stated' },
+    };
+
+    expect(dayNutrition([pulse], '2026-08-28', LA).kcal).toBe(2400);
+    expect(dayNutrition([pulse], '2026-08-29', LA).kcal).toBe(620);
+  });
+
+  it('takes the newest correction for a day, and breaks a tie on id like everything else', () => {
+    const day = [
+      corrects('first', '2026-08-29T18:00:00.000Z', [{ date: '2026-08-28', kcal: 2400 }]),
+      corrects('second', '2026-08-29T19:00:00.000Z', [{ date: '2026-08-28', kcal: 2600 }]),
+    ];
+    expect(dayNutrition(day, '2026-08-28', LA).kcal).toBe(2600);
+
+    // Same instant: id decides, larger last, so both devices agree on which stands.
+    const tied = [
+      corrects('a', '2026-08-29T18:00:00.000Z', [{ date: '2026-08-28', kcal: 1000 }]),
+      corrects('b', '2026-08-29T18:00:00.000Z', [{ date: '2026-08-28', kcal: 2000 }]),
+    ];
+    expect(dayNutrition(tied, '2026-08-28', LA).kcal).toBe(2000);
+    expect(dayNutrition([...tied].reverse(), '2026-08-28', LA).kcal).toBe(2000);
+  });
+
+  it('takes the last entry for a day within one pulse', () => {
+    const pulse = corrects('twice', '2026-08-29T18:00:00.000Z', [
+      { date: '2026-08-28', kcal: 2400 },
+      { date: '2026-08-28', kcal: 2500 },
+    ]);
+    expect(dayNutrition([pulse], '2026-08-28', LA).kcal).toBe(2500);
+  });
+
+  it('falls back when the correcting pulse is deleted — undo is deleting the line', () => {
+    const items = [ate('under', '2026-08-28T19:00:00.000Z', { kcal: 1220, kcalSource: 'estimated' })];
+    const fix = corrects('fix', '2026-08-29T18:00:00.000Z', [{ date: '2026-08-28', kcal: 2400 }]);
+
+    expect(dayNutrition([...items, fix], '2026-08-28', LA).kcal).toBe(2400);
+
+    // The pulse is gone; the selector has nothing to prefer and the arithmetic
+    // is back. There is no separate uncorrect gesture and none is needed.
+    const after = dayNutrition(items, '2026-08-28', LA);
+    expect(after.kcal).toBe(1220);
+    expect(after.corrected).toBe(false);
+
+    // An older correction underneath a deleted newer one comes back the same way.
+    const older = corrects('older', '2026-08-29T09:00:00.000Z', [{ date: '2026-08-28', kcal: 2000 }]);
+    expect(dayNutrition([...items, older], '2026-08-28', LA).kcal).toBe(2000);
+  });
+});
+
+describe('protein on a corrected day', () => {
+  it('keeps the item sum when the correction says nothing about protein', () => {
+    const day = [
+      ate('lunch', '2026-08-28T19:00:00.000Z', { kcal: 700, kcalSource: 'estimated', proteinG: 40, proteinSource: 'estimated' }),
+      corrects('fix', '2026-08-29T18:00:00.000Z', [{ date: '2026-08-28', kcal: 2400 }]),
+    ];
+    const total = dayNutrition(day, '2026-08-28', LA);
+
+    // "friday was 2400" is a claim about calories. Throwing the item sum away
+    // would silently zero a protein figure the owner never disputed.
+    expect(total.kcal).toBe(2400);
+    expect(total.proteinG).toBe(40);
+  });
+
+  it('takes the correction\'s protein when it gives one', () => {
+    const day = [
+      ate('lunch', '2026-08-28T19:00:00.000Z', { kcal: 700, kcalSource: 'estimated', proteinG: 40, proteinSource: 'estimated' }),
+      corrects('fix', '2026-08-29T18:00:00.000Z', [{ date: '2026-08-28', kcal: 2400, proteinG: 150 }]),
+    ];
+    expect(dayNutrition(day, '2026-08-28', LA).proteinG).toBe(150);
+  });
+
+  it('takes a corrected protein of zero as a real claim, not as absent', () => {
+    const day = [
+      ate('lunch', '2026-08-28T19:00:00.000Z', { kcal: 700, kcalSource: 'estimated', proteinG: 40, proteinSource: 'estimated' }),
+      corrects('fix', '2026-08-29T18:00:00.000Z', [{ date: '2026-08-28', kcal: 2400, proteinG: 0 }]),
+    ];
+    expect(dayNutrition(day, '2026-08-28', LA).proteinG).toBe(0);
+  });
+});
+
+describe('weekNutrition with corrections', () => {
+  it('marks the corrected days so the chart can stop drawing them as estimates', () => {
+    const pulses = [
+      ate('mon', '2026-08-24T19:00:00.000Z', { kcal: 900, kcalSource: 'estimated' }),
+      ate('tue', '2026-08-25T19:00:00.000Z', { kcal: 700, kcalSource: 'estimated' }),
+      corrects('fix', '2026-08-26T19:00:00.000Z', [{ date: '2026-08-24', kcal: 2400 }]),
+    ];
+
+    const week = weekNutrition(pulses, '2026-08-26', LA, 1);
+    expect(week.days[0]).toEqual({ date: '2026-08-24', kcal: 2400, estimatedKcal: 0, corrected: true });
+    expect(week.days[1]).toEqual({ date: '2026-08-25', kcal: 700, estimatedKcal: 700, corrected: false });
+  });
+
+  it('drops a corrected day\'s uncounted items from the week\'s footnote', () => {
+    const pulses = [
+      ate('vague', '2026-08-24T19:00:00.000Z', { kcal: null, kcalSource: 'estimated' }),
+      ate('also-vague', '2026-08-25T19:00:00.000Z', { kcal: null, kcalSource: 'estimated' }),
+      corrects('fix', '2026-08-26T19:00:00.000Z', [{ date: '2026-08-24', kcal: 2400 }]),
+    ];
+
+    // Monday's unsizeable meal is inside the owner's stated total now. Tuesday's
+    // is still genuinely uncounted.
+    expect(weekNutrition(pulses, '2026-08-26', LA, 1).uncounted).toBe(1);
   });
 });

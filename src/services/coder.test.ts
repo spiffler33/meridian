@@ -38,7 +38,8 @@ const VALID_CODING_JSON = {
   span: { start: '2026-08-28T12:00:00.000Z', end: null, approx: false },
   links: { eventId: null },
   nutrition: null,
-  coderRev: 2,
+  corrections: [],
+  coderRev: 3,
   effects: [],
   vocabProposal: null,
 };
@@ -219,6 +220,8 @@ describe('codePulse — a valid response degrades missing fields to safe default
       // that is not food. `null` here, rather than an empty block, is what
       // makes a re-code able to CLEAR one an earlier revision wrote.
       nutrition: null,
+      // The ordinary answer: almost no pulse asserts a day's total.
+      corrections: [],
       coderRev: CODER_REV,
       effects: [],
       vocabProposal: null,
@@ -323,7 +326,7 @@ describe('the system prompt — the only place the model is told any of this', (
     const system = await systemPrompt();
 
     expect(system).toContain('block|event|state|plan|task|claim|note');
-    for (const key of ['signal', 'domain', 'activity', 'people', 'span', 'links', 'nutrition', 'coderRev', 'effects', 'vocabProposal']) {
+    for (const key of ['signal', 'domain', 'activity', 'people', 'span', 'links', 'nutrition', 'corrections', 'coderRev', 'effects', 'vocabProposal']) {
       expect(system).toContain(`"${key}"`);
     }
   });
@@ -462,5 +465,143 @@ describe('codePulse — nutrition', () => {
     // A model echoing an older rev would leave the pulse permanently in the
     // backfill's sights — re-coded, and re-billed, on every single run.
     expect((await codePulse('x', BASE_CONTEXT))?.coderRev).toBe(CODER_REV);
+  });
+});
+
+/**
+ * Corrections (rev 3): the concept phase 5 shipped without, and the bug that
+ * made it necessary.
+ *
+ * `mate friday is 2400 cals; saturday your 880 est is fine` had no
+ * representation at all — the only nutrition vocabulary the coder had was
+ * "the owner consumed N kcal", so that is what it answered, and 2400 landed
+ * on the day the sentence was typed. These pin the shape of the answer that
+ * makes the sentence expressible. What the model DOES with a given sentence
+ * is Gate 5's to judge; what is pinned here is that the answer survives the
+ * trip into a row, and that a bad one is dropped rather than applied to the
+ * wrong day.
+ */
+describe('codePulse — corrections', () => {
+  async function correctionsOf(json: Record<string, unknown>) {
+    vi.stubGlobal('fetch', vi.fn(async () => textResponse({ signal: 'note', ...json })));
+    return (await codePulse('x', BASE_CONTEXT))?.corrections;
+  }
+
+  it('carries one day\'s total through, with no source field — a correction is stated by definition', async () => {
+    expect(await correctionsOf({ corrections: [{ date: '2026-08-28', kcal: 2400 }] })).toEqual([
+      { date: '2026-08-28', kcal: 2400 },
+    ]);
+  });
+
+  it('carries several days from one utterance', async () => {
+    expect(
+      await correctionsOf({
+        corrections: [
+          { date: '2026-08-28', kcal: 2400 },
+          { date: '2026-08-29', kcal: 880 },
+        ],
+      })
+    ).toEqual([
+      { date: '2026-08-28', kcal: 2400 },
+      { date: '2026-08-29', kcal: 880 },
+    ]);
+  });
+
+  it('keeps protein when the correction gives one, and omits the key when it does not', async () => {
+    expect(await correctionsOf({ corrections: [{ date: '2026-08-28', kcal: 2400, proteinG: 150 }] })).toEqual([
+      { date: '2026-08-28', kcal: 2400, proteinG: 150 },
+    ]);
+    // Absent, not null: "friday was 2400" says nothing about protein, and the
+    // ledger keeps the item sum precisely because the key is not there.
+    expect(await correctionsOf({ corrections: [{ date: '2026-08-28', kcal: 2400, proteinG: null }] })).toEqual([
+      { date: '2026-08-28', kcal: 2400 },
+    ]);
+  });
+
+  it('is empty when the utterance names no day — an ambiguous correction is worse than none', async () => {
+    // "that was way more than it says" names nothing. A day guessed at here is
+    // silent, wrong, and outranks the arithmetic it replaced.
+    expect(await correctionsOf({})).toEqual([]);
+    expect(await correctionsOf({ corrections: [] })).toEqual([]);
+    expect(await correctionsOf({ corrections: null })).toEqual([]);
+  });
+
+  it('drops an entry whose date is not exactly a calendar date, and keeps the rest', async () => {
+    // `Date.parse` is not the check it looks like: it rolls 2026-02-30 forward
+    // into March and accepts the extended-year form. A correction landing on a
+    // day the owner did not name is invisible and wrong.
+    expect(
+      await correctionsOf({
+        corrections: [
+          { date: 'friday', kcal: 2400 },
+          { date: '2026-02-30', kcal: 2400 },
+          { date: '2026-8-3', kcal: 2400 },
+          { date: '+002026-08-28', kcal: 2400 },
+          { date: '2026-08-29', kcal: 880 },
+        ],
+      })
+    ).toEqual([{ date: '2026-08-29', kcal: 880 }]);
+  });
+
+  it('drops an entry with no usable kcal — a correction without a number is not one', async () => {
+    expect(
+      await correctionsOf({
+        corrections: [
+          { date: '2026-08-28' },
+          { date: '2026-08-28', kcal: 'lots' },
+          { date: '2026-08-28', kcal: -50 },
+        ],
+      })
+    ).toEqual([]);
+  });
+});
+
+describe('the correction rules in the prompt', () => {
+  async function systemFor(): Promise<string> {
+    const fetchMock = vi.fn(async () => textResponse(VALID_CODING_JSON));
+    vi.stubGlobal('fetch', fetchMock);
+    await codePulse('friday was 2400', BASE_CONTEXT);
+    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>;
+    return JSON.parse(calls[0][1].body as string).system as string;
+  }
+
+  it('tells the model an override and a ratification are the same act', async () => {
+    const system = await systemFor();
+    // A ratification that produced nothing would leave a day the owner has
+    // confirmed still drawn as the coder's guess.
+    expect(system).toContain('ratifying');
+    expect(system).toContain("that day's total");
+  });
+
+  it('tells the model to return nothing rather than guess at an ambiguous day', async () => {
+    const system = await systemFor();
+    expect(system).toContain('ambiguous');
+    expect(system).toContain('rather than guessing');
+  });
+
+  it('tells the model the date format and what to resolve it against', async () => {
+    const system = await systemFor();
+    expect(system).toContain('YYYY-MM-DD');
+    expect(system).toContain('Resolve the day against now and tz');
+  });
+
+  it('separates a day total from an item, so a pulse can carry both', async () => {
+    const system = await systemFor();
+    expect(system).toContain('not nutrition for an item');
+  });
+
+  it('still sends no new context slice — the allowlist is unchanged at rev 3 (fence 5)', async () => {
+    const fetchMock = vi.fn(async () => textResponse(VALID_CODING_JSON));
+    vi.stubGlobal('fetch', fetchMock);
+    await codePulse('friday was 2400', BASE_CONTEXT);
+
+    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>;
+    const payload = JSON.parse(JSON.parse(calls[0][1].body as string).messages[0].content as string);
+
+    // Corrections need no yesterday, no totals, no ledger read. The owner is
+    // stating a number, not being asked to check one.
+    expect(Object.keys(payload).sort()).toEqual(
+      ['now', 'recentPulses', 'text', 'todayEvents', 'tz', 'vocab'].sort()
+    );
   });
 });

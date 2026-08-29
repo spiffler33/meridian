@@ -15,6 +15,7 @@
  * `bucket()`, which is the one place that guard lives.
  */
 
+import { dayKey } from './calendar';
 import { allCachedFiles, enqueue, getDeviceId, nextSeq, peekOutbox, setMeta, setState } from './db';
 import type { OutboxRecord } from './db';
 import { fold, parseJournalLines } from './journal';
@@ -264,6 +265,27 @@ export type PulseNutrition = {
 };
 
 /**
+ * The owner asserting what a whole day came to (phase 5, rev 3).
+ *
+ * A different KIND of claim from `PulseNutrition`, which is about one item the
+ * owner consumed. This is about a day, and it outranks the arithmetic: it is
+ * the owner reading their own ledger and saying what the number should be.
+ *
+ * There is **no source field**, deliberately. A correction is owner-stated by
+ * definition — the coder never produces one on its own initiative, only when
+ * the owner asserts a day's total, so a `'stated' | 'estimated'` discriminant
+ * would have exactly one reachable value.
+ *
+ * `date` is a local `YYYY-MM-DD` in the device's zone, resolved by the coder
+ * against `now`/`tz` ("friday" ⇒ the date). Validated by round-trip, never by
+ * a pattern — see `optionalCorrections`.
+ *
+ * `proteinG` is independently optional: correcting a day's calories without
+ * mentioning protein is the common case, and the item sum still stands for it.
+ */
+export type PulseCorrection = { date: string; kcal: number; proteinG?: number };
+
+/**
  * One captured utterance. Verbatim, timestamped, and never edited.
  *
  * `at` is a field rather than the event envelope's `ts`, which the plan's
@@ -303,6 +325,13 @@ export type PulseRow = {
   vocabProposal?: PulseVocabProposal | null;
   /** What the owner consumed, when the utterance says they consumed something. */
   nutrition?: PulseNutrition;
+  /**
+   * Day totals the owner asserted in this utterance. One pulse can correct
+   * several days at once, and can carry `nutrition` for itself at the same
+   * time — "had a burrito, 620; friday was 2400" is one line making two
+   * different kinds of claim, and both are kept.
+   */
+  corrections?: PulseCorrection[];
   /**
    * Which revision of the coding schema produced these fields. Absent means
    * pre-rev-2 — coded before nutrition existed — which is what the backfill
@@ -511,6 +540,65 @@ function optionalNutrition(record: Record_, key: string): PulseNutrition | undef
   return nutrition;
 }
 
+/**
+ * A bare local calendar date (`YYYY-MM-DD`), or null.
+ *
+ * A machine-defined format, so checking it exactly is allowed — and it is
+ * checked by ROUND TRIP rather than by a pattern, which is both the fence and
+ * the correct answer. `Date.parse` is not the check it looks like: it rolls
+ * `2026-02-30` forward into March and accepts the extended-year form
+ * `+002026-08-28`. Formatting the instant back out in UTC and requiring the
+ * same string rejects both, and everything else that is not exactly a date.
+ *
+ * A correction naming a day that does not exist would silently apply to no
+ * day at all — present in the journal, invisible in the ledger — which is the
+ * worst of the available outcomes. Dropped here instead.
+ */
+function optionalDate(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const wall = Date.parse(`${value}T00:00:00Z`);
+  if (!Number.isFinite(wall)) return null;
+  return dayKey(wall, 'UTC') === value ? value : null;
+}
+
+/**
+ * The day totals the owner asserted. An entry that is not a usable claim is
+ * dropped on its own; the rest of the array survives, because one unreadable
+ * date in "friday was 2400 and saturday 1900" must not lose Saturday too.
+ *
+ * `kcal` must be a finite, non-negative number — a correction is the owner
+ * putting a number on a day, and an entry without one is not a correction.
+ */
+function optionalCorrections(record: Record_, key: string): PulseCorrection[] | undefined {
+  return Array.isArray(record[key]) ? parseCorrections(record[key]) : undefined;
+}
+
+/**
+ * The same validation, over a value from anywhere.
+ *
+ * Exported because the coder parses the model's answer and this file parses
+ * the journal record, and they are the same shape checked the same way. Two
+ * copies would be two places to get the round-trip date check wrong, and the
+ * one that drifted would be invisible — a correction that parsed on the way
+ * in and vanished on the way out.
+ */
+export function parseCorrections(value: unknown): PulseCorrection[] {
+  if (!Array.isArray(value)) return [];
+  const corrections: PulseCorrection[] = [];
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) continue;
+    const obj = item as Record_;
+    const date = optionalDate(obj.date);
+    const kcal = optionalNum(obj, 'kcal');
+    if (date === null || kcal === undefined || kcal < 0) continue;
+    const correction: PulseCorrection = { date, kcal };
+    const proteinG = optionalNum(obj, 'proteinG');
+    if (proteinG !== undefined && proteinG >= 0) correction.proteinG = proteinG;
+    corrections.push(correction);
+  }
+  return corrections;
+}
+
 export const PULSE_EFFECT_TYPES: readonly PulseEffectType[] = ['claimEvent'];
 const PULSE_VOCAB_PROPOSAL_KINDS: readonly PulseVocabProposalKind[] = ['domain', 'activity', 'person'];
 
@@ -709,6 +797,8 @@ function toPulseRow(id: string, record: Record_): PulseRow {
   if (vocabProposal !== undefined) row.vocabProposal = vocabProposal;
   const nutrition = optionalNutrition(record, 'nutrition');
   if (nutrition !== undefined) row.nutrition = nutrition;
+  const corrections = optionalCorrections(record, 'corrections');
+  if (corrections !== undefined) row.corrections = corrections;
   const coderRev = optionalNum(record, 'coderRev');
   if (coderRev !== undefined) row.coderRev = coderRev;
 

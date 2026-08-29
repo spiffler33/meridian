@@ -53,6 +53,7 @@ import type { JournalEvent } from '../lib/journal';
 import { PulseView } from './PulseView';
 import { AppProvider } from '../store/AppContext';
 import { getPulses, updateProfile } from '../services/data';
+import { getToday } from '../utils/dates';
 import { CODER_REV } from '../services/coder';
 import type { Coding } from '../services/coder';
 
@@ -74,6 +75,7 @@ const SAMPLE_CODING: Coding = {
   span: { start: '2026-08-27T12:00:00.000Z', end: null, approx: false },
   links: { eventId: null },
   nutrition: null,
+  corrections: [],
   coderRev: CODER_REV,
   effects: [],
   vocabProposal: null,
@@ -323,19 +325,30 @@ describe('the nutrition line', () => {
    * per capture would answer that late call with the wrong line's food, or
    * with null.
    */
-  const menu = new Map<string, Coding['nutrition']>();
+  const menu = new Map<string, Pick<Coding, 'nutrition' | 'corrections'>>();
 
   beforeEach(() => {
     menu.clear();
     codePulseMock.mockImplementation(async (captured: string) => {
-      const nutrition = menu.get(captured);
-      return nutrition === undefined ? null : { ...SAMPLE_CODING, nutrition };
+      const answer = menu.get(captured);
+      return answer === undefined ? null : { ...SAMPLE_CODING, ...answer };
     });
   });
 
+  /** One pulse asserting a day's total, captured through the real path. */
+  async function captureCorrection(text: string, corrections: Coding['corrections']): Promise<void> {
+    menu.set(text, { nutrition: null, corrections });
+    const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
+    fireEvent.change(box, { target: { value: text } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    const line = await screen.findByText(text);
+    const row = line.closest('li');
+    await waitFor(() => expect(row?.querySelector('.bg-text-muted')).not.toBeNull());
+  }
+
   /** One coded pulse carrying nutrition, captured through the real path. */
   async function captureFood(text: string, nutrition: Coding['nutrition']): Promise<void> {
-    menu.set(text, nutrition);
+    menu.set(text, { nutrition, corrections: [] });
     const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
     fireEvent.change(box, { target: { value: text } });
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -374,6 +387,22 @@ describe('the nutrition line', () => {
     expect(screen.queryByText(/est/)).not.toBeInTheDocument();
     expect(screen.queryByText(/uncounted/)).not.toBeInTheDocument();
     expect(screen.queryByText(/protein/)).not.toBeInTheDocument();
+  });
+
+  it('shows the owner\'s own total on a day they corrected, with no estimate marker', async () => {
+    renderPulse();
+    await captureFood('two eggs on toast', { kcal: 300, kcalSource: 'estimated' });
+    await captureFood('ate something at the buffet', { kcal: null, kcalSource: 'estimated' });
+    expect(await screen.findByText('300 kcal · 300 est · 1 uncounted')).toBeInTheDocument();
+
+    // The owner reads that and says what today actually came to. The estimate
+    // and the unsizeable meal are both subsumed by the number they gave.
+    const today = getToday();
+    await captureCorrection('today was 2200', [{ date: today, kcal: 2200 }]);
+
+    expect(await screen.findByText('2,200 kcal')).toBeInTheDocument();
+    expect(screen.queryByText(/est/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/uncounted/)).not.toBeInTheDocument();
   });
 
   it('appends the target only when the owner has set one, as a plain number', async () => {

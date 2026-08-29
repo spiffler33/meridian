@@ -77,6 +77,7 @@ const SAMPLE_CODING: Coding = {
   span: { start: '2026-08-28T09:00:00.000Z', end: null, approx: false },
   links: { eventId: null },
   nutrition: null,
+  corrections: [],
   coderRev: CODER_REV,
   effects: [{ type: 'claimEvent', eventId: 'evt-sample' }],
   vocabProposal: { kind: 'activity', value: 'plumbing', mapsTo: 'home-ops' },
@@ -1437,5 +1438,61 @@ describe('the ambient sweep never considers coderRev', () => {
     // The pulse is still behind, and still the backfill's business — the
     // owner's tap is the only thing that re-codes it.
     expect(pulsesToBackfill(await getPulses()).map(row => row.id)).toEqual([created.id]);
+  });
+});
+
+/**
+ * The rev bump to 3, and what it must NOT change.
+ *
+ * A bump is a bill: it makes every pulse coded at the older rev eligible for
+ * the backfill. That is correct and harmless because the backfill is
+ * owner-invoked and priced before it runs — and it is only harmless while the
+ * ambient sweep continues to ignore the rev entirely, which is what this pins
+ * a second time, at the new rev.
+ */
+describe('CODER_REV 3', () => {
+  dbReset();
+
+  it('makes a rev-2 pulse eligible for the owner-invoked backfill', () => {
+    const at = new Date(Date.parse(PULSE_EPOCH) + 86_400_000).toISOString();
+    const rows: PulseRow[] = [
+      { id: 'rev2', text: 'coded before corrections existed', at, signal: 'note', coderRev: 2 },
+      { id: 'rev3', text: 'current', at, signal: 'note', coderRev: CODER_REV },
+    ];
+    expect(pulsesToBackfill(rows).map(row => row.id)).toEqual(['rev2']);
+  });
+
+  it('still codes nothing ambiently — the sweep never learned about the rev', async () => {
+    const created = await createPulse('coded at rev 2');
+    await enrichPulse(created.id, { ...SAMPLE_CODING, coderRev: 2 });
+    codePulseMock.mockClear();
+    codePulseMock.mockResolvedValue(SAMPLE_CODING);
+
+    for (let open = 0; open < 3; open += 1) {
+      resetSession();
+      await codeUncodedPulses();
+    }
+    await codeCapturedPulse(created.id);
+
+    expect(codePulseMock).not.toHaveBeenCalled();
+  });
+
+  it('round-trips corrections through the journal, dropping only the unusable entries', async () => {
+    const created = await createPulse('friday was 2400, saturday 880');
+    await enrichPulse(created.id, {
+      ...SAMPLE_CODING,
+      corrections: [
+        { date: '2026-08-28', kcal: 2400 },
+        { date: '2026-08-29', kcal: 880, proteinG: 150 },
+      ],
+    });
+
+    // Through a real re-open: the fold is what a second device would read.
+    resetSession();
+    const row = (await getPulses()).find(candidate => candidate.id === created.id);
+    expect(row?.corrections).toEqual([
+      { date: '2026-08-28', kcal: 2400 },
+      { date: '2026-08-29', kcal: 880, proteinG: 150 },
+    ]);
   });
 });

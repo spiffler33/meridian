@@ -25,10 +25,12 @@
  */
 
 import { loadApiKey } from './claude';
+import { parseCorrections } from '../lib/entities';
 import type {
   NutritionSource,
   PulseEffect,
   PulseEffectType,
+  PulseCorrection,
   PulseLinks,
   PulseNutrition,
   PulseSignal,
@@ -44,7 +46,7 @@ export const CODER_MODEL = 'claude-sonnet-5';
 /**
  * The revision of the coding schema this build produces.
  *
- * Rev 2 is the one that carries `nutrition`. It exists for exactly one reader:
+ * Rev 2 carried `nutrition`; rev 3 adds `corrections`. It exists for exactly one reader:
  * the owner-invoked backfill, which selects pulses coded at a lower rev and
  * re-codes them. Nothing else may branch on it — in particular the ambient
  * sweep must not, or every re-open would re-code the entire history at the
@@ -53,7 +55,7 @@ export const CODER_MODEL = 'claude-sonnet-5';
  * Bump it when a schema change makes an older coding worth redoing, and only
  * then: a bump is a bill.
  */
-export const CODER_REV = 2;
+export const CODER_REV = 3;
 
 /**
  * A rough per-pulse cost, in US dollars, for the backfill's confirmation line.
@@ -128,6 +130,15 @@ export type Coding = {
    * versus food it could not count — lives one level down, in `kcal`.
    */
   nutrition: PulseNutrition | null;
+  /**
+   * Day totals the owner asserted in this utterance — zero, one, or several.
+   *
+   * An array rather than a single value because one sentence can settle more
+   * than one day ("friday was 2400, saturday's 880 is right"), and because
+   * the empty array is the ordinary answer for every pulse that is not about
+   * a day's total at all.
+   */
+  corrections: PulseCorrection[];
   /** Always `CODER_REV`. See `toCoding` for why the model's own answer is not trusted. */
   coderRev: number;
   effects: PulseEffect[];
@@ -160,7 +171,8 @@ const OUTPUT_SCHEMA = `{
   "links": {"eventId": null},
   "nutrition": {"kcal": null, "kcalSource": "stated|estimated",
                 "proteinG": null, "proteinSource": "stated|estimated"},
-  "coderRev": 2,
+  "corrections": [{"date": "YYYY-MM-DD", "kcal": 0, "proteinG": null}],
+  "coderRev": 3,
   "effects": [{"type": "claimEvent", "...": "..."}],
   "vocabProposal": {"kind": "domain|activity|person", "value": "...", "mapsTo": null}
 }`;
@@ -229,6 +241,37 @@ const RULES =
  * the label is for the ledger's own rows, the extraction is unconditional on
  * consumption. A drink at a work dinner is `domain: social` and still food.
  */
+/**
+ * The correction rules (rev 3), and the distinction that makes them work.
+ *
+ * `nutrition` is a claim about ONE ITEM the owner consumed. A correction is a
+ * claim about a WHOLE DAY, and it is the owner reading their own ledger and
+ * saying what the number should be. Without this concept the model had no way
+ * to express "friday was 2400" except as "the owner just ate 2400 kcal" —
+ * which is exactly what it did, and the 2400 landed on today.
+ *
+ * **An override and a ratification are the same act.** "friday is 2400, not
+ * 1220" and "saturday's 880 estimate is fine" both end with the owner having
+ * stated a day's total; the second is not a no-op just because the number
+ * agrees with what was already there. Recording both means a ratified day
+ * stops being an estimate — which is the whole reason the ledger draws a
+ * corrected day differently.
+ *
+ * **An ambiguous day reference produces nothing.** "that was way more than it
+ * says" names no day, and a correction guessed onto the wrong one is worse
+ * than no correction: it is silent, wrong, and outranks the arithmetic. Nulls
+ * over guesses, applied to the field where a guess does the most damage.
+ */
+const CORRECTION_RULES =
+  'corrections: emit one when the owner asserts what a specific DAY totalled — either ' +
+  'overriding what the ledger says ("friday was 2400, not 1220") or ratifying it ' +
+  "(\"saturday's 880 estimate is fine\"). Both are the owner stating that day's total; " +
+  'record both the same way. One utterance may correct several days — return one entry ' +
+  'per day. Resolve the day against now and tz and give it as YYYY-MM-DD. If the ' +
+  'utterance names no specific day, or the day it means is ambiguous, return an empty ' +
+  'corrections array rather than guessing at one. A correction is about a day total; it ' +
+  'is not nutrition for an item, and a pulse may carry both.';
+
 const NUTRITION_RULES =
   'nutrition: fill it whenever the text describes the OWNER consuming food or drink, ' +
   'whatever the domain or activity label — beverages count, alcohol counts. Never for ' +
@@ -253,7 +296,9 @@ ${EFFECT_PAYLOADS}
 
 Rules given to the model: ${RULES}
 
-${NUTRITION_RULES}`;
+${NUTRITION_RULES}
+
+${CORRECTION_RULES}`;
 
 /**
  * One Anthropic call: classify `text` against `context`. Returns the coding,
@@ -365,6 +410,10 @@ function toCoding(raw: unknown, fallbackStart: string): Coding | null {
     span: toSpan(value.span, fallbackStart),
     links: toLinks(value.links),
     nutrition: toNutrition(value.nutrition),
+    // The journal reader's own validation, reused rather than restated: the
+    // date's round-trip check is the load-bearing part and two copies would be
+    // two places to get it wrong.
+    corrections: parseCorrections(value.corrections),
     // Stamped, never read off the response. The rev describes the schema THIS
     // build parses against, which is a fact about the code and not about the
     // answer — and a model that echoed `1` (or omitted the key, or wrote
