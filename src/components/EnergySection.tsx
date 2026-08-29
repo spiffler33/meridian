@@ -20,22 +20,17 @@ import { useCallback, useMemo } from 'react';
 import { useAsync } from '../hooks/useAsync';
 import { deviceTimeZone } from '../lib/calendar';
 import type { CalendarMirror } from '../lib/calendar';
-import { readPulseVocabRow } from '../lib/entities';
-import type { Habit } from '../lib/entities';
 import {
   claimedEventIds,
   closeSpans,
-  habitTiming,
-  HISTOGRAM_WEEKS,
   ledgerHonesty,
   neededByCalendar,
   pairNeededSpent,
   spentByDomain,
-  trailingWindow,
   weekWindow,
 } from '../lib/ledger';
-import type { CalendarHours, DomainHours, HabitTiming } from '../lib/ledger';
-import { getHabits, getPulses } from '../services/data';
+import type { CalendarHours, DomainHours } from '../lib/ledger';
+import { getPulses } from '../services/data';
 import { getWeekNumber } from '../utils/dates';
 
 interface EnergySectionProps {
@@ -174,39 +169,6 @@ function PairedChart({ paired }: { paired: Array<{ name: string; needed: number;
   );
 }
 
-const HOUR_TICKS = [0, 6, 12, 18];
-
-/**
- * One habit's day, as twenty-four cells.
- *
- * A heat strip rather than bars: the question is "when", and at this size a
- * bar chart of twenty-four columns is a picket fence. The ramp is the year
- * heatmap's own, so the two instruments on this page read as one language.
- */
-function TimingRow({ row, label }: { row: HabitTiming; label: string }) {
-  const busiest = widestOf(row.hours);
-  return (
-    <div className="space-y-1">
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="truncate font-mono text-[11.5px] text-text-secondary">{label}</span>
-        <span className="font-mono text-[11px] tabular-nums text-text-muted">{row.total}</span>
-      </div>
-      <div className="flex gap-px" role="img" aria-label={`${label}: ${row.total} logged`}>
-        {row.hours.map((count, hour) => {
-          const level = count === 0 ? 0 : Math.min(5, Math.ceil((count / busiest) * 5));
-          return (
-            <span
-              key={hour}
-              className={`h-3 flex-1 rounded-[1px] heat-${level}`}
-              title={`${String(hour).padStart(2, '0')}:00 - ${count}`}
-            />
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 export function EnergySection({
   mirror,
   selectedDate,
@@ -219,19 +181,14 @@ export function EnergySection({
   // owner's hands; leaving the pulse read out of the render path keeps it
   // that way.
   const load = useCallback(async () => {
-    const [pulses, habits] = await Promise.all([getPulses(), getHabits()]);
-    // After `getPulses`, which awaits hydration — so the vocabulary is in the
-    // session and can be read without a second write path. Deliberately not
-    // `ensurePulseVocabSeeded`: that seeds, and a statistics view must not
-    // write to the journal just by being opened.
-    return { pulses, habits, vocab: readPulseVocabRow() };
+    return { pulses: await getPulses() };
   }, []);
   const data = useAsync(load);
 
   const timeZone = deviceTimeZone();
   const ledger = useMemo(() => {
     if (data.value === null) return null;
-    const { pulses, habits, vocab } = data.value;
+    const { pulses } = data.value;
     const window = weekWindow(selectedDate, timeZone, weekStartsOn);
     // Every pulse, not the week's: a block is closed by the next one, which
     // can be on the far side of the week's edge.
@@ -243,8 +200,6 @@ export function EnergySection({
       needed,
       pairs: pairNeededSpent(needed, spent),
       honesty: ledgerHonesty(pulses, window),
-      timing: habitTiming(pulses, vocab, trailingWindow(window, HISTOGRAM_WEEKS, timeZone), timeZone),
-      labels: new Map(habits.map((habit: Habit) => [habit.id, habit.label])),
     };
   }, [data.value, mirror, selectedDate, timeZone, weekStartsOn]);
 
@@ -304,33 +259,6 @@ export function EnergySection({
             </div>
           )}
 
-          <div className="space-y-3">
-            <div className="flex items-baseline justify-between gap-3">
-              <Label>habit timing</Label>
-              <span className="font-mono text-[11px] text-text-muted">
-                {HISTOGRAM_WEEKS} weeks, local hour
-              </span>
-            </div>
-            {ledger.timing.length === 0 ? (
-              <Empty>no habit aliases yet</Empty>
-            ) : (
-              <div className="space-y-3">
-                {ledger.timing.map(row => (
-                  <TimingRow
-                    key={row.habitId}
-                    row={row}
-                    label={ledger.labels.get(row.habitId) ?? row.aliases.join(', ')}
-                  />
-                ))}
-                <div className="flex justify-between font-mono text-[10px] text-text-muted tabular-nums">
-                  {HOUR_TICKS.map(hour => (
-                    <span key={hour}>{String(hour).padStart(2, '0')}</span>
-                  ))}
-                  <span>23</span>
-                </div>
-              </div>
-            )}
-          </div>
         </div>
       )}
     </section>

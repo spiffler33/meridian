@@ -62,9 +62,6 @@ export type MetaKey =
    * than a journalled profile field. `vocabProposal` has no key here and must
    * never get one — Appendix C gives it no auto path at all.
    */
-  | 'autoApplyCompleteHabit'
-  | 'autoApplySpawnTask'
-  | 'autoApplyUpdateTask'
   | 'autoApplyClaimEvent'
   /**
    * The Claude API key. Device-local on purpose: `meta` is the one store that

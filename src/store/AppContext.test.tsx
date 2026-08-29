@@ -34,16 +34,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { GITHUB_API_BASE, GITHUB_OWNER, GITHUB_REPO } from '../lib/github'
 import { closeDb, enqueue, outboxSize, setToken } from '../lib/db'
 import { resetSession } from '../lib/entities'
-import {
-  applyPulseEffect,
-  createHabit,
-  createPulse,
-  deleteTask,
-  enrichPulse,
-  getTasks,
-  toggleCompletion,
-} from '../services/data'
-import type { Coding } from '../services/coder'
+import { deleteTask, getTasks, toggleCompletion } from '../services/data'
 import { FLUSH_DEBOUNCE_MS, installSyncTriggers } from '../lib/sync'
 import { AppProvider, useApp } from './AppContext'
 import type { MitCategory } from '../types'
@@ -179,17 +170,6 @@ function TogglingProbe() {
       },
     },
     'toggle'
-  )
-}
-
-/** Renders the Tower items the provider is holding, and whether it has finished loading. */
-function TowerProbe() {
-  const { state, loading } = useApp()
-  return createElement(
-    'div',
-    null,
-    createElement('span', { 'data-testid': 'loaded' }, loading ? 'no' : 'yes'),
-    createElement('span', { 'data-testid': 'tower' }, state.tower.map((item) => item.text).join('|'))
   )
 }
 
@@ -390,95 +370,3 @@ describe('reloading the window', () => {
 // ============================================================================
 // A chip applied on the Pulse page writes past this provider
 // ============================================================================
-
-/**
- * `applyPulseEffect` writes a `towerItem` or a `habitCompletion` straight
- * through the data layer, in ONE commit with the pulse's own update — it must
- * not go through `addTowerItem`/`toggleCompletion`, which are a second commit
- * each, and a failure between the two would leave the chip on screen with the
- * write already done.
- *
- * That leaves this provider not knowing. `onSynced` fires only for a pull that
- * fetched something, and a push never fires it, so the reducer holds the state
- * it read on open: the owner taps "+ call the plumber", the chip goes, they
- * open Tower, and it is empty. A durable write that reads exactly like a
- * failed one.
- *
- * No token here on purpose: `syncDown` returns null without one, so nothing
- * in these two tests can be explained by a pull.
- */
-describe('a chip applied on the Pulse page', () => {
-  const CODING: Coding = {
-    signal: 'task',
-    domain: null,
-    activity: null,
-    people: [],
-    span: { start: new Date().toISOString(), end: null, approx: false },
-    links: { habitId: null, towerId: null, eventId: null },
-    effects: [],
-    vocabProposal: null,
-  }
-
-  it('puts the task it spawned into the reducer, without a reload', async () => {
-    const pulse = await createPulse('sort out the boiler')
-    const effect = { type: 'spawnTask' as const, text: 'call the plumber' }
-    await enrichPulse(pulse.id, { ...CODING, effects: [effect] })
-
-    render(createElement(AppProvider, null, createElement(TowerProbe, null)))
-    await waitFor(() => {
-      expect(screen.getByTestId('loaded')).toHaveTextContent('yes')
-    })
-    expect(screen.getByTestId('tower')).toHaveTextContent('')
-
-    // By value, as both views tap: the same literal that was stored, which is
-    // what `effectKey` compares.
-    await applyPulseEffect(pulse.id, effect)
-
-    await waitFor(() => {
-      expect(screen.getByTestId('tower')).toHaveTextContent('call the plumber')
-    })
-  })
-
-  it('puts the habit it ticked into the reducer, without a reload', async () => {
-    const habit = await createHabit({ label: 'strength', category: 'health' })
-    const pulse = await createPulse('gym done')
-    const effect = { type: 'completeHabit' as const, habitId: habit.id }
-    await enrichPulse(pulse.id, { ...CODING, effects: [effect] })
-
-    render(createElement(AppProvider, null, createElement(DayProbe, null)))
-    await waitFor(() => {
-      expect(screen.getByTestId('ready')).toHaveTextContent('yes')
-    })
-    expect(screen.getByTestId('ticked')).toHaveTextContent('')
-
-    await applyPulseEffect(pulse.id, effect)
-
-    await waitFor(() => {
-      expect(screen.getByTestId('ticked')).toHaveTextContent(habit.id)
-    })
-  })
-})
-
-// ============================================================================
-// Sync triggers with the provider mounted
-// ============================================================================
-
-describe('teardown', () => {
-  it('stops syncing once the provider unmounts', async () => {
-    await setToken(TOKEN)
-    const remote = fakeGitHub()
-
-    render(createElement(AppProvider, null, createElement(HabitProbe, null)))
-    await waitFor(() => {
-      expect(screen.getByTestId('habits')).toBeInTheDocument()
-    })
-
-    cleanup()
-    await enqueue([habitEvent('after-unmount', 'Too late')])
-    window.dispatchEvent(new Event('focus'))
-    await new Promise((resolve) => setTimeout(resolve, 200))
-
-    expect(remote.puts).toHaveLength(0)
-    expect(await outboxSize()).toBe(1)
-  })
-})

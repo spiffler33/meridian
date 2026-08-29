@@ -200,29 +200,30 @@ export type PulseSignal = 'block' | 'event' | 'state' | 'plan' | 'task' | 'claim
 /** When the coder placed the utterance. `end`/`approx` per Appendix D's closure rules. */
 export type PulseSpan = { start: string; end: string | null; approx: boolean };
 
-/** What a pulse's coding wired to elsewhere in the app. Set by enrichment or a chip apply. */
-export type PulseLinks = { habitId: string | null; towerId: string | null; eventId: string | null };
+/**
+ * What a pulse's coding wired to elsewhere in the app. Set by enrichment or a chip apply.
+ *
+ * `habitId` and `towerId` left in phase 4 (fence 9): the coder no longer sees
+ * habits or tower items, so it has no id to answer with. Historical journal
+ * events still carry both keys — they are read past and ignored, never migrated.
+ */
+export type PulseLinks = { eventId: string | null };
 
-/** Appendix C's four side effects. Every one is a proposal; nothing here applies itself. */
-export type PulseEffectType = 'completeHabit' | 'spawnTask' | 'updateTask' | 'claimEvent';
+/**
+ * Appendix C's one surviving side effect. It is a proposal; nothing here applies itself.
+ *
+ * `completeHabit`, `spawnTask` and `updateTask` were retired in phase 4: habits
+ * and Tower are manual spaces, and the coder is not an actuator.
+ */
+export type PulseEffectType = 'claimEvent';
 
 /** One proposed side effect. Shape beyond `type` is proposal-specific and stays untyped. */
 export type PulseEffect = { type: PulseEffectType } & Record<string, unknown>;
 
-export type PulseVocabProposalKind = 'domain' | 'activity' | 'person' | 'habitAlias';
+export type PulseVocabProposalKind = 'domain' | 'activity' | 'person';
 
 /** A proposed addition to `pulseVocab`. Confirm-only — Appendix C gives it no auto option. */
 export type PulseVocabProposal = { kind: PulseVocabProposalKind; value: string; mapsTo: string | null };
-
-/**
- * Which capture surface a pulse was said into — Appendix B's `mouth`.
- *
- * One parser, two mouths: the Pulse page codes unbiased, Tower's box biases
- * the coder toward `task`. It has to be stored rather than passed, because
- * the coding queue is lazy: the call that needs to know can happen days after
- * the utterance, on the other device, from a journal line.
- */
-export type PulseMouth = 'today' | 'tower';
 
 /**
  * One captured utterance. Verbatim, timestamped, and never edited.
@@ -253,14 +254,6 @@ export type PulseRow = {
   text: string;
   /** ISO instant of capture. */
   at: string;
-  /**
-   * Which box this was typed into, written once at capture beside `text`.
-   *
-   * Absent means the Pulse page — the unbiased mouth, and every pulse written
-   * before Tower had one. Only `'tower'` is ever written, so the field appears
-   * exactly where it changes something.
-   */
-  mouth?: PulseMouth;
   signal?: PulseSignal;
   domain?: string | null;
   activity?: string | null;
@@ -277,8 +270,8 @@ export type PulseRow = {
  * `resolveEntityId` — unlike `dailyEntry`/`habitCompletion`/`yearTheme`,
  * `pulseVocab` never existed in Postgres, so no legacy surrogate id can ever
  * fork from the sentinel every device writes to from its very first event.
- * Grows over time via approved `vocabProposal` chips (domain/activity/person/
- * habitAlias) — this row's seed is a starting point, not the only writer.
+ * Grows over time via approved `vocabProposal` chips (domain/activity/person)
+ * — this row's seed is a starting point, not the only writer.
  */
 export type PulseVocabRow = {
   id: string;
@@ -286,8 +279,6 @@ export type PulseVocabRow = {
   /** label -> domain. */
   activities: Record<string, string>;
   people: string[];
-  /** alias -> habitId. */
-  habitAliases: Record<string, string>;
 };
 
 // ============================================================================
@@ -430,18 +421,23 @@ function optionalLinks(record: Record_, key: string): PulseLinks | undefined {
   const value = record[key];
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
   const obj = value as Record_;
-  const pick = (field: string): string | null => (typeof obj[field] === 'string' ? (obj[field] as string) : null);
-  return { habitId: pick('habitId'), towerId: pick('towerId'), eventId: pick('eventId') };
+  return { eventId: typeof obj.eventId === 'string' ? obj.eventId : null };
 }
 
-export const PULSE_EFFECT_TYPES: readonly PulseEffectType[] = ['completeHabit', 'spawnTask', 'updateTask', 'claimEvent'];
-const PULSE_VOCAB_PROPOSAL_KINDS: readonly PulseVocabProposalKind[] = ['domain', 'activity', 'person', 'habitAlias'];
+export const PULSE_EFFECT_TYPES: readonly PulseEffectType[] = ['claimEvent'];
+const PULSE_VOCAB_PROPOSAL_KINDS: readonly PulseVocabProposalKind[] = ['domain', 'activity', 'person'];
 
 /**
- * The coder's proposed `effects`. An entry whose `type` is not one of
- * Appendix C's four is dropped rather than kept as an unrenderable chip; the
- * rest of the entry is carried through untouched, since each effect type
- * carries its own payload and this layer is not the place that reads it.
+ * The coder's proposed `effects`. An entry whose `type` is not one Appendix C
+ * still lists is dropped rather than kept as an unrenderable chip; the rest of
+ * the entry is carried through untouched, since each effect type carries its
+ * own payload and this layer is not the place that reads it.
+ *
+ * This is also the whole handling of a retired type. The model may still answer
+ * `completeHabit` — the prompt no longer offers it, but a prompt is not a
+ * schema — and a stored journal line from before phase 4 certainly does. Both
+ * drop here, silently: no error, no warning, no log. A retired proposal is not
+ * a malformed one.
  */
 function optionalEffects(record: Record_, key: string): PulseEffect[] | undefined {
   const value = record[key];
@@ -596,7 +592,6 @@ function toReadItemRow(id: string, record: Record_): ReadItemRow {
 }
 
 const PULSE_SIGNALS: readonly PulseSignal[] = ['block', 'event', 'state', 'plan', 'task', 'claim', 'note'];
-const PULSE_MOUTHS: readonly PulseMouth[] = ['today', 'tower'];
 
 /**
  * `signal` through `vocabProposal` are only ever set together, by one
@@ -608,8 +603,6 @@ const PULSE_MOUTHS: readonly PulseMouth[] = ['today', 'tower'];
 function toPulseRow(id: string, record: Record_): PulseRow {
   const row: PulseRow = { id, text: str(record, 'text', ''), at: str(record, 'at', EPOCH_FLOOR) };
 
-  const mouth = optionalOneOf(record, 'mouth', PULSE_MOUTHS);
-  if (mouth !== undefined) row.mouth = mouth;
   const signal = optionalOneOf(record, 'signal', PULSE_SIGNALS);
   if (signal !== undefined) row.signal = signal;
   const domain = optionalNullableStr(record, 'domain');
@@ -636,7 +629,6 @@ function toPulseVocabRow(id: string, record: Record_): PulseVocabRow {
     domains: strArray(record, 'domains'),
     activities: strRecord(record, 'activities'),
     people: strArray(record, 'people'),
-    habitAliases: strRecord(record, 'habitAliases'),
   };
 }
 

@@ -20,7 +20,7 @@
 
 import { dayKey } from './calendar';
 import type { CalendarEvent, CalendarMirror } from './calendar';
-import type { PulseRow, PulseSignal, PulseVocabRow } from './entities';
+import type { PulseRow, PulseSignal } from './entities';
 import { addDays, getWeekDates } from '../utils/dates';
 
 const MS_PER_HOUR = 60 * 60 * 1000;
@@ -48,9 +48,6 @@ const SPENT_SIGNALS: readonly PulseSignal[] = ['block', 'event'];
 
 /** Appendix A's calendar whose hours are not the owner's until a pulse claims one. */
 const HOME_CALENDAR = 'home';
-
-/** The habit histogram's trailing window, in weeks. */
-export const HISTOGRAM_WEEKS = 12;
 
 /** A half-open-ish instant range; both ends inclusive, `endMs` being the last ms of the last day. */
 export type LedgerWindow = { startMs: number; endMs: number };
@@ -157,12 +154,6 @@ export function weekWindow(date: string, timeZone: string, weekStartsOn: 0 | 1 =
   };
 }
 
-/** The trailing `weeks` window ending with the one `window` belongs to. */
-export function trailingWindow(window: LedgerWindow, weeks: number, timeZone: string): LedgerWindow {
-  const firstDay = dayKey(window.startMs, timeZone);
-  return { startMs: startOfLocalDayMs(addDays(firstDay, -7 * (weeks - 1)), timeZone), endMs: window.endMs };
-}
-
 /** How much of a range falls inside a window, in ms. Zero when they miss each other. */
 function overlapMs(startMs: number, endMs: number, window: LedgerWindow): number {
   const from = Math.max(startMs, window.startMs);
@@ -187,7 +178,6 @@ export type ClosedSpan = {
   signal: PulseSignal;
   domain: string | null;
   activity: string | null;
-  habitId: string | null;
   startMs: number;
   endMs: number;
   derived: boolean;
@@ -257,7 +247,6 @@ function spanOf(pulse: PulseRow, startMs: number, endMs: number, derived: boolea
     signal: pulse.signal as PulseSignal,
     domain: pulse.domain ?? null,
     activity: pulse.activity ?? null,
-    habitId: pulse.links?.habitId ?? null,
     startMs,
     endMs,
     derived,
@@ -423,72 +412,6 @@ export function pairNeededSpent(needed: readonly CalendarHours[], spent: readonl
   const pairedNames = new Set(paired.map(pair => pair.name));
   const spentOnly = spent.filter(bar => bar.domain === null || !pairedNames.has(bar.domain));
   return { paired, neededOnly, spentOnly };
-}
-
-// ============================================================================
-// Habit timing — the gym question
-// ============================================================================
-
-/** One habit's 24 buckets of local start-hour, over the trailing window. */
-export type HabitTiming = {
-  habitId: string;
-  /** The vocabulary's names for it, so the row can be read without the habit store. */
-  aliases: string[];
-  /** 24 counts, index = local hour. */
-  hours: number[];
-  total: number;
-};
-
-/**
- * When each habit actually happens.
- *
- * Only habits the vocabulary can reach: `habitAliases` is what lets the coder
- * link a pulse to a habit at all, so a habit with no alias has no pulses to
- * plot and an empty row would be noise. Counted by `links.habitId` — the id,
- * always — over `span.start` rather than the habit completion record, because
- * a tick says the day and the pulse says the hour.
- *
- * Every habit with an alias gets a row even at zero: "you have never logged
- * this" is an answer, and a row that appears only once there is data hides
- * the question until it answers itself.
- */
-export function habitTiming(
-  pulses: readonly PulseRow[],
-  vocab: PulseVocabRow | null,
-  window: LedgerWindow,
-  timeZone: string
-): HabitTiming[] {
-  const aliasesById = new Map<string, string[]>();
-  for (const [alias, habitId] of Object.entries(vocab?.habitAliases ?? {})) {
-    if (typeof habitId !== 'string' || habitId.length === 0) continue;
-    aliasesById.set(habitId, [...(aliasesById.get(habitId) ?? []), alias].sort());
-  }
-  if (aliasesById.size === 0) return [];
-
-  const rows = new Map<string, HabitTiming>();
-  for (const [habitId, aliases] of aliasesById) {
-    rows.set(habitId, { habitId, aliases, hours: new Array<number>(24).fill(0), total: 0 });
-  }
-
-  for (const pulse of pulses) {
-    if (pulse.signal === undefined) continue;
-    const habitId = pulse.links?.habitId;
-    if (typeof habitId !== 'string') continue;
-    const row = rows.get(habitId);
-    if (row === undefined) continue;
-    const startMs = Date.parse(pulse.span?.start ?? '');
-    if (!Number.isFinite(startMs)) continue;
-    if (startMs < window.startMs || startMs > window.endMs) continue;
-    row.hours[localHour(startMs, timeZone)] += 1;
-    row.total += 1;
-  }
-
-  return [...rows.values()].sort((a, b) => {
-    if (a.total !== b.total) return b.total - a.total;
-    const left = a.aliases[0] ?? a.habitId;
-    const right = b.aliases[0] ?? b.habitId;
-    return left < right ? -1 : left > right ? 1 : 0;
-  });
 }
 
 // ============================================================================

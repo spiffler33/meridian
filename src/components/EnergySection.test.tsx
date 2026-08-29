@@ -55,7 +55,7 @@ function coded(id: string, signal: PulseSignal, start: string, extra: Partial<Pu
     activity: null,
     people: [],
     span: { start, end: null, approx: false },
-    links: { habitId: null, towerId: null, eventId: null },
+    links: { eventId: null },
     ...extra,
   };
 }
@@ -70,19 +70,6 @@ function timed(id: string, calendar: string, start: string, end: string): Calend
 
 function mirrorOf(events: CalendarEvent[]): CalendarMirror {
   return { generatedAt: 0, window: { start: '', end: '' }, calendars: [], events };
-}
-
-function habit(id: string, label: string): Habit {
-  return {
-    id,
-    label,
-    description: null,
-    category: 'health',
-    emoji: null,
-    sort_order: 0,
-    created_at: '2026-01-01T00:00:00.000Z',
-    archived_at: null,
-  };
 }
 
 const noop = () => {};
@@ -113,7 +100,6 @@ describe('the energy section', () => {
     show();
     expect(await screen.findByText('no coded blocks this week')).toBeInTheDocument();
     expect(screen.getByText('no events this week')).toBeInTheDocument();
-    expect(screen.getByText('no habit aliases yet')).toBeInTheDocument();
   });
 
   it("draws the week's hours by domain, with the number outside the bar", async () => {
@@ -147,7 +133,7 @@ describe('the energy section', () => {
   it('bills the same home hour once a pulse claims the event', async () => {
     mocks.pulses = [
       coded('claim', 'claim', '2026-08-25T04:00:00.000Z', {
-        links: { habitId: null, towerId: null, eventId: 'evt-home' },
+        links: { eventId: 'evt-home' },
       }),
     ];
     const mirror = mirrorOf([
@@ -200,28 +186,6 @@ describe('the energy section', () => {
     show();
     expect(await screen.findByTitle('db')).toBeInTheDocument();
     expect(screen.queryByText(/uncoded/)).not.toBeInTheDocument();
-  });
-
-  it('names a habit by its own label, and plots the hour in the device zone', async () => {
-    mocks.habits = [habit('h1', 'Strength')];
-    mocks.vocab = { id: 'vocab', domains: [], activities: {}, people: [], habitAliases: { gym: 'h1' } };
-    // 23:30 UTC is 07:30 the next morning in Singapore.
-    mocks.pulses = [
-      coded('g', 'block', '2026-08-24T23:30:00.000Z', {
-        links: { habitId: 'h1', towerId: null, eventId: null },
-      }),
-    ];
-    show();
-    expect(await screen.findByText('Strength')).toBeInTheDocument();
-    expect(screen.getByTitle('07:00 - 1')).toBeInTheDocument();
-    expect(screen.getByTitle('23:00 - 0')).toBeInTheDocument();
-  });
-
-  it('shows an aliased habit that has never been logged rather than hiding it', async () => {
-    mocks.habits = [habit('h1', 'Strength')];
-    mocks.vocab = { id: 'vocab', domains: [], activities: {}, people: [], habitAliases: { gym: 'h1' } };
-    show();
-    expect(await screen.findByLabelText('Strength: 0 logged')).toBeInTheDocument();
   });
 
   it('steps the week through the same handlers the lens above it uses', async () => {

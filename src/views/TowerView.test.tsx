@@ -1,35 +1,24 @@
 /**
- * Tower's box, now that one submission is two records.
+ * Tower's box, back to one record for one submission.
  *
- * The thing this file exists to protect is the behaviour the owner already
- * liked: Enter, and the item is there, from the raw text, with nothing between
- * the two. The coder joined the path and must not have changed that — so the
- * first test runs it against a coder that never answers at all, and the item
- * still has to be on screen.
+ * Phase 4 undid "one parser, two mouths". Tower is a manual, intentional space
+ * (fence 9): Enter, and the item is there, from the raw text, with nothing
+ * between the two — no pulse written, no coder called, no chip on any item.
+ * The behaviour the owner already liked is all there is left to protect, and
+ * the coder's absence is now a thing to assert rather than a thing to survive.
  *
- * Two things are mocked and nothing else is: the coder's network call, and
- * `scheduleFlush` — the latter only so no real debounce timer or push outlives
- * a test, never to assert on. It cannot be asserted on here: `AppContext`
- * imports it from the same module and fires it on every state change, which
- * `loadLocalData` guarantees, so a passing assertion would say nothing about
- * whether capture called it. That claim is pinned in
- * `hooks/useTowerPulses.test.ts`, where the hook is the only caller.
+ * `codePulse` is mocked so its absence can be PROVED rather than assumed: a
+ * real one would be silent here anyway (no key), which would let a call slip
+ * back onto this path unnoticed. `scheduleFlush` is mocked only so no real
+ * debounce timer or push outlives a test, never to assert on — `AppContext`
+ * imports it from the same module and fires it on every state change, so an
+ * assertion on it would say nothing about capture.
  *
  * Everything else runs for real against fake-indexeddb — `AppProvider`,
- * `useTowerPulses`, `captureTowerItem`, the fold — because "the item appears
- * without a reload" is a claim about the wiring between a commit and the
- * reducer, and a stub would prove nothing about it. `syncDown` needs no
- * stubbing either: with no token it returns null, so nothing here can be
- * explained by a pull.
- *
- * Every test captures its OWN line, and the coder answers only for that line.
- * That is not decoration: capture fires the coding without awaiting it (fence
- * 3), so a test ends with its coding still running, and it finishes inside a
- * LATER test — against a fresh database, for a pulse id that no longer exists,
- * where the enrichment resurrects a textless ghost pulse (P2). Measured at
- * about one run in twelve, failing an assertion three tests away from the
- * capture that caused it. A coder that never settles for a line it was not set
- * up for cannot write anything, whenever it happens to be called.
+ * `createTowerItem`, the fold — because "the item appears without a reload" is
+ * a claim about the wiring between a commit and the reducer, and a stub would
+ * prove nothing about it. `syncDown` needs no stubbing: with no token it
+ * returns null, so nothing here can be explained by a pull.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -50,22 +39,11 @@ vi.mock('../services/coder', async (importOriginal) => {
 import { closeDb } from '../lib/db';
 import { resetSession } from '../lib/entities';
 import { getPulses, getTowerItems } from '../services/data';
-import type { CoderContext, Coding } from '../services/coder';
+import type { Coding } from '../services/coder';
 import { AppProvider } from '../store/AppContext';
 import TowerView from './TowerView';
 
 const NOW = new Date('2026-08-28T12:00:00.000Z');
-
-const CODING: Coding = {
-  signal: 'task',
-  domain: null,
-  activity: null,
-  people: [],
-  span: { start: NOW.toISOString(), end: null, approx: false },
-  links: { habitId: null, towerId: null, eventId: null },
-  effects: [],
-  vocabProposal: null,
-};
 
 /** A coder that has been reached and will never answer. It cannot write. */
 const NEVER = () => new Promise<Coding | null>(() => undefined);
@@ -111,76 +89,37 @@ async function capture(text: string): Promise<void> {
   fireEvent.keyDown(box, { key: 'Enter' });
 }
 
-/**
- * The pulse the store holds — and the assertion that there is exactly one.
- *
- * One submission is one item and one pulse. Indexing `[0]` instead would read
- * whichever row the fold happened to return first, which is how the leak the
- * module note describes announced itself: as a baffling diff rather than as a
- * count.
- */
-async function onlyPulse() {
-  const rows = await getPulses();
-  expect(rows).toHaveLength(1);
-  return rows[0];
-}
-
-/**
- * A coder that proposes one `updateTask` per entry in `changes` on the item it
- * is shown, for `line` and for nothing else.
- *
- * The item is resolved by ID out of the `openTowerItems` the model was given,
- * which is the only way an effect can name a task. A call carrying any other
- * line belongs to another test and never answers.
- */
-function proposeFor(line: string, ...changes: Array<Record<string, unknown>>) {
-  codePulseMock.mockImplementation(async (text: string, context: CoderContext) => {
-    if (text !== line) return NEVER();
-    const target = context.openTowerItems.find((item) => item.text === line);
-    if (target === undefined) return null;
-    return {
-      ...CODING,
-      effects: changes.map((change) => ({ type: 'updateTask' as const, towerId: target.id, ...change })),
-    };
-  });
-}
-
 describe('capturing into Tower', () => {
-  it('shows the item immediately, from the raw text, with the coder never awaited', async () => {
-    // The coder here never answers — the strongest form of "slow". If anything
-    // on the capture path awaited it, nothing below could ever run.
+  it('shows the item immediately, from the raw text', async () => {
     renderTower();
 
     await capture('  call the plumber  ');
 
-    // In the reducer and on screen without a reload: the write goes straight
-    // through the data layer in one commit, and `onLocalWrite` is what tells
-    // the provider to re-read.
+    // In the reducer and on screen without a reload: the write goes through
+    // the data layer, and the provider's own dispatch is what repaints.
     expect(await screen.findByText('call the plumber')).toBeInTheDocument();
 
-    // Cleared AND ready for the next line while the coder is still out. This
-    // is what "capture never blocks" looks like from the owner's side, and the
-    // only assertion here that an `await` on the coding would break: the item
-    // itself lands before the coder is even called, so its presence proves
-    // nothing about the ordering.
     const box = (await screen.findByPlaceholderText('what needs doing?')) as HTMLInputElement;
     await waitFor(() => {
       expect(box).not.toBeDisabled();
     });
     expect(box.value).toBe('');
-
-    // And the same submission is in the stream, verbatim, as the other mouth.
-    const pulse = await onlyPulse();
-    expect(pulse.text).toBe('call the plumber');
-    expect(pulse.mouth).toBe('tower');
-    // Uncoded, and calm about it: the item is the whole outcome.
-    expect(pulse.signal).toBeUndefined();
-    expect(pulse.links?.towerId).toBe((await getTowerItems())[0].id);
-    // No assertion on `scheduleFlushMock` here — see the module note. It is
-    // pinned in `hooks/useTowerPulses.test.ts`.
   });
 
-  it('is one item and one pulse on a double Enter, not two', async () => {
+  it('writes no pulse and calls no coder — Tower is not a mouth (fence 9)', async () => {
+    renderTower();
+
+    await capture('chase the roof quote');
+    expect(await screen.findByText('chase the roof quote')).toBeInTheDocument();
+
+    // The item is the whole outcome. A submission here is a commitment the
+    // owner made, not an utterance for a model to read: nothing about it
+    // reaches the stream, and nothing about it is ever sent anywhere.
+    expect(await getPulses()).toEqual([]);
+    expect(codePulseMock).not.toHaveBeenCalled();
+  });
+
+  it('is one item on a double Enter, not two', async () => {
     renderTower();
     const box = (await screen.findByPlaceholderText('what needs doing?')) as HTMLInputElement;
 
@@ -190,120 +129,17 @@ describe('capturing into Tower', () => {
 
     expect(await screen.findByText('chase the roof quote')).toBeInTheDocument();
     expect(await getTowerItems()).toHaveLength(1);
-    await onlyPulse();
-  });
-});
-
-describe('the proposals the coder puts on an item', () => {
-  it('arrives as a chip on the item, after the item, and applies to it', async () => {
-    const LINE = 'the landlord is fixing the boiler';
-    proposeFor(LINE, { status: 'waiting', waitingOn: 'the landlord', expectsBy: '2026-09-04' });
-    renderTower();
-
-    await capture(LINE);
-    expect(await screen.findByText(LINE)).toBeInTheDocument();
-
-    // The chip says only what would change: the task is the line above it.
-    fireEvent.click(await screen.findByText('waiting, waiting on the landlord, by 2026-09-04'));
-
-    await waitFor(async () => {
-      const [item] = await getTowerItems();
-      expect(item.status).toBe('waiting');
-      expect(item.waitingOn).toBe('the landlord');
-      expect(item.expectsBy).toBe('2026-09-04');
-    });
-    // Held rather than active, so Tower has moved it out of Now — and the
-    // proposal is gone from the pulse it came from, which is the only place
-    // either surface reads a chip from.
-    await waitFor(() => {
-      expect(screen.getByText(/Follow Up \(1\)/)).toBeInTheDocument();
-    });
-    expect((await onlyPulse()).effects).toEqual([]);
   });
 
-  it('the × drops the chip and leaves the item alone', async () => {
-    const LINE = 'the garage door is sorted';
-    proposeFor(LINE, { status: 'done' });
+  it('renders no chip on an item — the coder proposes nothing about Tower', async () => {
     renderTower();
 
-    await capture(LINE);
-    const chip = await screen.findByText('done');
+    await capture('call the plumber');
+    expect(await screen.findByText('call the plumber')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByLabelText('dismiss done'));
-
-    await waitFor(() => {
-      expect(chip).not.toBeInTheDocument();
-    });
-    const [item] = await getTowerItems();
-    expect(item.status).toBe('active');
-    // The coding survives; a dismissed chip changes what is offered, not how
-    // the line was read.
-    const pulse = await onlyPulse();
-    expect(pulse.signal).toBe('task');
-    expect(pulse.effects).toEqual([]);
-  });
-
-  it('stays reachable after Tower has put the item away, in the drawer it went into', async () => {
-    // Two proposals on one item. Applying the first moves the item out of the
-    // active list every other surface on this page is built from — so without
-    // a chip inside the drawer, the second would be neither applicable nor
-    // dismissible from the moment the first was tapped, and unreachable from
-    // the Pulse page too the next morning: that page is today-only, and the
-    // journal is never compacted.
-    const LINE = 'the landlord is coming about the boiler';
-    proposeFor(LINE, { status: 'waiting', waitingOn: 'the landlord' }, { expectsBy: '2026-09-04' });
-    renderTower();
-
-    await capture(LINE);
-    fireEvent.click(await screen.findByText('waiting, waiting on the landlord'));
-
-    // Out of Now and into Follow Up, which is shut — a drawer shows nothing
-    // until it is opened (fence 8: Tower stays a page for what needs doing).
-    const drawer = await screen.findByText(/Follow Up \(1\)/);
-    await waitFor(() => {
-      expect(screen.getByText('Nothing needs attention right now')).toBeInTheDocument();
-    });
-    expect(screen.queryByText('by 2026-09-04')).toBeNull();
-
-    fireEvent.click(drawer);
-
-    // Open, and the surviving proposal is on the item, and still acts.
-    fireEvent.click(await screen.findByText('by 2026-09-04'));
-    await waitFor(async () => {
-      const [item] = await getTowerItems();
-      expect(item.expectsBy).toBe('2026-09-04');
-    });
-    expect((await onlyPulse()).effects).toEqual([]);
-  });
-
-  it('the same is true of an item sent to someday', async () => {
-    const LINE = 'the loft conversion, one day';
-    proposeFor(LINE, { status: 'someday' }, { waitingOn: 'the architect' });
-    renderTower();
-
-    await capture(LINE);
-    fireEvent.click(await screen.findByText('someday'));
-
-    fireEvent.click(await screen.findByText(/Someday \(1\)/));
-
-    fireEvent.click(await screen.findByText('waiting on the architect'));
-    await waitFor(async () => {
-      const [item] = await getTowerItems();
-      expect(item.waitingOn).toBe('the architect');
-    });
-  });
-
-  it('renders nothing under an item the coder proposed nothing for', async () => {
-    const LINE = 'book the annual service';
-    codePulseMock.mockImplementation(async (text: string) => (text === LINE ? CODING : NEVER()));
-    renderTower();
-
-    await capture(LINE);
-    expect(await screen.findByText(LINE)).toBeInTheDocument();
-
-    await waitFor(async () => {
-      expect((await onlyPulse()).signal).toBe('task');
-    });
-    expect(screen.queryByRole('button', { name: /^dismiss/ })).toBeNull();
+    // Asserted as absence, which is the only way to state a deleted feature.
+    // Every chip on this page rendered a `dismiss <label>` button (`Chip`), so
+    // none anywhere is the whole claim — hero card, queue, and both drawers.
+    expect(screen.queryByLabelText(/^dismiss /)).toBeNull();
   });
 });

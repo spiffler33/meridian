@@ -130,24 +130,18 @@ const AI_TONES: { value: AiTone; label: string; description: string }[] = [
 ];
 
 /**
- * What each of Appendix C's four effects would do, in the owner's words.
+ * What each of Appendix C's effects would do, in the owner's words.
  *
- * The vocabulary proposal is deliberately not here and must never be: it is
- * the only proposal with no automatic path at all, because it edits the
- * vocabulary the coder reads on every subsequent call.
+ * One is left after phase 4. The vocabulary proposal is deliberately not here
+ * and must never be: it is the only proposal with no automatic path at all,
+ * because it edits the vocabulary the coder reads on every subsequent call.
  */
 const EFFECT_LABELS: Record<PulseEffectType, string> = {
-  completeHabit: 'tick a habit',
-  spawnTask: 'spawn a task',
-  updateTask: 'update a task',
   claimEvent: 'claim an event',
 };
 
 /** Every switch off — what a device that has never been asked answers. */
 const NO_AUTO_APPLY: Record<PulseEffectType, boolean> = {
-  completeHabit: false,
-  spawnTask: false,
-  updateTask: false,
   claimEvent: false,
 };
 
@@ -205,7 +199,7 @@ export function SettingsView() {
     loadApiKey().then(key => setApiKey(key));
   }, []);
 
-  // The four auto-apply switches, from `meta`. A read that fails leaves every
+  // The auto-apply switches, from `meta`. A read that fails leaves every
   // switch DRAWN off — which is all this panel can say, not what the device
   // will do: `autoApplyEffects` reads `meta` itself at apply time, so a type
   // that is really on keeps applying while these say it does not.

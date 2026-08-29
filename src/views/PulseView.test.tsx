@@ -46,7 +46,7 @@ import type { OutboxRecord } from '../lib/db';
 import { ENTITY, readPulseVocabRow, resetSession } from '../lib/entities';
 import type { JournalEvent } from '../lib/journal';
 import { PulseView } from './PulseView';
-import { createHabit, getPulses, getTowerItems } from '../services/data';
+import { getPulses } from '../services/data';
 import type { Coding } from '../services/coder';
 
 const NOW = new Date('2026-08-27T12:00:00.000Z');
@@ -57,7 +57,7 @@ const SAMPLE_CODING: Coding = {
   activity: null,
   people: [],
   span: { start: '2026-08-27T12:00:00.000Z', end: null, approx: false },
-  links: { habitId: null, towerId: null, eventId: null },
+  links: { eventId: null },
   effects: [],
   vocabProposal: null,
 };
@@ -216,46 +216,29 @@ describe('effect chips', () => {
     expect(line.closest('li')?.querySelectorAll('button')).toHaveLength(1); // the kebab, alone
   });
 
-  it('names the habit a completeHabit chip would tick, resolved by id', async () => {
-    const habit = await createHabit({ label: 'strength', category: 'health' });
-    answerFor('gym done', {
-      ...SAMPLE_CODING,
-      effects: [{ type: 'completeHabit', habitId: habit.id }],
-    });
-
-    render(<PulseView />);
-    const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
-    fireEvent.change(box, { target: { value: 'gym done' } });
-    fireEvent.keyDown(box, { key: 'Enter' });
-
-    expect(await screen.findByText('tick strength')).toBeInTheDocument();
-  });
-
   it('tapping one applies it and takes the chip away', async () => {
-    answerFor('sort out the boiler', {
+    answerFor('that was the school thing', {
       ...SAMPLE_CODING,
-      effects: [{ type: 'spawnTask', text: 'call the plumber' }],
+      effects: [{ type: 'claimEvent', eventId: 'evt-1' }],
     });
 
     render(<PulseView />);
     const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
-    fireEvent.change(box, { target: { value: 'sort out the boiler' } });
+    fireEvent.change(box, { target: { value: 'that was the school thing' } });
     fireEvent.keyDown(box, { key: 'Enter' });
 
-    fireEvent.click(await screen.findByText('+ call the plumber'));
+    fireEvent.click(await screen.findByText('claim event'));
 
-    await waitFor(() => expect(screen.queryByText('+ call the plumber')).toBeNull());
-    const items = await getTowerItems();
-    expect(items).toHaveLength(1);
-    expect(items[0].text).toBe('call the plumber');
+    await waitFor(() => expect(screen.queryByText('claim event')).toBeNull());
+    expect((await getPulses())[0].links?.eventId).toBe('evt-1');
   });
 
   it('dismissing one drops the effect and keeps the coding', async () => {
-    const LINE = 'the boiler is still playing up';
+    const LINE = 'that was the school thing';
     answerFor(LINE, {
       ...SAMPLE_CODING,
-      signal: 'task',
-      effects: [{ type: 'spawnTask', text: 'call the plumber' }],
+      signal: 'claim',
+      effects: [{ type: 'claimEvent', eventId: 'evt-1' }],
     });
 
     render(<PulseView />);
@@ -263,17 +246,17 @@ describe('effect chips', () => {
     fireEvent.change(box, { target: { value: LINE } });
     fireEvent.keyDown(box, { key: 'Enter' });
 
-    fireEvent.click(await screen.findByLabelText('dismiss + call the plumber'));
+    fireEvent.click(await screen.findByLabelText('dismiss claim event'));
 
-    await waitFor(() => expect(screen.queryByText('+ call the plumber')).toBeNull());
-    expect(await getTowerItems(true)).toHaveLength(0);
+    await waitFor(() => expect(screen.queryByText('claim event')).toBeNull());
+    expect((await getPulses())[0].links?.eventId ?? null).toBeNull();
 
     // The line is still coded: the dot stays filled and the signal is still there.
     const line = screen.getByText(LINE);
     expect(line.closest('li')?.querySelector('[aria-hidden="true"]')).toHaveClass('bg-text-muted');
     const rows = await getPulses();
     expect(rows).toHaveLength(1);
-    expect(rows[0].signal).toBe('task');
+    expect(rows[0].signal).toBe('claim');
   });
 
   it('approves a vocabulary proposal on a tap, and it has no other way in', async () => {

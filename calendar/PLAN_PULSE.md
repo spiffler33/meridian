@@ -11,7 +11,7 @@ of the owner's utterances. Authored-AI prose returns only where there is content
 synthesize (ask-the-library, its own future plan). The day-shape briefing is dead
 (see PLAN_CALENDAR amendment).
 
-## Status — Phases 0–3 built and deployed; Phases 4 & 5 added and gated, 2026-08-29
+## Status — Phases 0–4 built and deployed; Phase 5 written and gated, 2026-08-29
 
 Phases 0, 1, 2 and 3 are on `main` and live at meridian.spiffler.xyz. What is left of them
 is the owner's: **Gate 0** (does Read feel cleaner without Week as a view?), **Gate 2** (a
@@ -22,10 +22,15 @@ plan.
 
 **Phases 4 and 5 were added 2026-08-29 by the owner**, integrated from the addendum
 `calendar/PLAN_PULSE_PHASES_4_5.md`, together with **hard fence 9**. Phase 4 retires the
-coder's actuator effects; Phase 5 adds the nutrition ledger. **Neither phase begins until
-Gate 3 has passed**, by the addendum's own terms. Nothing in `src/` implements either yet:
-where the appendices below carry a Phase 4 or Phase 5 shape they say so inline, and the
-shipped code still matches the pre-amendment shape.
+coder's actuator effects; Phase 5 adds the nutrition ledger.
+
+**Phase 4 is built and deployed, 2026-08-29.** The addendum gated it behind Gate 3; the
+owner lifted that gate the same day and ordered it built — *"i dont like this gating you
+choose - this is my decision not yours"* — so it shipped with Gate 3 still open. **Gate 4
+is now open and is the owner's**, and it inherits Gate 3's questions about Energy, which
+lost its habit timing strip in this phase. **Phase 5 remains gated on Gate 3** and nothing
+in `src/` implements it; where the appendices below carry a Phase 5 shape they say so
+inline.
 
 ## How to execute this plan
 
@@ -239,7 +244,11 @@ Phases 4 and 5 follow, and both are gated on this gate.*
 
 ## Phase 4 — Decommission actuator effects (the coder becomes a pure observer)
 
-**GATED: does not begin until GATE 3 has passed.** Added 2026-08-29 by the owner.
+**STATUS: built and deployed 2026-08-29.** Added by the owner the same day, from the
+addendum, which gated it behind Gate 3 — a gate the owner then lifted by hand. Gate 3 is
+still unrun. One departure from the letter of this phase, and it is not small: the habit
+timing strip was **deleted**, not preserved. See the run log entry for why the three
+options below collapsed to one.
 
 **Goal:** habits and Tower return to fully manual ritual spaces. The coder keeps
 classifying (including `signal: task` — the utterance is still worth recording); it
@@ -269,17 +278,16 @@ path (item from raw text, no pulse written, no coder call), context payload cont
 habit/tower slices (allowlist subset test updated), vocab seed idempotence without
 `habitAliases`, existing coded pulses with legacy `links` fields fold without warnings.
 
-*Integration note, 2026-08-29 — an unresolved collision with shipped Phase 3, for the
-owner, not for the builder to decide.* Dropping `habitAliases` also removes what the
-**habit timing strip** reads: `ledger.ts` builds its 24-cell histogram from
-`vocab.habitAliases` (`src/lib/ledger.ts:462`) to know which habits a pulse span belongs
-to. That strip is arithmetic, not AI — fence 9 does not forbid it — but Phase 4 as written
-deletes its only input. Three ways out, none chosen here: **(a)** keep `habitAliases` as a
-read-only vocab field the ledger uses and the coder never receives, and drop only the
-`habitAlias` *proposal kind* (proposing about habits is the part fence 9 forbids) —
-recommended, smallest, keeps Phase 3 whole; **(b)** delete the timing strip with it, one
-fewer thing; **(c)** move the mapping off `pulseVocab` entirely. Decide at Gate 3 or at the
-top of Phase 4; whichever way, amend this bullet before building.
+*Resolved 2026-08-29, at build time: **(b)**, the timing strip is deleted.* The collision
+this note first recorded was deeper than `habitAliases`. The histogram counted
+`links.habitId`, not the alias map — the aliases only chose which habits got a row. Phase 4
+takes habits out of the coder's context, so the coder has no habit id to answer with, so
+`links.habitId` is never written again. Option (a), keeping `habitAliases` as ledger-only
+data, would have left a strip whose input had dried up: correct for a fortnight, then
+silently decaying to zero as the trailing window rolled past the last pre-phase-4 pulse.
+A statistic that quietly becomes wrong is worse than one that is gone. Deleting it also
+makes this phase's own `habitAliases` removal clean, with no reader left behind — which is
+most likely what the addendum meant by removing it at all.
 
 **GATE 4:** live with it several days. Two questions, both real: (a) do you miss "done
 with the deck" closing the item from the box, or does walking to Tower feel right — is
@@ -897,3 +905,69 @@ either phase yet.
 
 **No gate of its own.** Gates 0, 2 and 3 remain open and unchanged, and Gate 3 is what
 unlocks Phase 4.
+
+### 2026-08-29 — Phase 4: the coder stops acting. Gate 4 is open and is the owner's.
+
+Built and pushed to `main` the same day the phase was written, **with Gate 3 still unrun**.
+The addendum gated Phases 4 and 5 behind it; the owner lifted that gate by hand — *"i dont
+like this gating you choose - this is my decision not yours"* — which is recorded here
+because Gate 4's answers now arrive before Gate 3's, and Energy changed underneath Gate 3
+while it was open.
+
+**What went.** `completeHabit`, `spawnTask` and `updateTask` are gone from the type, the
+prompt, the output schema, the chip labels, the apply handlers, the Settings toggles, the
+`meta` keys, and their tests. `links` is `{eventId?}`. `pulseVocab` has no `habitAliases`,
+and `vocabProposal` has no `habitAlias` kind. `PulseMouth` is gone entirely — Tower's box
+writes an item and nothing else, calls no coder, and shows no chip on any item, so
+`captureTowerItem` and `useTowerPulses` were deleted rather than trimmed. The coder's
+context is now `text · now · tz · vocab · todayEvents · recentPulses`, and nothing on that
+path reads the habit store or the tower store at all.
+
+**Surviving effects: `claimEvent` and `vocabProposal`.** Both still confirm-first, both
+still by value through one serialized queue.
+
+**A retired type is dropped, silently, in two places** — `entities.ts` when a journal line
+is folded, `coder.ts` when a response is parsed. A pre-phase-4 journal line and a model
+that hallucinates `spawnTask` are the same case and get the same non-treatment: no error,
+no warning, no log. A retired proposal is not a malformed one.
+
+**The habit timing strip is deleted, and that is a real subtraction from shipped Phase 3.**
+The integration note left three options open for the owner. Building it collapsed them to
+one: the histogram counted `links.habitId`, and phase 4 stops that field ever being written
+again, because the coder no longer sees a habit id to answer with. Keeping `habitAliases`
+would have preserved a chart whose data supply had been cut — right for about twelve weeks,
+then decaying to zero as the trailing window rolled forward, with nothing on screen saying
+so. `HISTOGRAM_WEEKS`, `trailingWindow`, `habitTiming`, `HabitTiming`, `ClosedSpan.habitId`
+and `TimingRow` all went with it. **If Gate 4 wants the answer back**, the honest rebuild is
+a histogram over `activity` — the coder still classifies that, it needs no habit knowledge
+at all, and it answers the same question ("when do I actually go to the gym") without any
+AI touching a habit. That is a phase, not a patch.
+
+**One thing was made stricter, not looser.** `AppContext`'s `addTowerItem` now rethrows.
+Tower's box hands the owner's text back when a write fails, and a swallowed error made that
+fallback unreachable — the pre-phase-2 code had the same dead branch. It is the only
+non-deletion in this phase.
+
+**Coverage that left with the features, stated rather than absorbed.** `AppContext`'s "a
+chip applied on the Pulse page reaches the reducer" pair is deleted: no surviving effect
+writes outside the pulse row, so nothing calls `reportLocalWrite` from an apply any more,
+and there is no honest way to keep the test. `TowerView.test.tsx` was rewritten around the
+manual path and now asserts the coder's ABSENCE (`codePulse` mocked purely so a call can be
+proved not to happen). Two absence tests were added on purpose: the prompt names none of
+the retired effects and no habit or tower slice, and the coder context carries neither —
+checked against a habit and a tower item that really exist in the fixture, so it cannot pass
+by there being nothing to leak.
+
+**Verified:** `vitest` 637 passed / 33 files, green three consecutive runs. `tsc -b` exit 0.
+`npm run build` exit 0. `npm run lint` 6 errors — the same six as before this phase, all
+pre-existing. `grep -rn "localStorage" src/` → 0.
+
+**Noticed, not touched:** `getCompletionsForDate` (entities.ts) now has no caller outside
+`entities.test.ts` — `buildCoderContext` was its last one. Left in place.
+
+**GATE 4, and it is the owner's.** Live with it several days. (a) Do you miss "done with the
+deck" closing the item from the box, or does walking to Tower feel right — is the
+intentionality tax worth it in practice, not just in principle? (b) With only claim and
+vocab chips left, is the stream calmer? And inherited from the collision above: (c) does
+Energy still say anything useful without the timing strip, or is the activity-histogram
+rebuild worth a phase? STOP.

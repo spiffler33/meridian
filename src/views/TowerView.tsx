@@ -8,13 +8,9 @@
 import { useCallback, useState } from 'react';
 import { useApp } from '../store/AppContext';
 import { TwoMinuteTimer } from '../components/TwoMinuteTimer';
-import { Chip } from '../components/Chip';
 import { DayShape } from '../components/DayShape';
 import { Dock } from '../components/Dock';
 import { deviceTimeZone } from '../lib/calendar';
-import { effectKey, updateTaskChipLabel } from '../lib/pulse';
-import { useTowerPulses } from '../hooks/useTowerPulses';
-import type { TowerPulses } from '../hooks/useTowerPulses';
 import { getToday } from '../utils/dates';
 import type { CalendarMirror } from '../lib/calendar';
 import type { TowerItem } from '../types';
@@ -22,14 +18,11 @@ import type { TowerItem } from '../types';
 export default function TowerView({ mirror }: { mirror: CalendarMirror | null }) {
   const {
     state,
+    addTowerItem,
     completeTowerItemById,
     updateTowerItemById,
     deleteTowerItemById,
   } = useApp();
-
-  // The pulse half of this page: a submission is also an utterance, and the
-  // coder's answer comes back as proposals on the items it names.
-  const pulses = useTowerPulses();
 
   const today = getToday();
   const timeZone = deviceTimeZone();
@@ -51,17 +44,15 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
   const overflowItems = activeItems.slice(3);
 
   /**
-   * Add immediately — zero-friction capture, unchanged from the owner's side.
+   * Add immediately — zero-friction capture, and nothing else.
    *
-   * There is no parse and no model between Enter and the item: the line IS the
-   * task, as it always was. The same submission also becomes a pulse, in one
-   * commit, and the coder runs on that pulse afterwards — fired, never awaited
-   * (fence 3), so a dead or slow coder costs the item nothing.
+   * There is no parse, no model, and since phase 4 no pulse either: the line
+   * IS the task, written straight to the tower store. Tower is a manual,
+   * intentional space (fence 9), so a submission here is a commitment the
+   * owner made, not an utterance for a coder to read.
    *
-   * The text comes back if the write failed. One commit means both halves
-   * failed together, so there is nothing saved anywhere and the sentence would
-   * otherwise be gone: the old fallback here could never run, because the
-   * provider it called swallowed its own errors.
+   * The text comes back if the write failed — `addTowerItem` rethrows for
+   * exactly this, so the sentence is never lost to a swallowed error.
    */
   const handleCapture = useCallback(async () => {
     const text = captureText.trim();
@@ -70,10 +61,13 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
     setIsCapturing(true);
     setCaptureText('');
 
-    const saved = await pulses.capture(text);
-    if (!saved) setCaptureText(text);
+    try {
+      await addTowerItem({ text });
+    } catch {
+      setCaptureText(text);
+    }
     setIsCapturing(false);
-  }, [captureText, isCapturing, pulses]);
+  }, [captureText, isCapturing, addTowerItem]);
 
   const handleComplete = useCallback(async (id: string) => {
     await completeTowerItemById(id);
@@ -157,7 +151,6 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
             onStartTimer={() => handleStartTimer(nowItem.id)}
             isTimerRunning={timerItemId === nowItem.id}
             onEdit={(text) => handleEdit(nowItem.id, text)}
-            pulses={pulses}
           />
         ) : (
           <div className="text-text-muted text-sm py-8 text-center border border-dashed border-border rounded">
@@ -172,7 +165,6 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
           <QueueList
             items={queueItems}
             onComplete={handleComplete}
-            pulses={pulses}
           />
         </section>
       )}
@@ -191,7 +183,6 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
               <QueueList
                 items={overflowItems}
                 onComplete={handleComplete}
-                pulses={pulses}
               />
             </div>
           )}
@@ -203,7 +194,6 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
         <FollowUpSection
           items={waitingItems}
           onReactivate={handleReactivate}
-          pulses={pulses}
         />
       )}
 
@@ -212,7 +202,6 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
         items={somedayItems}
         onReactivate={handleReactivate}
         onDelete={deleteTowerItemById}
-        pulses={pulses}
       />
 
       {/* Docked at the foot of the screen, above the backup line rather than
@@ -242,58 +231,6 @@ export default function TowerView({ mirror }: { mirror: CalendarMirror | null })
 // Sub-components
 // ============================================================================
 
-/**
- * The coder's proposals about one item.
- *
- * Nothing renders when an item has none, which is nearly all of them at any
- * moment — an empty row under every task would turn a page built for a glance
- * into a form. The label says only what would CHANGE: the task is the line
- * directly above it, so naming it again is noise here (the pulse line, where
- * the task is not on screen, spells it out instead).
- *
- * Shown on every item this page can show — Now, the queue, the overflow, and
- * inside the two drawers. The drawers are not optional: `openTowerItems`
- * includes `waiting` and `someday`, so the coder is invited to propose on them,
- * and the Pulse page is today-only, so the line that carried the proposal is
- * off the stream by the next morning. Without a chip here, such a proposal
- * would be unreachable — neither applicable nor dismissible — in a journal
- * that is never compacted. Worse, applying `status: 'waiting'` moves the item
- * out of the active list in the same render, so a second proposal on it would
- * vanish the instant the first was tapped.
- *
- * They stay quiet (fence 8): a drawer that is shut shows nothing, and Tower
- * is still a page for what needs doing rather than a feed.
- */
-function ItemProposals({
-  itemId,
-  pulses,
-  className,
-}: {
-  itemId: string;
-  pulses: TowerPulses;
-  className: string;
-}) {
-  const proposals = pulses.proposals[itemId] ?? [];
-  if (proposals.length === 0) return null;
-
-  return (
-    <div className={className}>
-      {proposals.map((proposal) => (
-        <Chip
-          // The proposal itself, never its position: acting on one shifts the
-          // rest down, and React would then reuse the node of the chip that
-          // was there. Two lines can propose the same change, so the pulse
-          // that said it is part of the identity.
-          key={`${proposal.pulseId}:${effectKey(proposal.effect)}`}
-          label={updateTaskChipLabel(proposal.effect)}
-          onApply={() => pulses.apply(proposal)}
-          onDismiss={() => pulses.dismiss(proposal)}
-        />
-      ))}
-    </div>
-  );
-}
-
 interface NowCardProps {
   item: TowerItem;
   onComplete: () => void;
@@ -301,10 +238,9 @@ interface NowCardProps {
   onSomeday: () => void;
   onStartTimer: () => void;
   isTimerRunning: boolean;
-  pulses: TowerPulses;
 }
 
-function NowCard({ item, onComplete, onHold, onSomeday, onStartTimer, isTimerRunning, onEdit, pulses }: NowCardProps & { onEdit: (text: string) => void }) {
+function NowCard({ item, onComplete, onHold, onSomeday, onStartTimer, isTimerRunning, onEdit }: NowCardProps & { onEdit: (text: string) => void }) {
   const [showHoldInput, setShowHoldInput] = useState(false);
   const [waitingOnText, setWaitingOnText] = useState('');
   const [isEditing, setIsEditing] = useState(false);
@@ -418,7 +354,6 @@ function NowCard({ item, onComplete, onHold, onSomeday, onStartTimer, isTimerRun
         </div>
       )}
 
-      <ItemProposals itemId={item.id} pulses={pulses} className="ml-6 flex flex-wrap items-center gap-2" />
     </div>
   );
 }
@@ -426,10 +361,9 @@ function NowCard({ item, onComplete, onHold, onSomeday, onStartTimer, isTimerRun
 interface QueueListProps {
   items: TowerItem[];
   onComplete: (id: string) => void;
-  pulses: TowerPulses;
 }
 
-function QueueList({ items, onComplete, pulses }: QueueListProps) {
+function QueueList({ items, onComplete }: QueueListProps) {
   return (
     <ul className="space-y-2 border-l-2 border-border pl-4 ml-2">
       {items.map((item) => (
@@ -449,7 +383,6 @@ function QueueList({ items, onComplete, pulses }: QueueListProps) {
               <span className="text-xs text-text-muted">· {formatDate(item.expectsBy, item.isEvent)}</span>
             )}
           </div>
-          <ItemProposals itemId={item.id} pulses={pulses} className="mt-2 ml-7 flex flex-wrap items-center gap-2" />
         </li>
       ))}
     </ul>
@@ -459,10 +392,9 @@ function QueueList({ items, onComplete, pulses }: QueueListProps) {
 interface FollowUpSectionProps {
   items: TowerItem[];
   onReactivate: (id: string) => void;
-  pulses: TowerPulses;
 }
 
-function FollowUpSection({ items, onReactivate, pulses }: FollowUpSectionProps) {
+function FollowUpSection({ items, onReactivate }: FollowUpSectionProps) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -496,7 +428,6 @@ function FollowUpSection({ items, onReactivate, pulses }: FollowUpSectionProps) 
                   reactivate
                 </button>
               </div>
-              <ItemProposals itemId={item.id} pulses={pulses} className="mt-2 flex flex-wrap items-center gap-2" />
             </li>
           ))}
         </ul>
@@ -509,10 +440,9 @@ interface SomedaySectionProps {
   items: TowerItem[];
   onReactivate: (id: string) => void;
   onDelete: (id: string) => void;
-  pulses: TowerPulses;
 }
 
-function SomedaySection({ items, onReactivate, onDelete, pulses }: SomedaySectionProps) {
+function SomedaySection({ items, onReactivate, onDelete }: SomedaySectionProps) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -546,7 +476,6 @@ function SomedaySection({ items, onReactivate, onDelete, pulses }: SomedaySectio
                   </button>
                 </div>
               </div>
-              <ItemProposals itemId={item.id} pulses={pulses} className="mt-2 flex flex-wrap items-center gap-2" />
             </li>
           ))}
         </ul>

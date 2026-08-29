@@ -22,7 +22,6 @@ import { deviceTimeZone, timeLabel } from '../lib/calendar';
 import { usePulses } from '../hooks/usePulses';
 import type { Pulses } from '../hooks/usePulses';
 import { effectChipLabel, effectKey, vocabChipLabel } from '../lib/pulse';
-import type { PulseChipNames } from '../lib/pulse';
 import { getToday } from '../utils/dates';
 import type { PulseRow } from '../lib/entities';
 
@@ -136,7 +135,6 @@ function PulseStream({
  * changes what the coder reads next.
  */
 function PulseChips({ pulse, actions }: { pulse: PulseRow; actions: Pulses }) {
-  const names: PulseChipNames = actions.names;
   const effects = pulse.effects ?? [];
   const proposal = pulse.vocabProposal ?? null;
   if (effects.length === 0 && proposal === null) return null;
@@ -151,14 +149,14 @@ function PulseChips({ pulse, actions }: { pulse: PulseRow; actions: Pulses }) {
           // swapping the label under a finger already on its way to the
           // button, and a position would name whatever moved into it.
           key={effectKey(effect)}
-          label={effectChipLabel(pulse, effect, names)}
+          label={effectChipLabel(effect)}
           onApply={() => actions.applyEffect(pulse.id, effect)}
           onDismiss={() => actions.dismissEffect(pulse.id, effect)}
         />
       ))}
       {proposal !== null && (
         <Chip
-          label={vocabChipLabel(proposal, names)}
+          label={vocabChipLabel(proposal)}
           onApply={() => actions.applyVocab(pulse.id)}
           onDismiss={() => actions.dismissVocab(pulse.id)}
         />

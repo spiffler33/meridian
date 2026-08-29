@@ -16,12 +16,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { CalendarEvent, CalendarMirror } from './calendar';
-import type { PulseRow, PulseSignal, PulseVocabRow } from './entities';
+import type { PulseRow, PulseSignal } from './entities';
 import {
   claimedEventIds,
   closeSpans,
   endOfLocalDayMs,
-  habitTiming,
   ledgerHonesty,
   localHour,
   neededByCalendar,
@@ -29,7 +28,6 @@ import {
   pairNeededSpent,
   spentByDomain,
   startOfLocalDayMs,
-  trailingWindow,
   weekWindow,
 } from './ledger';
 
@@ -53,7 +51,7 @@ function coded(
     activity: null,
     people: [],
     span: { start, end: null, approx: false },
-    links: { habitId: null, towerId: null, eventId: null },
+    links: { eventId: null },
     ...extra,
   };
 }
@@ -108,12 +106,6 @@ describe('local time', () => {
     expect(new Date(week.endMs).toISOString()).toBe('2026-08-30T15:59:59.999Z');
   });
 
-  it('walks a trailing window back whole weeks and keeps the end', () => {
-    const week = weekWindow('2026-08-26', SGT);
-    const trailing = trailingWindow(week, 12, SGT);
-    expect(new Date(trailing.startMs).toISOString()).toBe('2026-06-07T16:00:00.000Z');
-    expect(trailing.endMs).toBe(week.endMs);
-  });
 });
 
 describe('closing a span — Appendix D', () => {
@@ -218,12 +210,12 @@ describe('closing a span — Appendix D', () => {
         coded('a', 'block', '2026-08-24T01:00:00.000Z', {
           domain: 'db',
           activity: 'deep-work',
-          links: { habitId: 'h1', towerId: null, eventId: null },
+          links: { eventId: null },
         }),
       ],
       SGT
     );
-    expect(spans[0]).toMatchObject({ domain: 'db', activity: 'deep-work', habitId: 'h1' });
+    expect(spans[0]).toMatchObject({ domain: 'db', activity: 'deep-work' });
   });
 });
 
@@ -316,7 +308,7 @@ describe('needed by calendar', () => {
   it('reads claims off the event id a pulse links to', () => {
     const pulses = [
       coded('a', 'claim', '2026-08-24T01:00:00.000Z', {
-        links: { habitId: null, towerId: null, eventId: 'evt-1' },
+        links: { eventId: 'evt-1' },
       }),
       coded('b', 'note', '2026-08-24T02:00:00.000Z'),
     ];
@@ -381,71 +373,6 @@ describe('needed against spent', () => {
     );
     expect(paired.paired).toEqual([]);
     expect(paired.spentOnly).toEqual([{ domain: null, hours: 5, derivedHours: 0 }]);
-  });
-});
-
-describe('habit timing', () => {
-  const vocab: PulseVocabRow = {
-    id: 'vocab',
-    domains: [],
-    activities: {},
-    people: [],
-    habitAliases: { gym: 'h-strength', lift: 'h-strength', read: 'h-read' },
-  };
-  const window = trailingWindow(weekWindow('2026-08-26', SGT), 12, SGT);
-
-  const atHabit = (id: string, habitId: string, start: string) =>
-    coded(id, 'block', start, { links: { habitId, towerId: null, eventId: null } });
-
-  it('buckets by the local hour of the span start, in the given zone', () => {
-    const pulses = [atHabit('a', 'h-strength', '2026-08-24T23:30:00.000Z')];
-    const sgt = habitTiming(pulses, vocab, window, SGT);
-    // 23:30 UTC is 07:30 the next morning in Singapore.
-    expect(sgt[0].hours[7]).toBe(1);
-    const la = habitTiming(pulses, vocab, trailingWindow(weekWindow('2026-08-26', LA), 12, LA), LA);
-    // The same instant is 16:30 the previous afternoon in Los Angeles.
-    expect(la[0].hours[16]).toBe(1);
-  });
-
-  it('gathers a habit\'s aliases onto one row', () => {
-    const rows = habitTiming([], vocab, window, SGT);
-    const strength = rows.find(row => row.habitId === 'h-strength');
-    expect(strength?.aliases).toEqual(['gym', 'lift']);
-  });
-
-  it('shows a habit with no pulses at all rather than hiding the question', () => {
-    const rows = habitTiming([], vocab, window, SGT);
-    expect(rows.map(row => row.habitId).sort()).toEqual(['h-read', 'h-strength']);
-    expect(rows.every(row => row.total === 0)).toBe(true);
-  });
-
-  it('ignores a habit the vocabulary cannot reach', () => {
-    const rows = habitTiming([atHabit('a', 'h-unknown', '2026-08-24T01:00:00.000Z')], vocab, window, SGT);
-    expect(rows.every(row => row.total === 0)).toBe(true);
-  });
-
-  it('counts nothing outside the trailing window', () => {
-    const rows = habitTiming([atHabit('a', 'h-read', '2026-01-02T01:00:00.000Z')], vocab, window, SGT);
-    expect(rows.find(row => row.habitId === 'h-read')?.total).toBe(0);
-  });
-
-  it('is empty when the vocabulary has no aliases yet', () => {
-    expect(habitTiming([], { ...vocab, habitAliases: {} }, window, SGT)).toEqual([]);
-    expect(habitTiming([], null, window, SGT)).toEqual([]);
-  });
-
-  it('orders the busiest habit first', () => {
-    const rows = habitTiming(
-      [
-        atHabit('a', 'h-read', '2026-08-24T01:00:00.000Z'),
-        atHabit('b', 'h-read', '2026-08-25T01:00:00.000Z'),
-        atHabit('c', 'h-strength', '2026-08-25T02:00:00.000Z'),
-      ],
-      vocab,
-      window,
-      SGT
-    );
-    expect(rows.map(row => row.habitId)).toEqual(['h-read', 'h-strength']);
   });
 });
 

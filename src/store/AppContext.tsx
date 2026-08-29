@@ -934,6 +934,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [state.tower]
   );
 
+  /**
+   * Rethrows, unlike its siblings here. Tower's capture box hands the owner's
+   * text back when the write failed, and it can only do that if it is told —
+   * a swallowed error made that fallback unreachable, so a lost sentence read
+   * exactly like a saved one.
+   */
   const addTowerItemFn = useCallback(
     async (input: TowerItemInput) => {
       try {
@@ -941,6 +947,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         dispatch({ type: 'ADD_TOWER_ITEM', payload: item });
       } catch (err) {
         if (import.meta.env.DEV) console.error('Failed to create tower item:', err);
+        throw err;
       }
     },
     []

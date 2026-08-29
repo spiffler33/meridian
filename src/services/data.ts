@@ -41,7 +41,6 @@ import {
   toPackSession,
   toProfile,
   toTowerItem,
-  TOWER_STATUSES,
   yearThemeKey,
 } from '../lib/entities';
 import type {
@@ -65,7 +64,7 @@ import { allCachedFiles, getMeta, setMeta } from '../lib/db';
 import type { MetaKey } from '../lib/db';
 import { dayKey, deviceTimeZone, eventsForDay } from '../lib/calendar';
 import { loadCalendar } from '../lib/calendarSync';
-import { compareOldestFirst, effectKey, effectString, spawnTaskText } from '../lib/pulse';
+import { compareOldestFirst, effectKey, effectString } from '../lib/pulse';
 import { scheduleFlush } from '../lib/sync';
 import { codePulse } from './coder';
 import type { Coding, CoderContext, PulseEnrichment, RecentPulse } from './coder';
@@ -727,25 +726,23 @@ export async function enrichPulse(id: string, coding: Coding): Promise<void> {
 /**
  * The coder's `links`, with anything already recorded on the row left alone.
  *
- * A chip apply records a FACT — this pulse spawned that task, this pulse
- * claimed that event. An enrichment only PROPOSES, and a recorded fact
- * outranks a fresh proposal. The other device re-coding a pulse whose
- * enrichment has not reached it yet answers with all-null links, and writing
- * those wholesale would erase the fact and re-arm `spawnTask`'s own guard —
- * a second Tower item for a task the owner spawned exactly once.
+ * A chip apply records a FACT — this pulse claimed that event. An enrichment
+ * only PROPOSES, and a recorded fact outranks a fresh proposal. The other
+ * device re-coding a pulse whose enrichment has not reached it yet answers
+ * with a null link, and writing that wholesale would erase the claim.
  *
  * So a sub-key already holding a value survives and only the nulls are filled
  * from the coding. A row that does not exist has nothing to keep: an
  * enrichment landing after a delete resurrects the pulse carrying the coding's
  * own links, which is the pinned behaviour (P2), unchanged.
+ *
+ * One sub-key is left (phase 4) and the merge still earns its place: the whole
+ * point is that a claim already recorded outlives a re-code that knows nothing
+ * about it.
  */
 function mergeLinks(existing: PulseLinks | undefined, proposed: PulseLinks): PulseLinks {
   if (existing === undefined) return proposed;
-  return {
-    habitId: existing.habitId ?? proposed.habitId,
-    towerId: existing.towerId ?? proposed.towerId,
-    eventId: existing.eventId ?? proposed.eventId,
-  };
+  return { eventId: existing.eventId ?? proposed.eventId };
 }
 
 // ============================================================================
@@ -766,60 +763,6 @@ const PULSE_VOCAB_SEED_ACTIVITIES: Record<string, string> = {
 const PULSE_VOCAB_SEED_PEOPLE = ['wife', 'kids'];
 
 /**
- * The one live habit whose label exactly matches `label`, case-insensitively.
- * Not a keyword search over pulse text — a one-time lookup, at seed time
- * only, against the owner's own small and closed set of configured habits.
- */
-function habitIdByLabel(habits: readonly Habit[], label: string): string | undefined {
-  const target = label.trim().toLowerCase();
-  return habits.find((habit) => habit.label.trim().toLowerCase() === target)?.id;
-}
-
-/**
- * `habitAliases` per Appendix A: `gym`/`lift`/`strength` all point at the
- * strength habit, `read` at the reading habit. An alias with no matching
- * habit is omitted rather than guessed — the vocabulary grows via approved
- * `vocabProposal` chips later, so an incomplete seed is recoverable and a
- * wrong guess would not be.
- */
-function seedHabitAliases(habits: readonly Habit[]): Record<string, string> {
-  const aliases: Record<string, string> = {};
-  const strengthId = habitIdByLabel(habits, 'strength');
-  if (strengthId !== undefined) {
-    aliases.gym = strengthId;
-    aliases.lift = strengthId;
-    aliases.strength = strengthId;
-  }
-  const readingId = habitIdByLabel(habits, 'reading');
-  if (readingId !== undefined) aliases.read = readingId;
-  return aliases;
-}
-
-/**
- * Fill in `habitAliases` when the seed could not.
- *
- * The seed resolves aliases against the habits that exist at that moment, and
- * omits rather than guesses. An owner whose habits are not labelled exactly
- * `strength`/`reading`, or who creates them after the first pulse is coded,
- * would otherwise carry `habitAliases: {}` permanently — the seed never runs
- * again, and phase 3's habit-timing histogram reads nothing but that map.
- *
- * Only ever from empty, so it is idempotent and cannot overwrite an alias the
- * owner approved through a chip: once anything is in there, this is a no-op
- * forever. Still omits rather than guesses — a habit whose label matches
- * nothing simply leaves the map empty and the repair re-attempts next time.
- */
-async function repairHabitAliases(existing: PulseVocabRow): Promise<PulseVocabRow> {
-  if (Object.keys(existing.habitAliases).length > 0) return existing;
-
-  const habitAliases = seedHabitAliases(await getHabits());
-  if (Object.keys(habitAliases).length === 0) return existing;
-
-  await commit([{ entity: ENTITY.pulseVocab, entityId: PULSE_VOCAB_ID, type: 'upsert', fields: { habitAliases } }]);
-  return readPulseVocabRow() ?? { ...existing, habitAliases };
-}
-
-/**
  * Seed `pulseVocab`, once, iff unset — one journal event. Idempotent: a
  * device that finds a row already there writes nothing, and two devices
  * racing to seed both write the same literal content to the same fixed id
@@ -829,14 +772,12 @@ async function repairHabitAliases(existing: PulseVocabRow): Promise<PulseVocabRo
 export async function ensurePulseVocabSeeded(): Promise<PulseVocabRow> {
   await hydrate();
   const existing = readPulseVocabRow();
-  if (existing !== null) return repairHabitAliases(existing);
+  if (existing !== null) return existing;
 
-  const habits = await getHabits();
   const seedFields = {
     domains: PULSE_VOCAB_SEED_DOMAINS,
     activities: PULSE_VOCAB_SEED_ACTIVITIES,
     people: PULSE_VOCAB_SEED_PEOPLE,
-    habitAliases: seedHabitAliases(habits),
   };
 
   await commit([{ entity: ENTITY.pulseVocab, entityId: PULSE_VOCAB_ID, type: 'upsert', fields: seedFields }]);
@@ -855,26 +796,23 @@ export async function ensurePulseVocabSeeded(): Promise<PulseVocabRow> {
  * The one rule this whole section is built around: **an apply is a single
  * `commit`.**
  *
- * Applying touches two things — the entity the effect names, and the pulse's
- * own `effects` list, which the applied effect has to leave. Split across two
+ * Applying touches two things — what the effect names, and the pulse's own
+ * `effects` list, which the applied effect has to leave. Split across two
  * commits, a failure between them leaves the chip on screen with the write
- * already done, and the next tap repeats it. Three of the four effects would
- * survive that (a habit completion is keyed `habit+date`, a claim writes the
- * same id, an update rewrites the same fields), but `spawnTask` mints a fresh
- * id and would make a second Tower item the owner never asked for.
+ * already done, and the next tap repeats it.
  *
  * `commit` takes an array and turns it into one `enqueue` (`entities.ts`), so
- * both writes land or neither does. Nothing here calls `createTowerItem` or
- * `toggleCompletion`: each of those is its own `commit`, which is exactly the
- * split this must not have. The fields they write are mirrored instead, which
- * is the one duplication this design pays for.
+ * both writes land or neither does.
  *
- * `spawnTask` is guarded on top of that: a pulse whose `links.towerId` is
- * already set has its task, so the chip is dropped and nothing is created.
+ * Phase 4 left one effect here, and it is the mildest of the four: a claim is
+ * a field on the pulse itself, so an apply is a single upsert either way. The
+ * rule stays because the shape does — the three that could mint or tick
+ * something elsewhere were the reason for it, and re-adding one must re-inherit
+ * it rather than rediscover it.
  */
 
 /** No link at all — what a pulse coded before `links` existed reads as. */
-const NO_LINKS: PulseLinks = { habitId: null, towerId: null, eventId: null };
+const NO_LINKS: PulseLinks = { eventId: null };
 
 /**
  * Every read-modify-write of a pulse's own `effects` and `links` runs one at
@@ -956,9 +894,6 @@ function reportLocalWrite(): void {
  * default off). `vocabProposal` is absent by design and must stay absent.
  */
 const AUTO_APPLY_META_KEY: Record<PulseEffectType, MetaKey> = {
-  completeHabit: 'autoApplyCompleteHabit',
-  spawnTask: 'autoApplySpawnTask',
-  updateTask: 'autoApplyUpdateTask',
   claimEvent: 'autoApplyClaimEvent',
 };
 
@@ -975,65 +910,6 @@ export async function setPulseEffectAutoApply(type: PulseEffectType, on: boolean
 /** The pulse-side half of an apply: the effect leaves the list, and stays gone. */
 function withoutEffect(row: PulseRow, index: number): Record<string, unknown> {
   return { effects: (row.effects ?? []).filter((_, at) => at !== index) };
-}
-
-/**
- * The `habitCompletion` draft a `completeHabit` chip stands for, or none.
- *
- * The date is the pulse's OWN local day, not today's: the coder already reads
- * a pulse against its own instant (see `CoderContext.now`), and a sweep
- * draining a backlog on Saturday must not tick Saturday's box for a Thursday
- * line. The entity id is the natural key `habit+date` through
- * `resolveEntityId`, which is what makes an apply idempotent — a repeat is
- * the same row, never a second completion.
- *
- * The habit is resolved by id against the live habits, the same ones the
- * coder was shown. An id naming none of them writes nothing.
- */
-function completeHabitDraft(row: PulseRow, effect: PulseEffect, habits: readonly Habit[]): EventDraft | null {
-  const habitId = effectString(effect, 'habitId');
-  if (habitId === null || !habits.some((habit) => habit.id === habitId)) return null;
-
-  const at = Date.parse(row.at);
-  if (!Number.isFinite(at)) return null;
-
-  const key = habitCompletionKey(habitId, dayKey(at, deviceTimeZone()));
-  const completions = readHabitCompletions();
-  const entityId = resolveEntityId(completions, completionKeyOf, key);
-  const fields: Record<string, unknown> = { habit_id: habitId, date: dayKey(at, deviceTimeZone()) };
-  if (!completions.some((completion) => completion.id === entityId)) fields.created_at = nowIso();
-
-  return { entity: ENTITY.habitCompletion, entityId, type: 'upsert', fields };
-}
-
-/**
- * The `towerItem` draft an `updateTask` chip stands for, or none.
- *
- * The item is resolved by id and must already exist: an upsert against an id
- * nothing holds would not update a task, it would RESURRECT a deleted one as
- * a textless ghost carrying only the fields written here. `status` is checked
- * against the four Tower knows for the same reason.
- */
-function updateTaskDraft(effect: PulseEffect): EventDraft | null {
-  const towerId = effectString(effect, 'towerId');
-  if (towerId === null || !readTowerItemRows().some((item) => item.id === towerId)) return null;
-
-  const fields: Record<string, unknown> = {};
-  const status = effectString(effect, 'status');
-  if (status !== null && (TOWER_STATUSES as readonly string[]).includes(status)) fields.status = status;
-  const waitingOn = effectString(effect, 'waitingOn');
-  if (waitingOn !== null) fields.waiting_on = waitingOn;
-  const expectsBy = effectString(effect, 'expectsBy');
-  if (expectsBy !== null) fields.expects_by = expectsBy;
-  if (Object.keys(fields).length === 0) return null;
-
-  // Any touch counts as attention, exactly as `updateTowerItem` records it.
-  fields.last_touched = nowIso();
-  // And `done` carries its date, exactly as `completeTowerItem` writes it. A
-  // done row with no `done_at` is one Tower can never say when it finished,
-  // and in a journal that is never compacted it stays that way forever.
-  if (fields.status === 'done') fields.done_at = fields.last_touched;
-  return { entity: ENTITY.towerItem, entityId: towerId, type: 'upsert', fields };
 }
 
 /**
@@ -1067,7 +943,7 @@ async function applyOneEffect(pulseId: string, target: PulseEffect): Promise<voi
   // suspension point would not be reading the same state. The row is read
   // again HERE, inside the queue, because the apply ahead of this one has
   // already changed it.
-  const habits = await getHabits();
+  await hydrate();
 
   const row = readPulseRows().find((candidate) => candidate.id === pulseId);
   if (row === undefined) return;
@@ -1082,46 +958,6 @@ async function applyOneEffect(pulseId: string, target: PulseEffect): Promise<voi
   const drafts: EventDraft[] = [];
 
   switch (effect.type) {
-    case 'completeHabit': {
-      const draft = completeHabitDraft(row, effect, habits);
-      if (draft !== null) drafts.push(draft);
-      break;
-    }
-    case 'spawnTask': {
-      // Already spawned. The item exists, this tap is a repeat, and minting a
-      // second id is the one mistake in this file that cannot be undone by
-      // tapping again — so the chip goes and nothing is created.
-      if ((row.links ?? NO_LINKS).towerId !== null) break;
-      const text = spawnTaskText(row, effect);
-      if (text.length === 0) break;
-      const towerId = newId();
-      const now = nowIso();
-      drafts.push({
-        entity: ENTITY.towerItem,
-        entityId: towerId,
-        type: 'upsert',
-        // The same fields `createTowerItem` writes, mirrored rather than
-        // called: that function is its own commit, and this must be one.
-        fields: {
-          text,
-          status: 'active',
-          waiting_on: null,
-          expects_by: null,
-          effort: null,
-          is_event: false,
-          last_touched: now,
-          created_at: now,
-          done_at: null,
-        },
-      });
-      pulseFields.links = { ...(row.links ?? NO_LINKS), towerId };
-      break;
-    }
-    case 'updateTask': {
-      const draft = updateTaskDraft(effect);
-      if (draft !== null) drafts.push(draft);
-      break;
-    }
     case 'claimEvent': {
       // The whole effect IS a field on the pulse: a claim is derived from the
       // stream, with no entity of its own (Appendix C). The event id is not
@@ -1172,14 +1008,12 @@ export async function dismissPulseEffect(pulseId: string, effect: PulseEffect): 
  *
  * Additive and set-like: a value already there writes nothing, so approving
  * the same proposal twice cannot duplicate it. An `activity` with no domain
- * to map to, or a `habitAlias` pointing at no live habit, is not written —
- * Appendix A's shapes are `label -> domain` and `alias -> habitId`, and half
- * an entry is worse than none for phase 3, which reads nothing else.
+ * to map to is not written — Appendix A's shape is `label -> domain`, and half
+ * an entry is worse than none for the ledger, which reads nothing else.
  */
 function vocabFieldsFor(
   vocab: PulseVocabRow,
-  proposal: PulseVocabProposal,
-  habits: readonly Habit[]
+  proposal: PulseVocabProposal
 ): Record<string, unknown> | null {
   switch (proposal.kind) {
     case 'domain':
@@ -1192,12 +1026,6 @@ function vocabFieldsFor(
     case 'person':
       if (vocab.people.includes(proposal.value)) return null;
       return { people: [...vocab.people, proposal.value] };
-    case 'habitAlias': {
-      const habitId = proposal.mapsTo;
-      if (habitId === null || !habits.some((habit) => habit.id === habitId)) return null;
-      if (vocab.habitAliases[proposal.value] === habitId) return null;
-      return { habitAliases: { ...vocab.habitAliases, [proposal.value]: habitId } };
-    }
   }
 }
 
@@ -1215,13 +1043,13 @@ function vocabFieldsFor(
  * before it can grow.
  */
 export async function approvePulseVocabProposal(pulseId: string): Promise<void> {
-  const [vocab, habits] = await Promise.all([ensurePulseVocabSeeded(), getHabits()]);
+  const vocab = await ensurePulseVocabSeeded();
 
   const row = readPulseRows().find((candidate) => candidate.id === pulseId);
   const proposal = row?.vocabProposal;
   if (row === undefined || proposal === undefined || proposal === null) return;
 
-  const fields = vocabFieldsFor(vocab, proposal, habits);
+  const fields = vocabFieldsFor(vocab, proposal);
   const drafts: EventDraft[] = [];
   if (fields !== null) drafts.push({ entity: ENTITY.pulseVocab, entityId: PULSE_VOCAB_ID, type: 'upsert', fields });
   // `null` is a real stored value meaning "cleared", which is what keeps the
@@ -1313,7 +1141,7 @@ function recentPulsesFor(row: PulseRow, allRows: readonly PulseRow[]): RecentPul
               activity: other.activity ?? null,
               people: other.people ?? [],
               span: other.span ?? { start: other.at, end: null, approx: false },
-              links: other.links ?? { habitId: null, towerId: null, eventId: null },
+              links: other.links ?? { eventId: null },
             } satisfies PulseEnrichment),
     }));
 }
@@ -1322,27 +1150,21 @@ function recentPulsesFor(row: PulseRow, allRows: readonly PulseRow[]): RecentPul
  * Assembles exactly the slices Appendix B's allowlist names, and nothing else
  * (fence 5).
  *
- * `mouth` comes off the row rather than off the caller: the queue is lazy, so
- * the sweep coding a backlog has no idea which box any of it was typed into,
- * and by then the box is long closed. A pulse with no `mouth` is a Pulse-page
- * one — the unbiased mouth, and every pulse written before Tower had one.
+ * Phase 4 took three of them out, and fence 9 is why: `todayHabits`,
+ * `openTowerItems` and `mouth` are gone, so no habit and no tower item is ever
+ * handed to a model again. Nothing here reads the habit store or the tower
+ * store at all now — the allowlist is a subset test, and this is the assembly
+ * it is tested against.
  */
 async function buildCoderContext(row: PulseRow, allRows: readonly PulseRow[]): Promise<CoderContext> {
   const tz = deviceTimeZone();
   // The pulse's own local day, not the sweep's. The queue is lazy by design,
   // so this runs hours or days after capture; a Thursday utterance shown
-  // Saturday's calendar and Saturday's habit ticks would be coded against a
-  // day it has nothing to do with. See `CoderContext.now` for the reading of
-  // Appendix B that this follows.
+  // Saturday's calendar would be coded against a day it has nothing to do
+  // with. See `CoderContext.now` for the reading of Appendix B this follows.
   const day = dayKey(Date.parse(row.at), tz);
 
-  const [vocab, habits, completions, towerItems, mirror] = await Promise.all([
-    ensurePulseVocabSeeded(),
-    getHabits(),
-    getCompletionsForDate(day),
-    getTowerItems(false),
-    loadCalendar(),
-  ]);
+  const [vocab, mirror] = await Promise.all([ensurePulseVocabSeeded(), loadCalendar()]);
 
   return {
     now: row.at,
@@ -1351,7 +1173,6 @@ async function buildCoderContext(row: PulseRow, allRows: readonly PulseRow[]): P
       domains: vocab.domains,
       activities: vocab.activities,
       people: vocab.people,
-      habitAliases: vocab.habitAliases,
     },
     todayEvents: eventsForDay(mirror, day, tz).map((event) => ({
       id: event.id,
@@ -1360,14 +1181,7 @@ async function buildCoderContext(row: PulseRow, allRows: readonly PulseRow[]): P
       start: event.start,
       end: event.end,
     })),
-    todayHabits: habits.map((habit) => ({
-      id: habit.id,
-      name: habit.label,
-      done: completions[habit.id] ?? false,
-    })),
-    openTowerItems: towerItems.map((item) => ({ id: item.id, text: item.text, status: item.status })),
     recentPulses: recentPulsesFor(row, allRows),
-    mouth: row.mouth ?? 'today',
   };
 }
 
@@ -1736,71 +1550,6 @@ export async function createTowerItem(item: TowerItemInput): Promise<TowerItem> 
       'create tower item'
     )
   );
-}
-
-/**
- * Tower's own box: one submission, one item AND one pulse, in one commit.
- *
- * "One parser, two mouths." Tower's input keeps exactly the behaviour the
- * owner likes — an item appears immediately, from the raw text, with nothing
- * between Enter and a saved task — and the same submission is also recorded in
- * the stream, where the coder reaches it. Nothing about the item waits on the
- * coder; the coding arrives later and proposes, as a chip on the item.
- *
- * ONE commit, for the reason the chip layer has one (see "Pulse proposals"):
- * split in two, a failure between them either costs the owner the item they
- * watched appear, or leaves an orphan pulse claiming a task that does not
- * exist — and the pulse is the only record of the utterance. `commit` turns
- * the array into one `enqueue`, so both land or neither does. `createTowerItem`
- * is mirrored rather than called for exactly that reason: it is its own commit.
- *
- * `links.towerId` is the recorded fact that this line IS that item. It also
- * arms `spawnTask`'s existing guard, so a coding that proposes a task anyway —
- * the tower mouth biases toward `task` — cannot mint a second one.
- *
- * No read-back of either row. `createPulse`'s read-and-throw is a live hazard
- * rather than a check (a pull landing mid-call leaves the event enqueued but
- * not applied to this session, L4); the ids are what the caller needs, and
- * they are known before the write.
- */
-export async function captureTowerItem(text: string): Promise<{ towerId: string; pulseId: string }> {
-  await hydrate();
-
-  const line = text.trim();
-  const towerId = newId();
-  const pulseId = newId();
-  const now = nowIso();
-
-  await commit([
-    {
-      entity: ENTITY.towerItem,
-      entityId: towerId,
-      type: 'upsert',
-      // The fields `createTowerItem` writes for an input of `{ text }`.
-      fields: {
-        text: line,
-        status: 'active',
-        waiting_on: null,
-        expects_by: null,
-        effort: null,
-        is_event: false,
-        last_touched: now,
-        created_at: now,
-        done_at: null,
-      },
-    },
-    {
-      entity: ENTITY.pulse,
-      entityId: pulseId,
-      type: 'upsert',
-      fields: { text: line, at: now, mouth: 'tower', links: { habitId: null, towerId, eventId: null } },
-    },
-  ]);
-
-  // The item is `AppContext`'s to render and this never went through it.
-  reportLocalWrite();
-
-  return { towerId, pulseId };
 }
 
 /**

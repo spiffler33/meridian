@@ -17,8 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { PulseEffect, PulseRow } from '../lib/entities';
-import { NO_CHIP_NAMES, pulsesForDay } from '../lib/pulse';
-import type { PulseChipNames } from '../lib/pulse';
+import { pulsesForDay } from '../lib/pulse';
 import { scheduleFlush } from '../lib/sync';
 import {
   applyPulseEffect,
@@ -29,16 +28,12 @@ import {
   deletePulse,
   dismissPulseEffect,
   dismissPulseVocabProposal,
-  getHabits,
   getPulses,
-  getTowerItems,
 } from '../services/data';
 
 export interface Pulses {
   /** The day's pulses, oldest first — the page reads downward into the box. */
   today: PulseRow[];
-  /** What the chips call the habits and tasks the codings name, resolved by id. */
-  names: PulseChipNames;
   /** Capture one. Resolves false when nothing was saved, so the box can keep the text. */
   capture: (text: string) => Promise<boolean>;
   remove: (id: string) => void;
@@ -59,7 +54,6 @@ export interface Pulses {
 
 export function usePulses(day: string, timeZone: string): Pulses {
   const [rows, setRows] = useState<PulseRow[]>([]);
-  const [names, setNames] = useState<PulseChipNames>(NO_CHIP_NAMES);
 
   // Nothing may be set after the view closes: a capture is a write to
   // IndexedDB and its answer outlives whatever the owner typed it into.
@@ -87,22 +81,13 @@ export function usePulses(day: string, timeZone: string): Pulses {
    * it off the screen until something else refreshed. "Your line disappeared"
    * is the one failure capture must not have.
    *
-   * The chip names come along with it. They are two more local reads of state
-   * already folded, and a `spawnTask` that just landed has to be able to name
-   * the task it created the moment the row repaints. Archived habits and done
-   * tasks are included: a chip must still be able to say what it acted on.
+   * No name table any more: the chips that named a habit or a tower item left
+   * with phase 4, and resolving those ids is exactly the reading fence 9
+   * forbids. One chip is left and it names nothing.
    */
   const refresh = useCallback(async () => {
-    const [stored, habits, towerItems] = await Promise.all([
-      getPulses(),
-      getHabits(true),
-      getTowerItems(true),
-    ]);
+    const stored = await getPulses();
     if (!live.current) return;
-    setNames({
-      habits: Object.fromEntries(habits.map((habit) => [habit.id, habit.label])),
-      towerItems: Object.fromEntries(towerItems.map((item) => [item.id, item.text])),
-    });
     setRows((previous) => {
       const known = new Set(stored.map((row) => row.id));
       const missed = previous.filter((row) => !known.has(row.id));
@@ -264,5 +249,5 @@ export function usePulses(day: string, timeZone: string): Pulses {
 
   const today = useMemo(() => pulsesForDay(rows, day, timeZone), [rows, day, timeZone]);
 
-  return { today, names, capture, remove, applyEffect, dismissEffect, applyVocab, dismissVocab };
+  return { today, capture, remove, applyEffect, dismissEffect, applyVocab, dismissVocab };
 }

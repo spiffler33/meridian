@@ -29,7 +29,6 @@ import type {
   PulseEffect,
   PulseEffectType,
   PulseLinks,
-  PulseMouth,
   PulseSignal,
   PulseSpan,
   PulseVocabProposal,
@@ -73,17 +72,14 @@ export type CoderContext = {
    * utterance on Saturday — silently, and permanently, since a coded pulse is
    * never revisited. For someone classifying a diary entry, "now" is the
    * entry's moment. Everything time-shaped in the payload follows it:
-   * `todayEvents` and `todayHabits` are the pulse's local day.
+   * `todayEvents` is the pulse's local day.
    */
   now: string;
   tz: string;
   /** Appendix B's `vocab` slice: the full pulseVocab row, minus its id. */
   vocab: Omit<PulseVocabRow, 'id'>;
   todayEvents: Array<{ id: string; title: string; calendar: string; start: string; end: string }>;
-  todayHabits: Array<{ id: string; name: string; done: boolean }>;
-  openTowerItems: Array<{ id: string; text: string; status: string }>;
   recentPulses: RecentPulse[];
-  mouth: PulseMouth;
 };
 
 /** Appendix B's output schema, in full. */
@@ -110,8 +106,8 @@ export type Coding = {
 export type PulseEnrichment = Pick<Coding, 'signal' | 'domain' | 'activity' | 'people' | 'span' | 'links'>;
 
 const SIGNALS: readonly PulseSignal[] = ['block', 'event', 'state', 'plan', 'task', 'claim', 'note'];
-const EFFECT_TYPES: readonly PulseEffectType[] = ['completeHabit', 'spawnTask', 'updateTask', 'claimEvent'];
-const VOCAB_PROPOSAL_KINDS: readonly PulseVocabProposalKind[] = ['domain', 'activity', 'person', 'habitAlias'];
+const EFFECT_TYPES: readonly PulseEffectType[] = ['claimEvent'];
+const VOCAB_PROPOSAL_KINDS: readonly PulseVocabProposalKind[] = ['domain', 'activity', 'person'];
 
 /**
  * Appendix B's output schema, transcribed verbatim — placeholder included.
@@ -121,9 +117,9 @@ const OUTPUT_SCHEMA = `{
   "signal": "block|event|state|plan|task|claim|note",
   "domain": null, "activity": null, "people": [],
   "span": {"start": "...", "end": null, "approx": false},
-  "links": {"habitId": null, "towerId": null, "eventId": null},
-  "effects": [{"type": "completeHabit|spawnTask|updateTask|claimEvent", "...": "..."}],
-  "vocabProposal": {"kind": "domain|activity|person|habitAlias", "value": "...", "mapsTo": null}
+  "links": {"eventId": null},
+  "effects": [{"type": "claimEvent", "...": "..."}],
+  "vocabProposal": {"kind": "domain|activity|person", "value": "...", "mapsTo": null}
 }`;
 
 /**
@@ -144,50 +140,23 @@ const OUTPUT_SCHEMA = `{
  * Every id named here comes out of the context the model was given, which is
  * what makes an effect resolvable by id alone at apply time.
  */
-const EFFECT_PAYLOADS = `completeHabit: {"type": "completeHabit", "habitId": "<an id from todayHabits>"}
-spawnTask: {"type": "spawnTask", "text": "<the task, in the owner's own words>"} \
-— leave "text" out to use the pulse verbatim
-updateTask: {"type": "updateTask", "towerId": "<an id from openTowerItems>", "status": \
-"active|waiting|someday|done", "waitingOn": "<who or what it waits on>", "expectsBy": "<YYYY-MM-DD>"} \
-— "towerId" is required, and at least one of "status", "waitingOn", "expectsBy"; leave out the ones \
-you are not proposing
-claimEvent: {"type": "claimEvent", "eventId": "<an id from todayEvents>"}`;
+const EFFECT_PAYLOADS = `claimEvent: {"type": "claimEvent", "eventId": "<an id from todayEvents>"}`;
 
-/**
- * What `mouth: "tower"` means on the wire, which Appendix B states only as a
- * bias ("mouth: tower biases toward task").
- *
- * The bias alone is not enough once Tower's box writes a pulse for every
- * submission: the utterance is ALREADY a Tower item, saved verbatim before
- * this call was made, so a model told only to lean toward `task` proposes
- * `spawnTask` and the owner is offered a chip that would duplicate the item
- * they are looking at. `links.towerId` is set at capture, so the apply itself
- * is guarded — but a chip that silently does nothing is exactly the dead
- * feature `EFFECT_PAYLOADS` exists to prevent.
- *
- * So the prompt says what is true, and the useful proposal is named: the plan's
- * "the coder later proposes field enrichments on the item — status /
- * waitingOn / expectsBy". Which item it is, is the model's own judgment over
- * `openTowerItems`; the app never matches a proposal to a task by text.
- *
- * Conditionally, though. `openTowerItems` excludes `done`, and an item can be
- * deleted, while the queue is lazy: capture into Tower offline, mark it done
- * next morning, open Pulse, and the sweep codes this line against a context
- * the item is absent from. A clause asserting the item IS there would then be
- * telling the model something false, and inviting exactly what `RULES` forbids
- * two lines down — inventing a task that is not present in context.
- */
-const TOWER_MOUTH = `With mouth "tower" the utterance was typed into the task list and was saved, \
-verbatim, as a task at the moment it was said. Never propose spawnTask for it. If that task is still \
-one of the openTowerItems, propose updateTask on it when the utterance says something about its \
-status, what it is waiting on, or when it is expected — and nothing at all when it does not. If it \
-is not among them it has since been completed or deleted: propose nothing about it.`;
 
 /** Appendix B's rules given to the model, transcribed verbatim. */
+/**
+ * Appendix B's rules given to the model, transcribed — minus what phase 4 took
+ * out of the context.
+ *
+ * "habits" and "tasks" leave the never-invent clause and the `mouth` bias goes
+ * with the mouth: neither slice is in the payload any more, so a rule naming
+ * them describes context the model was never given. `signal: task` is still
+ * classified — the utterance is worth recording — it simply no longer proposes
+ * anything to do about it.
+ */
 const RULES =
-  'nulls over guesses; signal always set (note when unsure); never invent people, habits, ' +
-  'events, or tasks not present in context; time expressions resolved against now and tz; ' +
-  'mouth: tower biases toward task.';
+  'nulls over guesses; signal always set (note when unsure); never invent people or ' +
+  'events not present in context; time expressions resolved against now and tz.';
 
 const SYSTEM_PROMPT = `You classify one captured utterance (pulse) for Meridian, the way a time-use \
 survey's trained coders classify a diary entry — judgment over the utterance and the context you \
@@ -199,8 +168,6 @@ ${OUTPUT_SCHEMA}
 An effect carries exactly the keys listed for its type and no others, spelled exactly as written here:
 
 ${EFFECT_PAYLOADS}
-
-${TOWER_MOUTH}
 
 Rules given to the model: ${RULES}`;
 
@@ -347,13 +314,8 @@ function toSpan(value: unknown, fallbackStart: string): PulseSpan {
 }
 
 function toLinks(value: unknown): PulseLinks {
-  if (typeof value !== 'object' || value === null) return { habitId: null, towerId: null, eventId: null };
-  const obj = value as Record<string, unknown>;
-  return {
-    habitId: nullableString(obj.habitId),
-    towerId: nullableString(obj.towerId),
-    eventId: nullableString(obj.eventId),
-  };
+  if (typeof value !== 'object' || value === null) return { eventId: null };
+  return { eventId: nullableString((value as Record<string, unknown>).eventId) };
 }
 
 function toEffects(value: unknown): PulseEffect[] {
@@ -362,6 +324,9 @@ function toEffects(value: unknown): PulseEffect[] {
   for (const item of value) {
     if (typeof item !== 'object' || item === null) continue;
     const type = (item as Record<string, unknown>).type;
+    // A retired type (`completeHabit`, `spawnTask`, `updateTask`) is dropped
+    // right here and nothing else happens: the prompt no longer offers it, but
+    // a prompt is not a schema, and a hallucinated retirement is not an error.
     if (typeof type === 'string' && (EFFECT_TYPES as readonly string[]).includes(type)) {
       effects.push(item as PulseEffect);
     }

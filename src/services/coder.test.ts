@@ -17,12 +17,9 @@ import type { CoderContext } from './coder';
 const BASE_CONTEXT: CoderContext = {
   now: '2026-08-28T12:00:00.000Z',
   tz: 'America/Los_Angeles',
-  vocab: { domains: ['db', 'self'], activities: { gym: 'self' }, people: ['wife'], habitAliases: {} },
+  vocab: { domains: ['db', 'self'], activities: { gym: 'self' }, people: ['wife'] },
   todayEvents: [],
-  todayHabits: [],
-  openTowerItems: [],
   recentPulses: [],
-  mouth: 'today',
 };
 
 function textResponse(json: unknown, init: { ok?: boolean; status?: number } = {}): Response {
@@ -39,7 +36,7 @@ const VALID_CODING_JSON = {
   activity: null,
   people: [],
   span: { start: '2026-08-28T12:00:00.000Z', end: null, approx: false },
-  links: { habitId: null, towerId: null, eventId: null },
+  links: { eventId: null },
   effects: [],
   vocabProposal: null,
 };
@@ -215,7 +212,7 @@ describe('codePulse — a valid response degrades missing fields to safe default
       // an empty start round-trips into a journal nothing may ever compact,
       // and phase 3 reads span.start straight into a Date.
       span: { start: BASE_CONTEXT.now, end: null, approx: false },
-      links: { habitId: null, towerId: null, eventId: null },
+      links: { eventId: null },
       effects: [],
       vocabProposal: null,
     });
@@ -249,16 +246,22 @@ describe('codePulse — a valid response degrades missing fields to safe default
     });
   });
 
-  it('drops an effect whose type is not one of the four Appendix C names', async () => {
+  it('drops an effect whose type Appendix C does not name, retired ones included', async () => {
     vi.stubGlobal('fetch', vi.fn(async () =>
       textResponse({
         ...VALID_CODING_JSON,
-        effects: [{ type: 'spawnTask', text: 'call the plumber' }, { type: 'deleteEverything' }],
+        effects: [
+          { type: 'claimEvent', eventId: 'evt-1' },
+          { type: 'deleteEverything' },
+          // Retired in phase 4. The prompt no longer offers it, but a prompt is
+          // not a schema: dropping it silently is the whole handling.
+          { type: 'spawnTask', text: 'call the plumber' },
+        ],
       })
     ));
 
     const result = await codePulse('x', BASE_CONTEXT);
-    expect(result?.effects).toEqual([{ type: 'spawnTask', text: 'call the plumber' }]);
+    expect(result?.effects).toEqual([{ type: 'claimEvent', eventId: 'evt-1' }]);
   });
 
   it('returns the full coding on a well-formed response', async () => {
@@ -291,17 +294,22 @@ describe('the system prompt — the only place the model is told any of this', (
   it('names every effect type and every payload key the chips actually read', async () => {
     const system = await systemPrompt();
 
-    // The four Appendix C effects, and the exact keys `applyOneEffect` reads
-    // off each one. Add a key to the chip code without adding it here and this
+    // The surviving Appendix C effect, and the exact key `applyOneEffect`
+    // reads off it. Add a key to the chip code without adding it here and this
     // fails, which is the point.
-    for (const name of ['completeHabit', 'spawnTask', 'updateTask', 'claimEvent']) {
-      expect(system).toContain(name);
+    expect(system).toContain('claimEvent');
+    expect(system).toContain('"eventId"');
+  });
+
+  it('names none of the effects phase 4 retired, and nothing about habits or tasks', async () => {
+    const system = await systemPrompt();
+
+    // Asserted as absence. Fence 9 is a claim about what the model is told as
+    // much as about what the app does with the answer, and the prompt is the
+    // only place that claim can be checked.
+    for (const gone of ['completeHabit', 'spawnTask', 'updateTask', 'todayHabits', 'openTowerItems', 'mouth']) {
+      expect(system).not.toContain(gone);
     }
-    for (const key of ['habitId', 'towerId', 'status', 'waitingOn', 'expectsBy', 'eventId']) {
-      expect(system).toContain(`"${key}"`);
-    }
-    // And the four statuses Tower has: any other is dropped on apply.
-    expect(system).toContain('active|waiting|someday|done');
   });
 
   it('tells the model the shape it must answer in, and the seven signals', async () => {
@@ -313,22 +321,4 @@ describe('the system prompt — the only place the model is told any of this', (
     }
   });
 
-  it('makes the tower-mouth clause conditional on the item still being in the context', async () => {
-    const system = await systemPrompt({ ...BASE_CONTEXT, mouth: 'tower' });
-
-    // The utterance was saved as a task when it was said — but `openTowerItems`
-    // excludes `done`, and an item can be deleted, while the coding queue is
-    // lazy: capture into Tower offline, mark it done next morning, and the
-    // sweep codes this line against a context the item is absent from.
-    // Asserting presence unconditionally would tell the model something false,
-    // and invite what the rules two lines down forbid.
-    expect(system).toContain('If that task is still one of the openTowerItems');
-    expect(system).toContain('Never propose spawnTask for it');
-    expect(system).toContain('never invent people, habits, events, or tasks not present in context');
-  });
-
-  it('is the same prompt whichever mouth the pulse came from — the mouth travels in the payload', async () => {
-    // The bias is context, not a second prompt: one classifier, two mouths.
-    expect(await systemPrompt({ ...BASE_CONTEXT, mouth: 'tower' })).toBe(await systemPrompt());
-  });
 });

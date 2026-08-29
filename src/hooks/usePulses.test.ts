@@ -79,7 +79,7 @@ const SAMPLE_CODING: Coding = {
   activity: null,
   people: [],
   span: { start: '2026-08-28T09:00:00.000Z', end: null, approx: false },
-  links: { habitId: null, towerId: null, eventId: null },
+  links: { eventId: null },
   effects: [],
   vocabProposal: null,
 };
