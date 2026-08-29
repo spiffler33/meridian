@@ -1212,3 +1212,33 @@ clean · `grep -rn "localStorage" src/` → 0 · lint 6 errors, all pre-existing
 
 **Gate 5 is unchanged and still open**, and this amendment is inside it: the calibration
 week now also asks whether correcting a day by saying so actually works in the hand.
+
+### 2026-08-29 — the interface underneath, rebuilt (audit; no phase)
+
+Not a phase of this plan, and it changed no behaviour — but Gate 5's calibration week is
+being run against these surfaces, so the week is now judging a differently-dressed app and
+that has to be on the record.
+
+**What changed under Pulse.** Nothing the coder does, nothing `dayNutrition` computes,
+nothing `NutritionLine` decides. Only how they are set: the stream's lines move to the
+reading face at the scale's `text-base`, the clock and the kebab stay mono at `text-xs`,
+and the nutrition line stays exactly the four conditional parts it was — including the
+provisional `of 1,800` target, still one array entry, still Gate 5's to settle.
+
+**What changed everywhere.** Five hex themes became one OKLCH design in two lightnesses
+plus system; the Read pane's separate palette was folded into the app's, so the app no
+longer re-skins itself between panes; two faces replaced three; one five-step type scale
+replaced thirteen sizes and ninety-seven arbitrary ones; and one `Section` grammar replaced
+the mix of bordered cards and bare rules, so frames stop nesting. `docs/DESIGN_PRINCIPLES.md`
+is the source of truth for all of it and must be read before any frontend change here.
+
+**One thing a future session must not re-break.** Tailwind's `/opacity` modifiers do not
+work on these tokens — a token holds a whole colour value, not channels, so `bg-accent/5`
+compiles to *nothing at all*. Every accent tint in the app had been silently rendering
+nothing. Named tints (`accent-wash`, `accent-rim`, `cite-rim`) are mixed in `index.css` and
+used by name. Reaching for `/50` on a theme colour is the regression to watch for.
+
+**Gate 5 is unaffected and still open.** The backfill is still unrun, the calibration week
+still owes its ~15 spot-checks, and the target display is still the parked decision. If the
+week's verdict is that the numbers are wrong, that is a `NUTRITION_RULES` question, not a
+typography one — read `schema-before-model` before proposing a model swap.
