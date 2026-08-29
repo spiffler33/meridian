@@ -1,0 +1,236 @@
+/**
+ * Energy, as the owner reads it.
+ *
+ * `ledger.test.ts` pins the arithmetic; this pins that the right arithmetic
+ * reaches the screen, and that the two things this section could quietly lie
+ * about do not happen: an unclaimed home hour drawn as the owner's, and a
+ * calendar paired against a domain that only looks like it.
+ *
+ * The zone is mocked rather than inherited. `deviceTimeZone()` reads the
+ * machine, so a week boundary computed from it would put these fixtures in
+ * different weeks on a laptop in Singapore and one in California, and the
+ * suite would pass or fail by geography.
+ */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+
+import type { CalendarEvent, CalendarMirror } from '../lib/calendar';
+import type { Habit, PulseRow, PulseSignal, PulseVocabRow } from '../lib/entities';
+
+const mocks = vi.hoisted(() => ({
+  pulses: [] as PulseRow[],
+  habits: [] as Habit[],
+  vocab: null as PulseVocabRow | null,
+}));
+
+vi.mock('../services/data', async importOriginal => ({
+  ...(await importOriginal<typeof import('../services/data')>()),
+  getPulses: async () => mocks.pulses,
+  getHabits: async () => mocks.habits,
+}));
+
+vi.mock('../lib/entities', async importOriginal => ({
+  ...(await importOriginal<typeof import('../lib/entities')>()),
+  readPulseVocabRow: () => mocks.vocab,
+}));
+
+vi.mock('../lib/calendar', async importOriginal => ({
+  ...(await importOriginal<typeof import('../lib/calendar')>()),
+  deviceTimeZone: () => 'Asia/Singapore',
+}));
+
+const { EnergySection } = await import('./EnergySection');
+
+/** Wednesday of the SGT week Mon 2026-08-24 through Sun 2026-08-30. */
+const IN_WEEK = '2026-08-26';
+
+function coded(id: string, signal: PulseSignal, start: string, extra: Partial<PulseRow> = {}): PulseRow {
+  return {
+    id,
+    text: id,
+    at: start,
+    signal,
+    domain: null,
+    activity: null,
+    people: [],
+    span: { start, end: null, approx: false },
+    links: { habitId: null, towerId: null, eventId: null },
+    ...extra,
+  };
+}
+
+function block(id: string, domain: string, start: string, end: string): PulseRow {
+  return coded(id, 'block', start, { domain, span: { start, end, approx: false } });
+}
+
+function timed(id: string, calendar: string, start: string, end: string): CalendarEvent {
+  return { id, calendar, title: id, start, end, allDay: false, location: null };
+}
+
+function mirrorOf(events: CalendarEvent[]): CalendarMirror {
+  return { generatedAt: 0, window: { start: '', end: '' }, calendars: [], events };
+}
+
+function habit(id: string, label: string): Habit {
+  return {
+    id,
+    label,
+    description: null,
+    category: 'health',
+    emoji: null,
+    sort_order: 0,
+    created_at: '2026-01-01T00:00:00.000Z',
+    archived_at: null,
+  };
+}
+
+const noop = () => {};
+
+function show(props: Partial<Parameters<typeof EnergySection>[0]> = {}) {
+  return render(
+    <EnergySection
+      mirror={null}
+      selectedDate={IN_WEEK}
+      weekStartsOn={1}
+      onPreviousWeek={noop}
+      onNextWeek={noop}
+      {...props}
+    />
+  );
+}
+
+beforeEach(() => {
+  mocks.pulses = [];
+  mocks.habits = [];
+  mocks.vocab = null;
+});
+
+afterEach(cleanup);
+
+describe('the energy section', () => {
+  it('says what it has nothing of rather than drawing an empty frame', async () => {
+    show();
+    expect(await screen.findByText('no coded blocks this week')).toBeInTheDocument();
+    expect(screen.getByText('no events this week')).toBeInTheDocument();
+    expect(screen.getByText('no habit aliases yet')).toBeInTheDocument();
+  });
+
+  it("draws the week's hours by domain, with the number outside the bar", async () => {
+    mocks.pulses = [
+      block('a', 'db', '2026-08-24T01:00:00.000Z', '2026-08-24T03:00:00.000Z'),
+      block('b', 'self', '2026-08-25T01:00:00.000Z', '2026-08-25T02:00:00.000Z'),
+    ];
+    show();
+    expect(await screen.findByTitle('db')).toBeInTheDocument();
+    expect(screen.getByTitle('self')).toBeInTheDocument();
+    expect(screen.getByText('2.0')).toBeInTheDocument();
+    expect(screen.getByText('1.0')).toBeInTheDocument();
+  });
+
+  it('counts nothing from another week', async () => {
+    mocks.pulses = [block('a', 'db', '2026-08-17T01:00:00.000Z', '2026-08-17T03:00:00.000Z')];
+    show();
+    expect(await screen.findByText('no coded blocks this week')).toBeInTheDocument();
+  });
+
+  it('shows an unclaimed home hour as zero, and says how many were not claimed', async () => {
+    const mirror = mirrorOf([
+      timed('evt-home', 'home', '2026-08-25T01:00:00.000Z', '2026-08-25T03:00:00.000Z'),
+    ]);
+    show({ mirror });
+    expect(await screen.findByTitle('home')).toBeInTheDocument();
+    expect(screen.getByText('0.0')).toBeInTheDocument();
+    expect(screen.getByTitle('2.0 h unclaimed')).toBeInTheDocument();
+  });
+
+  it('bills the same home hour once a pulse claims the event', async () => {
+    mocks.pulses = [
+      coded('claim', 'claim', '2026-08-25T04:00:00.000Z', {
+        links: { habitId: null, towerId: null, eventId: 'evt-home' },
+      }),
+    ];
+    const mirror = mirrorOf([
+      timed('evt-home', 'home', '2026-08-25T01:00:00.000Z', '2026-08-25T03:00:00.000Z'),
+    ]);
+    show({ mirror });
+    expect(await screen.findByTitle('home')).toBeInTheDocument();
+    expect(screen.getByText('2.0')).toBeInTheDocument();
+    expect(screen.queryByTitle(/unclaimed/)).not.toBeInTheDocument();
+  });
+
+  it('compares needed against spent only where the two names are the same word', async () => {
+    mocks.pulses = [
+      block('a', 'db', '2026-08-24T01:00:00.000Z', '2026-08-24T03:00:00.000Z'),
+      block('b', 'self', '2026-08-25T01:00:00.000Z', '2026-08-25T02:00:00.000Z'),
+    ];
+    const mirror = mirrorOf([
+      timed('evt-db', 'db', '2026-08-25T01:00:00.000Z', '2026-08-25T04:00:00.000Z'),
+      timed('evt-p', 'personal', '2026-08-26T01:00:00.000Z', '2026-08-26T02:00:00.000Z'),
+    ]);
+    show({ mirror });
+    expect(await screen.findByText('needed vs spent')).toBeInTheDocument();
+    expect(screen.getByTitle('db needed')).toBeInTheDocument();
+    expect(screen.getByTitle('db spent')).toBeInTheDocument();
+    // `self` and `personal` are each in exactly one chart and never paired.
+    expect(screen.queryByTitle('self spent')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('personal needed')).not.toBeInTheDocument();
+  });
+
+  it('draws no comparison at all when nothing pairs cleanly', async () => {
+    mocks.pulses = [block('a', 'self', '2026-08-24T01:00:00.000Z', '2026-08-24T03:00:00.000Z')];
+    const mirror = mirrorOf([
+      timed('evt', 'personal', '2026-08-25T01:00:00.000Z', '2026-08-25T02:00:00.000Z'),
+    ]);
+    show({ mirror });
+    expect(await screen.findByTitle('self')).toBeInTheDocument();
+    expect(screen.queryByText('needed vs spent')).not.toBeInTheDocument();
+  });
+
+  it('counts the pulses the coder never reached, and stays silent at zero', async () => {
+    mocks.pulses = [
+      { id: 'u1', text: 'u', at: '2026-08-25T01:00:00.000Z' },
+      { id: 'u2', text: 'u', at: '2026-08-25T02:00:00.000Z' },
+    ];
+    show();
+    expect(await screen.findByText('2 uncoded pulses excluded')).toBeInTheDocument();
+
+    cleanup();
+    mocks.pulses = [block('a', 'db', '2026-08-24T01:00:00.000Z', '2026-08-24T03:00:00.000Z')];
+    show();
+    expect(await screen.findByTitle('db')).toBeInTheDocument();
+    expect(screen.queryByText(/uncoded/)).not.toBeInTheDocument();
+  });
+
+  it('names a habit by its own label, and plots the hour in the device zone', async () => {
+    mocks.habits = [habit('h1', 'Strength')];
+    mocks.vocab = { id: 'vocab', domains: [], activities: {}, people: [], habitAliases: { gym: 'h1' } };
+    // 23:30 UTC is 07:30 the next morning in Singapore.
+    mocks.pulses = [
+      coded('g', 'block', '2026-08-24T23:30:00.000Z', {
+        links: { habitId: 'h1', towerId: null, eventId: null },
+      }),
+    ];
+    show();
+    expect(await screen.findByText('Strength')).toBeInTheDocument();
+    expect(screen.getByTitle('07:00 - 1')).toBeInTheDocument();
+    expect(screen.getByTitle('23:00 - 0')).toBeInTheDocument();
+  });
+
+  it('shows an aliased habit that has never been logged rather than hiding it', async () => {
+    mocks.habits = [habit('h1', 'Strength')];
+    mocks.vocab = { id: 'vocab', domains: [], activities: {}, people: [], habitAliases: { gym: 'h1' } };
+    show();
+    expect(await screen.findByLabelText('Strength: 0 logged')).toBeInTheDocument();
+  });
+
+  it('steps the week through the same handlers the lens above it uses', async () => {
+    const onPreviousWeek = vi.fn();
+    const onNextWeek = vi.fn();
+    show({ onPreviousWeek, onNextWeek });
+    fireEvent.click(await screen.findByLabelText('previous week'));
+    fireEvent.click(screen.getByLabelText('next week'));
+    expect(onPreviousWeek).toHaveBeenCalledTimes(1);
+    expect(onNextWeek).toHaveBeenCalledTimes(1);
+  });
+});

@@ -614,3 +614,77 @@ watching a test fail, not by reasoning:
    prohibition sent on every call; a drop to zero from the *other* mouth means it over-reached.
 3. **Is `now`-as-the-pulse's-instant right?** It is an interpretation of the allowlist, not an
    amendment to it. Backlogged pulses are where it shows.
+
+### 2026-08-29 — Phase 3: the ledger, closed. Gate 3 is open and is the owner's.
+
+Green: `vitest` **686 passed / 34 files** (was 635 / 32) · `tsc -b` clean · `npm run build` clean ·
+`grep -rn "localStorage" src/` → 0 · lint **6, unchanged** — the same five pre-existing errors plus
+the same one `DayShape` suppression Phase 2 left; nothing here added or silenced one.
+
+Built **on `main`, and deployed.** The owner asked for it directly, overruling the plan's "work
+lands on `local-first`" line, and `local-first` was fast-forwarded to match so the two cannot
+drift. Worth recording that Phase 2's handoff was wrong about this: it said `main` was untouched
+and the live site still served Phase 1, but `main` and `local-first` were already the same commit
+(`ab7cb91`) — Phase 2 had shipped. Gate 2 was therefore reviewable all along.
+
+**Gate 2 has not been run.** Phase 3 is arithmetic over exactly the codings Gate 2 exists to
+judge, so every number this section draws inherits whatever the coder's miscoding rate turns out
+to be. Built anyway, on the owner's instruction and for a stated reason: an unfinished phase left
+open costs more a week later than an unmeasured one does. Gate 2's three checklist items are
+unchanged and still owed.
+
+- **`src/lib/ledger.ts`** — the whole of the arithmetic, pure, no IndexedDB and no React, in the
+  way `journal.ts` and `pulse.ts` are pure. Clock and zone are arguments, so a test pins a week
+  without pinning the machine. `src/components/EnergySection.tsx` computes nothing but a bar's
+  width.
+- **`YearView` gains an Energy section**, mounted directly under the week lens and reading the
+  *same* week: its stepper calls `onPreviousWeek`/`onNextWeek`, the props the lens already had. A
+  second week state on one page would let one screen show two weeks and call both "this week".
+- **Spent** by domain, **Needed** by calendar, side by side; **needed vs spent** drawn only for the
+  names that pair; a 24-cell heat strip per aliased habit over the trailing 12 weeks; the honesty
+  line above all of it.
+
+**Three readings the plan left open, taken here and written down so Gate 3 can overrule them.**
+Each is one named constant or one function, not a scattering.
+
+1. **`SPENT_SIGNALS = ['block', 'event']`.** Appendix D names the *closing* set outright and rules
+   `state`/`note`/`plan` out of carrying duration, but leaves `task` and `claim` unstated in both
+   places. Neither is time spent: a `task` is a thing not yet done, and a `claim` exists to move a
+   calendar event onto the **Needed** side, where counting it again as Spent bills the same hour
+   twice. One line in `ledger.ts` to change.
+2. **An all-day event is counted, not billed.** Appendix A says Needed is "calendar event hours by
+   calendar"; an all-day event has no clock. Billing it at 24 h buries every real meeting under a
+   birthday, and any smaller number is invented. It shows as a count beside the bar — which is what
+   `AllDayChip` already does elsewhere, for the same reason: the absence of a time is the signal.
+3. **A stated duration is believed, uncapped and unclipped.** Appendix D's rule 1 is written
+   unconditionally, so "next 2h" is two hours even where the next block starts inside them. That
+   means two stated spans can overlap and bill one hour twice. Capping the owner's own words felt
+   like this file overruling them; it is pinned by a test either way, so flipping it at Gate 3 is
+   one edit.
+
+**What building it caught.**
+- `weekWindow` was Monday-only until it took `weekStartsOn`. The lens above it reads the setting;
+  the two would have counted different days and both called it "this week".
+- The section reads with `readPulseVocabRow()`, deliberately **not** `ensurePulseVocabSeeded()` —
+  the latter seeds, and a statistics view that writes to the journal just by being opened is a
+  write nobody asked for. It is safe only after `getPulses()` has awaited hydration, which is why
+  they are in the same loader.
+- `closeSpans` takes **every** pulse, never the week's. Rule 2 closes a block at the next one, which
+  can be on the far side of the week edge; clipping first makes Monday's first block hit the cap
+  every time. Clipping happens after both ends are known.
+- Two blocks on one millisecond leave the earlier zero-length. It is dropped — but *which* one is
+  decided by the id, the fold's own final tiebreak, so two devices drop the same one. Array order
+  would have made the answer depend on fetch order. Pinned by running the same pair both ways.
+- A local day is not 24 hours. The day-end cap goes through the zone's own midnight, so a block
+  started on a spring-forward Sunday does not collect a free hour of Monday.
+
+**Deliberately not built.** No trend line, no target, no week-over-week comparison, no commentary
+(fence 6) — the section states quantities and stops. Nothing writes: Energy is read-only, and the
+chips remain the only surface that applies anything.
+
+**GATE 3, and it is the owner's.** Two weeks of ledger. Does Spent match felt reality? Is
+`OPEN_BLOCK_CAP_MS` (4 h) producing honest numbers, or is a Saturday morning's single pulse
+claiming half the day? Does the Needed/Spent gap say anything worth acting on — and is the
+`db ↔ db` pairing the only clean one, or should `home ↔ family` be drawn too? Watch the three
+readings above; each is a one-line change. If the section is wallpaper after a month, delete it
+without sentimentality: the stream and the coder stand on their own.

@@ -12,6 +12,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../store/AppContext';
 import { useReadState } from '../hooks/useReadState';
 import { WeekView } from './WeekView';
+import { EnergySection } from '../components/EnergySection';
 import { weekTotals } from '../utils/weekTotals';
 import type { CalendarMirror } from '../lib/calendar';
 import { getYearCalendarGrid, formatShortDate, getMonthAbbr, getWeekDates, getWeekNumber, isToday, isFuture, parseDate } from '../utils/dates';
@@ -213,6 +214,15 @@ export function YearView({
           </div>
         )}
       </section>
+
+      {/* Energy — the ledger, on the same week as the lens above it */}
+      <EnergySection
+        mirror={mirror}
+        selectedDate={selectedDate}
+        weekStartsOn={weekStartsOn}
+        onPreviousWeek={onPreviousWeek}
+        onNextWeek={onNextWeek}
+      />
 
       {/* Header */}
       <div className="flex items-center justify-between">
