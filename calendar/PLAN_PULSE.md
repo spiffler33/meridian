@@ -1584,3 +1584,30 @@ week. Reversed to newest first.
 correct and unreachable: a coding retried only on cold launch, a build the phone would not
 load, and now a queue working backwards from the wrong end. Being right is not the same as
 landing, and the only test that counts is the owner seeing the number change.
+
+### 2026-08-30 — the catch-up was hostage to one screen
+
+*"no change on both"*, after a reload that was serving the right bundle and a queue that had
+already re-coded nine pulses. Verified from both ends this time — the live bundle contained
+every line of the fix, and the journal showed rev-4 events at 04:46–04:48Z. Then nothing.
+
+**`codeUncodedPulses` runs inside `usePulses`, and its sweeper aborts when the Pulse view
+unmounts.** That is right for the backlog it was written for — a glance at Pulse should not
+leave a queue of paid calls running behind the app. Hanging the rev catch-up off the same
+function inherited the leash: twenty-seven pulses at one paid call each is about six minutes of
+sitting on a single screen and doing nothing else, and navigating away cancelled it. Nine
+landed because that is how long the owner happened to stay.
+
+**The catch-up now runs from the app shell** (`AppContext`), on mount and on becoming visible,
+carrying no abort signal. Navigating between views must not cancel work the owner never asked
+for and cannot see. It is still bounded by `MAX_PULSES_PER_SWEEP` per pass, still marked once
+by `codedAtRev`, and now returns whether it re-coded anything so a device already current costs
+one IndexedDB read and repaints nothing.
+
+**`scheduleFlush` moved inside the loop.** A run cut short — tab closed, phone locked — now
+ships what it already paid for instead of dropping it to the next pass.
+
+**Three times this week the same shape.** A coding retried only on cold launch. A build the
+phone would not load. A queue that only advanced while one screen was open. Each fix was
+correct and each was unreachable, and the only signal that separates those two states is the
+owner saying nothing changed.

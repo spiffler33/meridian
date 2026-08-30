@@ -1079,8 +1079,6 @@ export async function codeUncodedPulses(signal?: AbortSignal): Promise<void> {
     attempts += 1;
     await codeRow(row, rows);
   }
-
-  await catchUpToCurrentRev(signal);
 }
 
 /**
@@ -1106,25 +1104,40 @@ export async function codeUncodedPulses(signal?: AbortSignal): Promise<void> {
  * pass finds nothing left, so a long history finishes over several opens and a
  * partial or failing run simply resumes. A failed pulse keeps its old rev and is
  * found again, which is the entire retry story (fence 2).
+ *
+ * **Driven by the app shell, not by the Pulse view, and carrying no abort
+ * signal.** It used to hang off `codeUncodedPulses`, which runs inside
+ * `usePulses` and whose sweeper aborts the moment that view unmounts — so the
+ * catch-up only progressed while the owner sat on one screen, and twenty-seven
+ * pulses at a paid call each needed about six minutes of doing exactly that.
+ * Measured: nine landed, then nothing across many reopens, and the owner
+ * reported "nothing is changing" while being entirely right. Navigating away
+ * must not cancel work the owner never asked for and cannot see.
  */
-async function catchUpToCurrentRev(signal?: AbortSignal): Promise<void> {
-  if ((await getMeta<number>('codedAtRev', 0)) === CODER_REV) return;
+export async function catchUpCoderRev(): Promise<boolean> {
+  if ((await getMeta<number>('codedAtRev', 0)) === CODER_REV) return false;
 
   const rows = await getPulses();
   const behind = pulsesToBackfill(rows);
   if (behind.length === 0) {
     await setMeta('codedAtRev', CODER_REV);
-    return;
+    return false;
   }
 
+  let recoded = false;
   let attempts = 0;
   for (const row of behind) {
-    if (signal?.aborted) return;
-    if (attempts >= MAX_PULSES_PER_SWEEP) return;
+    if (attempts >= MAX_PULSES_PER_SWEEP) break;
     attempts += 1;
-    await recodeRow(row, rows);
+    if (await recodeRow(row, rows)) recoded = true;
+    // Push each one as it lands rather than once at the end. A run that is cut
+    // short — the tab closed, the phone locked — then still ships what it paid
+    // for, and the next pass does not buy it again.
+    scheduleFlush();
   }
-  scheduleFlush();
+  // Whether the caller has anything to repaint. A device already current says
+  // false after one IndexedDB read and nothing re-renders behind it.
+  return recoded;
 }
 
 // ============================================================================

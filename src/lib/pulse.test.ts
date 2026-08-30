@@ -35,6 +35,7 @@ import {
   approvePulseVocabProposal,
   backfillPulseCoding,
   codeCapturedPulse,
+  catchUpCoderRev,
   codeUncodedPulses,
   countPulseCodingWork,
   pulsesToCode,
@@ -1475,7 +1476,7 @@ describe('a rev catch-up happens ONCE, never on every open', () => {
     // the wrong hour, which silently drop out of a day's total), and a fix the
     // owner has to notice and go press is a fix that does not land.
     resetSession();
-    await codeUncodedPulses();
+    await catchUpCoderRev();
     expect(codePulseMock).toHaveBeenCalledTimes(1);
     expect((await getPulses())[0].coderRev).toBe(CODER_REV);
 
@@ -1485,12 +1486,15 @@ describe('a rev catch-up happens ONCE, never on every open', () => {
     // the catch-up a one-off rather than a subscription.
     for (let open = 0; open < 4; open += 1) {
       resetSession();
-      await codeUncodedPulses();
+      await catchUpCoderRev();
     }
     expect(codePulseMock).toHaveBeenCalledTimes(1);
 
-    // The on-save path never learned about the rev at all, and must not.
+    // Neither the on-save path nor the backlog sweep ever learned about the
+    // rev, and neither must: the sweep aborts when the Pulse view unmounts, and
+    // the catch-up must outlive that.
     await codeCapturedPulse(created.id);
+    await codeUncodedPulses();
     expect(codePulseMock).toHaveBeenCalledTimes(1);
   });
 
@@ -1504,7 +1508,7 @@ describe('a rev catch-up happens ONCE, never on every open', () => {
     // Every later open short-circuits on the mark before it even reads a row.
     for (let open = 0; open < 3; open += 1) {
       resetSession();
-      await codeUncodedPulses();
+      await catchUpCoderRev();
     }
     expect(codePulseMock).not.toHaveBeenCalled();
   });
@@ -1517,12 +1521,12 @@ describe('a rev catch-up happens ONCE, never on every open', () => {
     codePulseMock.mockResolvedValue(SAMPLE_CODING);
 
     resetSession();
-    await codeUncodedPulses();
+    await catchUpCoderRev();
     // Still behind: a failure keeps the old rev, and the mark was not written.
     expect((await getPulses())[0].coderRev).toBe(1);
 
     resetSession();
-    await codeUncodedPulses();
+    await catchUpCoderRev();
     expect((await getPulses())[0].coderRev).toBe(CODER_REV);
   });
 });
@@ -1556,7 +1560,7 @@ describe('CODER_REV 3', () => {
 
     for (let open = 0; open < 3; open += 1) {
       resetSession();
-      await codeUncodedPulses();
+      await catchUpCoderRev();
     }
     await codeCapturedPulse(created.id);
 

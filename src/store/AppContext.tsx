@@ -60,6 +60,7 @@ import {
   deletePackSession,
   getProfile,
   updateProfile as updateProfileInStore,
+  catchUpCoderRev,
 } from '../services/data';
 import type { TowerItemInput, PackInput, PackSessionInput, Profile } from '../services/data';
 import { requestPersistence } from '../lib/db';
@@ -503,6 +504,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (import.meta.env.DEV) console.error('Background sync failed:', err);
       }
     })();
+  }, [loadLocalData]);
+
+  /**
+   * Bring pulses up to the current `CODER_REV`, from the app shell.
+   *
+   * Here rather than in `usePulses` because that hook's sweeper aborts when the
+   * Pulse view unmounts, so the catch-up only ran while the owner sat on one
+   * screen — twenty-seven pulses at a paid call each is about six minutes of
+   * doing nothing else. It ran on foreground too, so the owner reopened, saw no
+   * change, and was right.
+   *
+   * Fired and not awaited: nothing renders behind this, and it is bounded and
+   * self-marking (`catchUpCoderRev` short-circuits on `codedAtRev`, so a device
+   * already current costs one IndexedDB read).
+   */
+  useEffect(() => {
+    const run = () => {
+      if (document.visibilityState !== 'visible') return;
+      void catchUpCoderRev().then(
+        recoded => {
+          if (recoded) void loadLocalData();
+        },
+        () => undefined
+      );
+    };
+    run();
+    document.addEventListener('visibilitychange', run);
+    return () => document.removeEventListener('visibilitychange', run);
   }, [loadLocalData]);
 
   // Push and pull triggers. Installed in their own effect, with symmetric
