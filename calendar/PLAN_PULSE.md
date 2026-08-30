@@ -1538,3 +1538,30 @@ mechanism; nothing in the interface asks the owner about them.
 **What this costs, stated plainly.** A rev bump now spends without asking. It is bounded by the
 history, paid once per device, and only happens when the coder itself changed — and the
 alternative was measured this week: a fix nobody presses is a fix that did not ship.
+
+### 2026-08-30 — the app was live and the phone was not
+
+*"saturday still show 1309 only"*, hours after the fix deployed and the Pages build went green.
+The fix was correct and the owner could not have it.
+
+**`registerType: 'autoUpdate'` updates the WORKER, not the page.** The new service worker
+installs and takes over, and a page that is already open keeps running the JavaScript it
+loaded. An installed PWA that is backgrounded and resumed never reloads — that is what makes it
+feel like an app. So every fix this week landed behind a force-quit the owner had no reason to
+perform, and the foreground sweep faithfully re-ran the *old* code.
+
+**`onNeedRefresh` now reloads the page**, guarded so one bad worker cannot loop. Safe to do
+unannounced because every write is durable before it can happen: capture reaches the outbox
+before the line renders, and the outbox survives a reload by construction. There is nothing
+unsaved in this app to lose.
+
+This is the same lesson as the coding retry, one level up. *A fix the owner has to do something
+to receive is a fix that has not shipped* — and "something" includes knowing that a PWA caches
+itself.
+
+**The count came back, as a status line.** Deleting the two priced buttons was right; deleting
+the NUMBER with them was not, and *"where has the count part gone??"* was the immediate verdict.
+The owner still has to be able to see whether anything is owed. It now reads
+*"27 being brought up to date — happens on its own, a few at a time"* or *"every pulse is coded,
+and current."* — a read of the local store, with nothing to press. Visibility is not fuss;
+being asked to act is.

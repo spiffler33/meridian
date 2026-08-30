@@ -12,6 +12,7 @@ import { DEFAULT_HABITS } from '../types';
 import { saveApiKey, loadApiKey, clearApiKey } from '../services/claude';
 import type { AiTone } from '../services/claude';
 import {
+  countPulseCodingWork,
   createHabit,
   updateHabit as updateHabitInDb,
   deleteHabit as deleteHabitInDb,
@@ -210,6 +211,17 @@ export function SettingsView() {
   const [displayNameDraft, setDisplayNameDraft] = useState<string | null>(null);
   const [kcalTargetDraft, setKcalTargetDraft] = useState<string | null>(null);
   const [personalContextDraft, setPersonalContextDraft] = useState<string | null>(null);
+
+  // A read of the local store, so it costs nothing and needs no tap. Refreshed
+  // on mount only: the catch-up runs in the background and this is a status
+  // line, not a progress bar.
+  const [codingStatus, setCodingStatus] = useState<{ uncoded: number; staleRev: number } | null>(null);
+  useEffect(() => {
+    countPulseCodingWork().then(
+      work => setCodingStatus({ uncoded: work.uncoded.count, staleRev: work.staleRev.count }),
+      () => setCodingStatus(null)
+    );
+  }, []);
 
   const username = usernameDraft ?? profile?.username ?? '';
   const displayName = displayNameDraft ?? profile?.display_name ?? '';
@@ -816,7 +828,27 @@ export function SettingsView() {
           />
         </div>
 
-        {/* Pulse effects */}
+        {/*
+          Coding status — a read, never a decision.
+
+          The count and its two priced buttons were deleted when the app learned
+          to clear both piles by itself. Deleting the NUMBER with them went too
+          far: the owner still has to be able to see whether anything is owed,
+          and the first thing they asked after it vanished was where it had
+          gone. This says what is happening and offers nothing to press.
+        */}
+        {codingStatus !== null && (
+          <div className="text-xs text-text-muted leading-relaxed">
+            {codingStatus.uncoded === 0 && codingStatus.staleRev === 0
+              ? 'every pulse is coded, and current.'
+              : [
+                  codingStatus.uncoded > 0 && `${codingStatus.uncoded} not yet coded`,
+                  codingStatus.staleRev > 0 && `${codingStatus.staleRev} being brought up to date`,
+                ]
+                  .filter(Boolean)
+                  .join(' · ') + ' — happens on its own, a few at a time.'}
+          </div>
+        )}
       </Section>
 
       <Section label="nutrition">
