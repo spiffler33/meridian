@@ -1611,3 +1611,25 @@ ships what it already paid for instead of dropping it to the next pass.
 phone would not load. A queue that only advanced while one screen was open. Each fix was
 correct and each was unreachable, and the only signal that separates those two states is the
 owner saying nothing changed.
+
+### 2026-08-30 — a status line you have to be told how to find is not shown
+
+Saturday came right — the dinner re-coded to 19:00 and the day reads 1,824 (the re-code also
+moved the smoothie 329 → 389 and the dinner 440 → 455). The count did not.
+
+**It was rendering the whole time.** Verified on a clean profile against the live site: the text
+*"every pulse is coded, and current."* was in the DOM. The owner still could not see it, and
+that is the finding, not a misunderstanding to correct. It sat as `text-text-muted` prose at the
+foot of the **ai** section, below a textarea, in a settings page long enough to scroll.
+
+**Two things were wrong and both are mine.** It was placed where nobody would look, and it
+answered a question that had not been asked: *"how many?"* was met with a sentence containing no
+digits. Being told where to find it and still not seeing it is the proof — a thing you need
+directions to reach has not been shown.
+
+**Now:** its own `<Section label="coding">`, and always a number —
+*"27 pulses · all coded and current"*, or *"27 pulses · 5 still catching up"*, with one muted
+line underneath saying it happens on its own and there is nothing to press. `countPulseCodingWork`
+gained `total` for exactly that reason.
+
+Deleting the buttons was right. Deleting the number was not, and neither was whispering it.

@@ -1240,9 +1240,15 @@ function scopeOf(rows: readonly PulseRow[]): CodingScope {
  * `uncoded` is what the owner means by "is anything not done?"; `staleRev` is
  * the Gate 5 catch-up tool, which is a different decision at a different price.
  */
-export async function countPulseCodingWork(): Promise<{ uncoded: CodingScope; staleRev: CodingScope }> {
+export async function countPulseCodingWork(): Promise<{
+  total: number;
+  uncoded: CodingScope;
+  staleRev: CodingScope;
+}> {
   const rows = await getPulses();
-  return { uncoded: scopeOf(pulsesToCode(rows)), staleRev: scopeOf(pulsesToBackfill(rows)) };
+  // `total` so the status line always carries a NUMBER. "everything is current"
+  // is the answer to a question the owner did not ask; they asked how many.
+  return { total: rows.length, uncoded: scopeOf(pulsesToCode(rows)), staleRev: scopeOf(pulsesToBackfill(rows)) };
 }
 
 /**

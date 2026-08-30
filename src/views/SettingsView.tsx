@@ -215,10 +215,15 @@ export function SettingsView() {
   // A read of the local store, so it costs nothing and needs no tap. Refreshed
   // on mount only: the catch-up runs in the background and this is a status
   // line, not a progress bar.
-  const [codingStatus, setCodingStatus] = useState<{ uncoded: number; staleRev: number } | null>(null);
+  const [codingStatus, setCodingStatus] = useState<{
+    total: number;
+    uncoded: number;
+    staleRev: number;
+  } | null>(null);
   useEffect(() => {
     countPulseCodingWork().then(
-      work => setCodingStatus({ uncoded: work.uncoded.count, staleRev: work.staleRev.count }),
+      work =>
+        setCodingStatus({ total: work.total, uncoded: work.uncoded.count, staleRev: work.staleRev.count }),
       () => setCodingStatus(null)
     );
   }, []);
@@ -828,27 +833,31 @@ export function SettingsView() {
           />
         </div>
 
-        {/*
-          Coding status — a read, never a decision.
+      </Section>
 
-          The count and its two priced buttons were deleted when the app learned
-          to clear both piles by itself. Deleting the NUMBER with them went too
-          far: the owner still has to be able to see whether anything is owed,
-          and the first thing they asked after it vanished was where it had
-          gone. This says what is happening and offers nothing to press.
-        */}
-        {codingStatus !== null && (
-          <div className="text-xs text-text-muted leading-relaxed">
-            {codingStatus.uncoded === 0 && codingStatus.staleRev === 0
-              ? 'every pulse is coded, and current.'
-              : [
-                  codingStatus.uncoded > 0 && `${codingStatus.uncoded} not yet coded`,
-                  codingStatus.staleRev > 0 && `${codingStatus.staleRev} being brought up to date`,
-                ]
-                  .filter(Boolean)
-                  .join(' · ') + ' — happens on its own, a few at a time.'}
-          </div>
-        )}
+      {/*
+        Coding gets its own labelled section, and always prints a NUMBER.
+
+        It first shipped as muted prose at the foot of the "ai" section, under a
+        textarea, saying "every pulse is coded, and current." The owner asked
+        where the count had gone, was told where to look, and still reported not
+        seeing it — which is the answer: a thing you must be told how to find has
+        not been shown. They asked how many; a sentence with no digits in it does
+        not answer that, however true it is.
+      */}
+      <Section label="coding">
+        <div className="text-sm text-text tabular-nums">
+          {codingStatus === null
+            ? '—'
+            : codingStatus.uncoded + codingStatus.staleRev === 0
+              ? `${codingStatus.total} pulses · all coded and current`
+              : `${codingStatus.total} pulses · ${codingStatus.uncoded + codingStatus.staleRev} still catching up`}
+        </div>
+        <div className="text-xs text-text-muted leading-relaxed">
+          {codingStatus !== null && codingStatus.uncoded + codingStatus.staleRev > 0
+            ? 'happens on its own, a few at a time, whenever the app is open. nothing to press.'
+            : 'pulses are read by the coder in the background. nothing to press.'}
+        </div>
       </Section>
 
       <Section label="nutrition">
