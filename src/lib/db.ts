@@ -57,13 +57,14 @@ export type MetaKey =
   | 'theme'
   | 'skippedContextPrompt'
   /**
-   * Per-effect auto-apply, one key per `PulseEffectType` (Appendix C). All
-   * default off, and device-local on purpose: this is how one device behaves
-   * when a coding lands, not a fact about the data, so it is `meta` rather
-   * than a journalled profile field. `vocabProposal` has no key here and must
-   * never get one — Appendix C gives it no auto path at all.
+   * The `CODER_REV` this device has already brought its pulses up to.
+   *
+   * Device-local because it is bookkeeping about work this device did, not a
+   * fact about the data — the rev each pulse was coded at lives on the pulse.
+   * Absent means "never caught up", which is correct for a fresh device: it
+   * folds the journal, sees rows below the current rev, and re-codes them once.
    */
-  | 'autoApplyClaimEvent'
+  | 'codedAtRev'
   /**
    * The Claude API key. Device-local on purpose: `meta` is the one store that
    * is never journalled, so the key cannot reach the data repo.

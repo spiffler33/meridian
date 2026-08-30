@@ -1496,3 +1496,45 @@ That is deliberate and it is the right use of the mechanism: a rev-3 coding can 
 an hour that makes it silently not count, and only a re-code can fix such a row. It is also what
 gives the owner a way to repair Saturday — the re-code button, which now has 19 pulses in scope.
 A bump is a bill, and this one buys back a day that was wrong.
+
+### 2026-08-30 — pulse manages its own coding; two settings deleted
+
+*"pulse needs to be able to manage all of this"* — and *"if you need to delete older stuff to
+make a better product, do it"*. Both settings the owner was asked to operate are gone, and the
+work behind them now happens by itself. **211 lines out of `SettingsView`, 147 net out of the
+app.**
+
+**A rev bump catches itself up, once.** `codeUncodedPulses` now finishes by re-coding anything
+below `CODER_REV`, gated on a device-local `codedAtRev` mark written only after a pass finds
+nothing left. Fixing Saturday used to mean noticing the number was wrong, understanding what a
+coder revision is, finding Settings and pressing a priced button. It now happens on the next
+foreground.
+
+**This is not the ambient sweep learning about `coderRev`, and the distinction is the whole
+safety argument.** The fence exists because re-coding everything below the current rev on every
+open re-bills the entire history, silently, forever — a billing bug that looks perfect on
+screen. `codedAtRev` makes the work at most once per revision per device; every later open
+short-circuits before it reads a row. The fence's own regression test is rewritten to pin
+exactly that: one call across five opens, and zero on a device already current. A failed pulse
+keeps its old rev and the mark is not written, so a partial run resumes.
+
+**Pulse effects: the switch is deleted and the one effect left just applies.** Settings said
+*"a coding proposes; you tap. switch one on and it applies itself as a coding lands — never
+reaching back over pulses already coded."* Phase 4 had already retired every effect but
+`claimEvent`, so that copy described a general system that no longer existed — which is why it
+read as nonsense. There is no decision worth a switch here: linking a pulse to a calendar event
+it names is either right or the coder should not have proposed it. `autoApplyClaimEvent` is
+gone from `MetaKey`, and `get/setPulseEffectAutoApply` with it.
+
+**The chip code stays, as the fallback it now is.** An effect stored by an older build, or one
+whose auto-apply threw, still renders a tappable chip — pinned by a test that seeds such a row
+straight into the journal, because the coding path no longer leaves one behind.
+
+**The Settings coding block is deleted too.** Both piles now clear themselves — the backlog on
+foreground, the rev on the catch-up — so a count and two priced buttons were UI for work the
+app already does. `pulsesToCode`, `pulsesToBackfill` and `backfillPulseCoding` survive as the
+mechanism; nothing in the interface asks the owner about them.
+
+**What this costs, stated plainly.** A rev bump now spends without asking. It is bounded by the
+history, paid once per device, and only happens when the coder itself changed — and the
+alternative was measured this week: a fix nobody presses is a fix that did not ship.

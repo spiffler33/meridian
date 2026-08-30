@@ -46,7 +46,7 @@ vi.mock('../services/coder', async (importOriginal) => {
   return { ...actual, codePulse: codePulseMock };
 });
 
-import { closeDb, outboxSize, peekOutbox } from '../lib/db';
+import { closeDb, enqueue, outboxSize, peekOutbox } from '../lib/db';
 import type { OutboxRecord } from '../lib/db';
 import { ENTITY, readPulseVocabRow, resetSession } from '../lib/entities';
 import type { JournalEvent } from '../lib/journal';
@@ -239,7 +239,13 @@ describe('effect chips', () => {
     expect(line.closest('li')?.querySelectorAll('button')).toHaveLength(1); // the kebab, alone
   });
 
-  it('tapping one applies it and takes the chip away', async () => {
+  it('applies a proposed effect itself, so no chip is ever put in front of the owner', async () => {
+    // There used to be a chip here and a Settings switch deciding whether it
+    // applied on its own — default off, so the owner had to tap. The switch is
+    // gone and the effect just applies: "a coding proposes; you tap" was the
+    // copy the owner could not use, and the one effect phase 4 left does not
+    // need a decision. The chip code stays as the fallback for a stored effect
+    // an older build left unapplied (the test below).
     answerFor('that was the school thing', {
       ...SAMPLE_CODING,
       effects: [{ type: 'claimEvent', eventId: 'evt-1' }],
@@ -250,24 +256,43 @@ describe('effect chips', () => {
     fireEvent.change(box, { target: { value: 'that was the school thing' } });
     fireEvent.keyDown(box, { key: 'Enter' });
 
-    fireEvent.click(await screen.findByText('claim event'));
-
-    await waitFor(() => expect(screen.queryByText('claim event')).toBeNull());
-    expect((await getPulses())[0].links?.eventId).toBe('evt-1');
+    await screen.findByText('that was the school thing');
+    // Wait on the OUTCOME, not on the chip's absence: the chip is absent before
+    // the coding lands too, so an assertion on `queryByText` alone passes
+    // instantly and proves nothing.
+    await waitFor(async () => {
+      expect((await getPulses())[0].links?.eventId).toBe('evt-1');
+    });
+    expect(screen.queryByText('claim event')).toBeNull();
   });
 
-  it('dismissing one drops the effect and keeps the coding', async () => {
+  it('dismissing a chip left by an older build drops the effect and keeps the coding', async () => {
+    // The one way a chip still reaches the screen: an effect stored by a build
+    // that did not apply it, or an apply that failed. Seeded straight into the
+    // journal, because the coding path no longer leaves one behind.
     const LINE = 'that was the school thing';
-    answerFor(LINE, {
-      ...SAMPLE_CODING,
-      signal: 'claim',
-      effects: [{ type: 'claimEvent', eventId: 'evt-1' }],
-    });
+    await enqueue([
+      {
+        id: 'e-seed',
+        device: 'a',
+        seq: 1,
+        ts: Date.parse('2026-08-27T09:00:00.000Z'),
+        type: 'upsert',
+        entity: ENTITY.pulse,
+        entityId: 'p-chip',
+        fields: {
+          text: LINE,
+          at: '2026-08-27T09:00:00.000Z',
+          ...SAMPLE_CODING,
+          signal: 'claim',
+          effects: [{ type: 'claimEvent', eventId: 'evt-1' }],
+        },
+      } satisfies JournalEvent,
+    ]);
+    resetSession();
 
     renderPulse();
-    const box = (await screen.findByLabelText('capture a pulse')) as HTMLInputElement;
-    fireEvent.change(box, { target: { value: LINE } });
-    fireEvent.keyDown(box, { key: 'Enter' });
+    await screen.findByText(LINE);
 
     fireEvent.click(await screen.findByLabelText('dismiss claim event'));
 

@@ -17,7 +17,6 @@ import {
   hydrate,
   newId,
   profileEntityId,
-  PULSE_EFFECT_TYPES,
   PULSE_VOCAB_ID,
   readDailyEntries,
   readHabitCompletions,
@@ -50,7 +49,6 @@ import type {
   HabitCompletion,
   Profile,
   PulseEffect,
-  PulseEffectType,
   PulseLinks,
   PulseRow,
   PulseVocabProposal,
@@ -62,7 +60,6 @@ import type {
 } from '../lib/entities';
 import { queued } from '../lib/async';
 import { allCachedFiles, getMeta, setMeta } from '../lib/db';
-import type { MetaKey } from '../lib/db';
 import { dayKey, deviceTimeZone, eventsForDay } from '../lib/calendar';
 import { loadCalendar } from '../lib/calendarSync';
 import { compareCodeUnits } from '../lib/order';
@@ -694,24 +691,6 @@ const NO_LINKS: PulseLinks = { eventId: null };
  */
 const serializePulseWrite = queued();
 
-/**
- * Per-effect auto-apply, one device-local `meta` key each (Appendix C: all
- * default off). `vocabProposal` is absent by design and must stay absent.
- */
-const AUTO_APPLY_META_KEY: Record<PulseEffectType, MetaKey> = {
-  claimEvent: 'autoApplyClaimEvent',
-};
-
-/** Whether this device applies `type` by itself. Off until the owner says so. */
-export async function getPulseEffectAutoApply(type: PulseEffectType): Promise<boolean> {
-  return (await getMeta<boolean>(AUTO_APPLY_META_KEY[type], false)) === true;
-}
-
-/** Turn one effect type's auto-apply on or off, on this device only. */
-export async function setPulseEffectAutoApply(type: PulseEffectType, on: boolean): Promise<void> {
-  await setMeta(AUTO_APPLY_META_KEY[type], on);
-}
-
 /** The pulse-side half of an apply: the effect leaves the list, and stays gone. */
 function withoutEffect(row: PulseRow, index: number): Record<string, unknown> {
   return { effects: (row.effects ?? []).filter((_, at) => at !== index) };
@@ -886,16 +865,10 @@ export async function dismissPulseVocabProposal(pulseId: string): Promise<void> 
  */
 async function autoApplyEffects(pulseId: string): Promise<void> {
   try {
-    const enabled = new Set<PulseEffectType>();
-    for (const type of PULSE_EFFECT_TYPES) {
-      if (await getPulseEffectAutoApply(type)) enabled.add(type);
-    }
-    if (enabled.size === 0) return;
-
     const initial = readPulseRows().find((row) => row.id === pulseId)?.effects?.length ?? 0;
     for (let remaining = initial; remaining > 0; remaining -= 1) {
       const effects = readPulseRows().find((row) => row.id === pulseId)?.effects ?? [];
-      const effect = effects.find((candidate) => enabled.has(candidate.type));
+      const effect = effects[0];
       if (effect === undefined) return;
       await applyPulseEffect(pulseId, effect);
     }
@@ -1106,6 +1079,52 @@ export async function codeUncodedPulses(signal?: AbortSignal): Promise<void> {
     attempts += 1;
     await codeRow(row, rows);
   }
+
+  await catchUpToCurrentRev(signal);
+}
+
+/**
+ * Bring pulses coded by an older build up to this one's `CODER_REV` — once per
+ * revision, by itself, with nothing for the owner to find or press.
+ *
+ * **This is not the ambient sweep considering `coderRev`, and the distinction
+ * is the whole safety argument.** The fence exists because a sweep that re-codes
+ * everything below the current rev would re-bill the entire history on every
+ * single open, silently, forever. What gates this is `codedAtRev` — a
+ * device-local mark written only after a clean pass — so the work happens at
+ * most once per revision per device and every later open costs nothing. The
+ * regression test for the fence still stands: with `codedAtRev` already at the
+ * current rev, an open makes no call at all.
+ *
+ * Why it is automatic rather than a button: a rev bump can mean a stored coding
+ * is actively wrong — rev 4 fixed meals placed at the wrong hour, which silently
+ * drop out of a day's total — and a fix the owner has to notice, understand and
+ * go press is a fix that does not land. The bill is bounded by the history, paid
+ * once, and a bump only happens when the coder itself changed.
+ *
+ * `MAX_PULSES_PER_SWEEP` bounds each pass and the mark is only written when a
+ * pass finds nothing left, so a long history finishes over several opens and a
+ * partial or failing run simply resumes. A failed pulse keeps its old rev and is
+ * found again, which is the entire retry story (fence 2).
+ */
+async function catchUpToCurrentRev(signal?: AbortSignal): Promise<void> {
+  if ((await getMeta<number>('codedAtRev', 0)) === CODER_REV) return;
+
+  const rows = await getPulses();
+  const behind = pulsesToBackfill(rows);
+  if (behind.length === 0) {
+    await setMeta('codedAtRev', CODER_REV);
+    return;
+  }
+
+  let attempts = 0;
+  for (const row of behind) {
+    if (signal?.aborted) return;
+    if (attempts >= MAX_PULSES_PER_SWEEP) return;
+    attempts += 1;
+    await recodeRow(row, rows);
+  }
+  scheduleFlush();
 }
 
 // ============================================================================

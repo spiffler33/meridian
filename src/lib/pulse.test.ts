@@ -24,7 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dayKey, deviceTimeZone, EVENTS_PATH } from './calendar';
 import { closeDb, enqueue, outboxSize, peekOutbox, putCachedContent } from './db';
 import type { OutboxRecord } from './db';
-import { ENTITY, PULSE_EFFECT_TYPES, readPulseVocabRow, resetSession } from './entities';
+import { ENTITY, readPulseVocabRow, resetSession } from './entities';
 import type { PulseEffect, PulseRow } from './entities';
 import { fold } from './journal';
 import type { JournalEvent } from './journal';
@@ -47,12 +47,10 @@ import {
   enrichPulse,
   ensurePulseVocabSeeded,
   getPulses,
-  getPulseEffectAutoApply,
   getTowerItems,
   MAX_PULSES_PER_SWEEP,
   PULSE_EPOCH,
   pulsesToBackfill,
-  setPulseEffectAutoApply,
   toggleCompletion,
 } from '../services/data';
 import { CODER_REV } from '../services/coder';
@@ -1155,32 +1153,17 @@ describe('approving a vocabulary proposal', () => {
   });
 });
 
-describe('auto-apply', () => {
+describe('effects apply themselves', () => {
   dbReset();
 
   const CLAIM = { type: 'claimEvent' as const, eventId: 'evt-1' };
 
-  it('is off on a fresh device, for every type', async () => {
-    // Every type there is — phase 4 left one, and the loop is over the constant
-    // rather than a list here, so retiring or adding one cannot desync this.
-    for (const type of PULSE_EFFECT_TYPES) {
-      expect(await getPulseEffectAutoApply(type)).toBe(false);
-    }
-  });
-
-  it('off: a coding lands with its chips intact and nothing is written for them', async () => {
-    await createPulse('a busy line');
-    codePulseMock.mockResolvedValue(codingWith([CLAIM, { type: 'claimEvent', eventId: 'evt-2' }]));
-
-    await codeUncodedPulses();
-
-    const row = (await getPulses())[0];
-    expect(row.effects).toHaveLength(2);
-    expect(row.links?.eventId ?? null).toBeNull();
-  });
-
-  it('on: the effect applies as the coding lands, with no tap', async () => {
-    await setPulseEffectAutoApply('claimEvent', true);
+  it('applies as the coding lands, with no tap and no switch to find', async () => {
+    // There used to be a per-type switch, defaulting off, explained in Settings
+    // as "a coding proposes; you tap". The owner's verdict on it was "never
+    // able to understand or use", and phase 4 had already retired every effect
+    // but this one — so the copy described a general system that no longer
+    // existed. The switch is gone; the one effect left simply applies.
     await createPulse('that was the school thing');
     codePulseMock.mockResolvedValue(codingWith([CLAIM]));
 
@@ -1191,28 +1174,19 @@ describe('auto-apply', () => {
     expect(row.links?.eventId).toBe('evt-1');
   });
 
-  it('switching a type on does not reach back over pulses already coded', async () => {
-    await createPulse('that was the school thing');
-    codePulseMock.mockResolvedValue(codingWith([CLAIM]));
-    await codeUncodedPulses();
-    expect((await getPulses())[0].links?.eventId ?? null).toBeNull();
+  it('applies every effect a coding carries, not just the first', async () => {
+    await createPulse('a busy line');
+    codePulseMock.mockResolvedValue(codingWith([CLAIM, { type: 'claimEvent', eventId: 'evt-2' }]));
 
-    // The owner changes their mind a fortnight in. Everything already coded
-    // keeps its chips; the switch decides what happens next, not what happened.
-    await setPulseEffectAutoApply('claimEvent', true);
-
-    const pulseId = (await getPulses())[0].id;
-    await codeUncodedPulses();
-    await codeCapturedPulse(pulseId);
-    resetSession();
     await codeUncodedPulses();
 
-    expect((await getPulses())[0].links?.eventId ?? null).toBeNull();
-    expect((await getPulses())[0].effects).toEqual([CLAIM]);
+    const row = (await getPulses())[0];
+    expect(row.effects).toEqual([]);
+    // Last writer wins on the one field both effects target.
+    expect(row.links?.eventId).toBe('evt-2');
   });
 
-  it('never applies a vocabulary proposal, whatever is switched on', async () => {
-    await setPulseEffectAutoApply('claimEvent', true);
+  it('never applies a vocabulary proposal — Appendix C gives it no auto path at all', async () => {
     await createPulse('plumbing all afternoon');
     codePulseMock.mockResolvedValue(codingWith([], { kind: 'activity', value: 'plumbing', mapsTo: 'home-ops' }));
 
@@ -1478,30 +1452,70 @@ describe('countPulseCodingWork splits never-coded from behind-a-revision', () =>
  * test because it is a BILLING bug and not a correctness one: it would look
  * completely fine on screen.
  */
-describe('the ambient sweep never considers coderRev', () => {
+describe('a rev catch-up happens ONCE, never on every open', () => {
   dbReset();
 
-  it('leaves a pulse coded at an older rev alone, forever — re-coding on open is a bill, not a feature', async () => {
+  it('re-codes a pulse behind the rev on the first open, and never again', async () => {
     const created = await createPulse('coded by an older build');
     await enrichPulse(created.id, { ...SAMPLE_CODING, coderRev: 1 });
     codePulseMock.mockClear();
     codePulseMock.mockResolvedValue(SAMPLE_CODING);
 
-    // Three opens of the app. `signal` present is the sweep's one and only
-    // test for "already coded", and it must stay that way.
+    // Open one: the catch-up runs, because this device has never been marked
+    // as current. The owner is not asked, and there is no button — a rev bump
+    // can mean a STORED coding is actively wrong (rev 4 fixed meals placed at
+    // the wrong hour, which silently drop out of a day's total), and a fix the
+    // owner has to notice and go press is a fix that does not land.
+    resetSession();
+    await codeUncodedPulses();
+    expect(codePulseMock).toHaveBeenCalledTimes(1);
+    expect((await getPulses())[0].coderRev).toBe(CODER_REV);
+
+    // Opens two through five: nothing. THIS is the fence. Re-coding on every
+    // open is a billing bug that looks perfect on screen, and the mark in
+    // `meta` — written only after a pass finds nothing left — is what makes
+    // the catch-up a one-off rather than a subscription.
+    for (let open = 0; open < 4; open += 1) {
+      resetSession();
+      await codeUncodedPulses();
+    }
+    expect(codePulseMock).toHaveBeenCalledTimes(1);
+
+    // The on-save path never learned about the rev at all, and must not.
+    await codeCapturedPulse(created.id);
+    expect(codePulseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('costs nothing at all on a device already at the current rev', async () => {
+    const created = await createPulse('already current');
+    await enrichPulse(created.id, SAMPLE_CODING);
+    codePulseMock.mockClear();
+    codePulseMock.mockResolvedValue(SAMPLE_CODING);
+
+    // The first open finds nothing behind, marks the device, and bills nothing.
+    // Every later open short-circuits on the mark before it even reads a row.
     for (let open = 0; open < 3; open += 1) {
       resetSession();
       await codeUncodedPulses();
     }
     expect(codePulseMock).not.toHaveBeenCalled();
+  });
 
-    // Same for the on-save path.
-    await codeCapturedPulse(created.id);
-    expect(codePulseMock).not.toHaveBeenCalled();
+  it('resumes rather than marking itself done when a pulse fails to re-code', async () => {
+    const created = await createPulse('will fail once');
+    await enrichPulse(created.id, { ...SAMPLE_CODING, coderRev: 1 });
+    codePulseMock.mockClear();
+    codePulseMock.mockRejectedValueOnce(new Error('offline'));
+    codePulseMock.mockResolvedValue(SAMPLE_CODING);
 
-    // The pulse is still behind, and still the backfill's business — the
-    // owner's tap is the only thing that re-codes it.
-    expect(pulsesToBackfill(await getPulses()).map(row => row.id)).toEqual([created.id]);
+    resetSession();
+    await codeUncodedPulses();
+    // Still behind: a failure keeps the old rev, and the mark was not written.
+    expect((await getPulses())[0].coderRev).toBe(1);
+
+    resetSession();
+    await codeUncodedPulses();
+    expect((await getPulses())[0].coderRev).toBe(CODER_REV);
   });
 });
 
@@ -1526,7 +1540,7 @@ describe('CODER_REV 3', () => {
     expect(pulsesToBackfill(rows).map(row => row.id)).toEqual(['rev2']);
   });
 
-  it('still codes nothing ambiently — the sweep never learned about the rev', async () => {
+  it('catches an older-rev pulse up once, then leaves it alone across further opens', async () => {
     const created = await createPulse('coded at rev 2');
     await enrichPulse(created.id, { ...SAMPLE_CODING, coderRev: 2 });
     codePulseMock.mockClear();
@@ -1538,7 +1552,8 @@ describe('CODER_REV 3', () => {
     }
     await codeCapturedPulse(created.id);
 
-    expect(codePulseMock).not.toHaveBeenCalled();
+    // Once, not three times, and not once per open forever.
+    expect(codePulseMock).toHaveBeenCalledTimes(1);
   });
 
   it('round-trips corrections through the journal, dropping only the unusable entries', async () => {

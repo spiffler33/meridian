@@ -4,7 +4,7 @@
  * Configuration. Theme, habits, data.
  */
 
-import { useCallback, useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useApp } from '../store/AppContext';
 import { useTheme, THEMES } from '../store/ThemeContext';
 import type { HabitDefinition, HabitCategory } from '../types';
@@ -12,17 +12,10 @@ import { DEFAULT_HABITS } from '../types';
 import { saveApiKey, loadApiKey, clearApiKey } from '../services/claude';
 import type { AiTone } from '../services/claude';
 import {
-  backfillPulseCoding,
-  countPulseCodingWork,
   createHabit,
   updateHabit as updateHabitInDb,
   deleteHabit as deleteHabitInDb,
-  getPulseEffectAutoApply,
-  setPulseEffectAutoApply,
 } from '../services/data';
-import type { BackfillProgress, CodingScope, CodingWork } from '../services/data';
-import { PULSE_EFFECT_TYPES } from '../lib/entities';
-import type { PulseEffectType } from '../lib/entities';
 import { clearToken, getDeviceId, getToken, requestPersistence, setMeta, setToken } from '../lib/db';
 import { Section } from '../components/Section';
 import { NewslettersSettings } from '../components/NewslettersSettings';
@@ -169,21 +162,7 @@ const SHORTCUTS: { key: string; meaning: string }[] = [
   },
 ];
 
-/**
- * What each of Appendix C's effects would do, in the owner's words.
- *
- * One is left after phase 4. The vocabulary proposal is deliberately not here
- * and must never be: it is the only proposal with no automatic path at all,
- * because it edits the vocabulary the coder reads on every subsequent call.
- */
-const EFFECT_LABELS: Record<PulseEffectType, string> = {
-  claimEvent: 'claim an event',
-};
 
-/** Every switch off — what a device that has never been asked answers. */
-const NO_AUTO_APPLY: Record<PulseEffectType, boolean> = {
-  claimEvent: false,
-};
 
 /**
  * What the browser says about keeping this origin's data, asked live.
@@ -226,19 +205,11 @@ export function SettingsView() {
   const [persistence, setPersistence] = useState<PersistenceAnswer | null>(null);
   // Device-local, and off until the store says otherwise: a fresh device must
   // never apply anything by itself before it has been told to.
-  const [autoApply, setAutoApply] = useState<Record<PulseEffectType, boolean>>(NO_AUTO_APPLY);
   // Null means "not edited yet", so the field follows the profile until it is.
   const [usernameDraft, setUsernameDraft] = useState<string | null>(null);
   const [displayNameDraft, setDisplayNameDraft] = useState<string | null>(null);
   const [kcalTargetDraft, setKcalTargetDraft] = useState<string | null>(null);
   const [personalContextDraft, setPersonalContextDraft] = useState<string | null>(null);
-  // The whole coding UI is four pieces of state: the two piles of work and what
-  // they would cost, what a run has done so far, whether one is running, and the
-  // controller that stops it.
-  const [codingWork, setCodingWork] = useState<{ uncoded: CodingScope; staleRev: CodingScope } | null>(null);
-  const [backfillProgress, setBackfillProgress] = useState<BackfillProgress | null>(null);
-  const [backfilling, setBackfilling] = useState(false);
-  const backfillStop = useRef<AbortController | null>(null);
 
   const username = usernameDraft ?? profile?.username ?? '';
   const displayName = displayNameDraft ?? profile?.display_name ?? '';
@@ -246,26 +217,6 @@ export function SettingsView() {
 
   useEffect(() => {
     loadApiKey().then(key => setApiKey(key));
-  }, []);
-
-  // The auto-apply switches, from `meta`. A read that fails leaves every
-  // switch DRAWN off — which is all this panel can say, not what the device
-  // will do: `autoApplyEffects` reads `meta` itself at apply time, so a type
-  // that is really on keeps applying while these say it does not.
-  useEffect(() => {
-    let live = true;
-    Promise.all(PULSE_EFFECT_TYPES.map(type => getPulseEffectAutoApply(type))).then(
-      answers => {
-        if (!live) return;
-        const next = { ...NO_AUTO_APPLY };
-        PULSE_EFFECT_TYPES.forEach((type, index) => { next[type] = answers[index]; });
-        setAutoApply(next);
-      },
-      () => undefined
-    );
-    return () => {
-      live = false;
-    };
   }, []);
 
   // The device id and whether a token is stored come from IndexedDB; the
@@ -323,66 +274,8 @@ export function SettingsView() {
     updateProfile({ kcal_target: next });
   };
 
-  /**
-   * Read both piles of work and show them.
-   *
-   * It runs on mount rather than waiting for a tap. Answering costs nothing —
-   * it is a read of the local store — and the tap it used to require was pure
-   * fuss: the owner had to already suspect something was owed before the app
-   * would tell them. The price still sits next to each run button before it is
-   * pressed, which is the confirmation that matters and the reason there is no
-   * "are you sure" modal.
-   */
-  const refreshCodingWork = useCallback(async () => {
-    try {
-      setCodingWork(await countPulseCodingWork());
-    } catch {
-      setCodingWork(null);
-    }
-  }, []);
 
-  useEffect(() => {
-    void refreshCodingWork();
-  }, [refreshCodingWork]);
 
-  /**
-   * Run it. Sequential inside, so this awaits the whole run; the progress
-   * callback is what moves the number on screen while it does.
-   *
-   * A run that fails partway is not an error state here — the tool reports
-   * how many failed and the button says run again, which is the entire retry
-   * story (each success wrote its rev, so a rerun skips what landed).
-   */
-  const handleBackfillRun = async (which: CodingWork) => {
-    const controller = new AbortController();
-    backfillStop.current = controller;
-    setBackfillProgress(null);
-    setBackfilling(true);
-    try {
-      const final = await backfillPulseCoding(which, setBackfillProgress, controller.signal);
-      setBackfillProgress(final);
-      await refreshCodingWork();
-    } catch {
-      // Nothing here throws in practice — every per-pulse failure is counted
-      // rather than raised — and if one ever does, the numbers on screen are
-      // still the truth about what landed.
-    } finally {
-      setBackfilling(false);
-      backfillStop.current = null;
-    }
-  };
-
-  /**
-   * Flip one effect's auto-apply. Optimistic, and put back if the write fails
-   * — a switch that reads on while the store says off would auto-apply
-   * nothing, which is a lie the owner would only find out about later.
-   */
-  const handleAutoApplyChange = (type: PulseEffectType, on: boolean) => {
-    setAutoApply(previous => ({ ...previous, [type]: on }));
-    setPulseEffectAutoApply(type, on).catch(() => {
-      setAutoApply(previous => ({ ...previous, [type]: !on }));
-    });
-  };
 
   const handleSaveApiKey = async () => {
     setApiKeySaving(true);
@@ -924,106 +817,6 @@ export function SettingsView() {
         </div>
 
         {/* Pulse effects */}
-        <div className="space-y-2">
-          <div className="text-xs text-text-secondary">pulse effects</div>
-          <div className="text-xs text-text-muted leading-relaxed">
-            a coding proposes; you tap. switch one on and it applies itself as a coding lands —
-            never reaching back over pulses already coded. vocabulary is always confirmed by hand.
-          </div>
-          {PULSE_EFFECT_TYPES.map(type => (
-            <label key={type} className="flex items-center gap-2 cursor-pointer group">
-              <input
-                type="checkbox"
-                checked={autoApply[type]}
-                onChange={e => handleAutoApplyChange(type, e.target.checked)}
-                className="accent-accent"
-              />
-              <span className="text-sm text-text group-hover:text-accent transition-colors">
-                {EFFECT_LABELS[type]}
-              </span>
-            </label>
-          ))}
-        </div>
-
-        {/* Coding: two disjoint piles, two decisions */}
-        <div className="space-y-3">
-          <div className="text-xs text-text-secondary">coding</div>
-
-          {/*
-            The backlog. This is the number that answers "is anything still
-            owed?", and it is normally zero — the sweep walks it on open and
-            again whenever the app comes back to the foreground, so a coding
-            dropped by a bad connection heals when the phone is next picked up.
-            The button is the escape hatch for when that keeps failing, not the
-            way the backlog is meant to be cleared.
-          */}
-          <div className="space-y-1.5">
-            {codingWork !== null && backfillProgress === null && (
-              <div className="text-sm text-text tabular-nums">
-                {codingWork.uncoded.count === 0
-                  ? 'every pulse is coded'
-                  : `${codingWork.uncoded.count} not yet coded, roughly $${codingWork.uncoded.approxCostUsd.toFixed(2)}`}
-              </div>
-            )}
-            {!backfilling && codingWork !== null && codingWork.uncoded.count > 0 && (
-              <button
-                onClick={() => void handleBackfillRun('uncoded')}
-                className="px-3 py-1.5 text-sm rounded border border-accent text-accent hover:bg-bg-hover transition-colors"
-              >
-                code {codingWork.uncoded.count}
-              </button>
-            )}
-          </div>
-
-          {/* The catch-up tool. A different decision at a different price. */}
-          <div className="space-y-1.5">
-            <div className="text-xs text-text-muted leading-relaxed">
-              re-reads past pulses through the current coder, so older ones gain the fields newer
-              ones have. it writes coding only — never the text you typed, and no chips about last
-              tuesday. it costs one api call per pulse. resume by pressing it again.
-            </div>
-            {codingWork !== null && backfillProgress === null && (
-              <div className="text-sm text-text tabular-nums">
-                {codingWork.staleRev.count === 0
-                  ? 'nothing to re-code — every coded pulse is current'
-                  : `${codingWork.staleRev.count} at an older revision, roughly $${codingWork.staleRev.approxCostUsd.toFixed(2)}`}
-              </div>
-            )}
-            {!backfilling && codingWork !== null && codingWork.staleRev.count > 0 && (
-              <button
-                onClick={() => void handleBackfillRun('staleRev')}
-                className="px-3 py-1.5 text-sm rounded border border-border text-text hover:border-accent transition-colors"
-              >
-                re-code {codingWork.staleRev.count}
-              </button>
-            )}
-          </div>
-
-          {/*
-            `done` is what LANDED, never what was attempted. This line used to
-            read `done + failed` as "done", so a run of one pulse that failed
-            said "1 of 1 done · 1 failed" — two numbers contradicting each
-            other about one pulse, on the surface whose whole job is to say
-            whether anything is owed.
-          */}
-          {backfillProgress !== null && (
-            <div className="text-sm text-text tabular-nums">
-              {backfillProgress.done === 0 && backfillProgress.failed > 0
-                ? `none of ${backfillProgress.total} coded · try again`
-                : `${backfillProgress.done} of ${backfillProgress.total} coded`}
-              {backfillProgress.done > 0 && backfillProgress.failed > 0 && ` · ${backfillProgress.failed} failed, run again`}
-            </div>
-          )}
-
-          {backfilling && (
-            <button
-              onClick={() => backfillStop.current?.abort()}
-              className="px-3 py-1.5 text-sm rounded border border-border text-error hover:border-error transition-colors"
-            >
-              stop
-            </button>
-          )}
-        </div>
       </Section>
 
       <Section label="nutrition">
