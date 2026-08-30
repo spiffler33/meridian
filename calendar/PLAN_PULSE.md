@@ -1412,3 +1412,44 @@ which is why there is still no "are you sure" modal.
 both piles, unchanged: a button that could tick something in the app is a fortnight of history
 reaching forward into today. The automatic path is the one that gets a full coding, because it
 runs minutes after capture rather than weeks. That asymmetry is deliberate.
+
+### 2026-08-30 — the coder had nowhere to think, and a third of codings died there
+
+The retry shipped this morning worked, and the pulse it was built for still would not code.
+Pressing *code 1* returned **"1 of 1 done · 1 failed"** — two bugs in seven words.
+
+**The real one, reproduced against the live API rather than reasoned about.** `codePulse` sent
+`thinking: {type: 'disabled'}`, on the stated reasoning that a classification call needs no
+reasoning and reasoning would compete with a 500-token ceiling meant entirely for the answer.
+What the model actually did, given nowhere to reason, was reason **in the visible text**: a
+prose preamble and a ` ```json ` fence around an otherwise perfect coding. `parseCoding` runs
+`JSON.parse` on that block and does not go hunting inside it, so it returned null — and null is
+also what a dead network returns, so the pulse stayed uncoded with nothing able to say why.
+
+**Measured, not guessed.** Three real pulses from the owner's own journal, six runs each, the
+real system prompt and payload: **12/18 parsed before, 18/18 after.** A third of every coding
+this app has ever attempted was being thrown away silently. That is the failure the Saturday
+dinner was a visible instance of; the two pulses either side of it coded because they won the
+coin flip.
+
+**The rule now: `thinking: {type: 'adaptive'}` with `output_config: {effort: 'low'}`.** The
+thinking replaces the preamble the model was already paying for, so the bill did not move —
+189 output tokens before, 186 after. `MAX_OUTPUT_TOKENS` rose 500 → 2000 because thinking
+spends from the same ceiling and a coding cut off at `max_tokens` is rejected outright.
+
+**Do not teach the parser to find JSON inside prose.** That is a string rule over model output
+and it is the fence this file already names. A wrapped coding is pinned as null in
+`coder.test.ts`, deliberately, so the fix stays upstream.
+
+**No `CODER_REV` bump.** The output contract did not change — only the request config did. The
+failures produced no coding at all rather than a worse one, so nothing already stored is stale
+and no re-code is owed by this.
+
+**The second bug: the progress line contradicted itself.** It read `done + failed` and labelled
+that "done", so one pulse that failed printed *"1 of 1 done · 1 failed"*. `done` is what landed,
+never what was attempted. It now reads *"none of 1 coded · try again"*, and only mentions
+failures alongside a non-zero success count.
+
+**Not built, and worth naming.** `SettingsView` has no test file, so the progress line is fixed
+and unpinned — a test for it would mean standing up a render harness for one display string.
+Ask before building it.

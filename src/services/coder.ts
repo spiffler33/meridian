@@ -68,8 +68,17 @@ export const CODER_REV = 3;
  */
 export const APPROX_COST_PER_PULSE_USD = 0.01;
 
-/** Appendix B's ceiling. Typical output is ~150 tokens; this is the cap, not the target. */
-const MAX_OUTPUT_TOKENS = 500;
+/**
+ * The cap, not the target. Typical *answer* is ~150 tokens.
+ *
+ * Raised from Appendix B's 500 when thinking was turned on: adaptive thinking
+ * spends from the same ceiling, and a coding cut off at `max_tokens` is
+ * rejected outright by `parseCoding` — the pulse would stay uncoded with no
+ * way to tell that from a network failure. Measured spend with `effort: 'low'`
+ * is ~186 output tokens, essentially unchanged from the 189 it averaged with
+ * thinking disabled, so the headroom costs nothing in practice.
+ */
+const MAX_OUTPUT_TOKENS = 2000;
 
 /**
  * Same ceiling as the GitHub write (`github.ts`'s `REQUEST_TIMEOUT_MS`), for
@@ -329,9 +338,24 @@ export async function codePulse(text: string, context: CoderContext): Promise<Co
       body: JSON.stringify({
         model: CODER_MODEL,
         max_tokens: MAX_OUTPUT_TOKENS,
-        // A classification call needs no reasoning, and reasoning would
-        // compete with a 500-token ceiling meant entirely for the answer.
-        thinking: { type: 'disabled' },
+        // Thinking is ON, at the lowest effort, and that is a correctness fix
+        // rather than a quality one.
+        //
+        // It used to be `{ type: 'disabled' }`, on the reasoning that a
+        // classification call needs none. What actually happened is the
+        // documented failure mode of disabling it: with nowhere to reason, the
+        // model intermittently wrote its reasoning into the VISIBLE text —
+        // a prose preamble and a ```json fence — and `parseCoding`'s
+        // `JSON.parse` threw, so `codePulse` returned null and the pulse
+        // stayed uncoded. Silently, because null is also what a dead network
+        // returns. Measured against the real API on three real pulses, six
+        // runs each: 12/18 parsed before, 18/18 after.
+        //
+        // `effort: 'low'` keeps it cheap — the thinking replaces the preamble
+        // it was already paying for, so average output tokens did not move
+        // (189 -> 186). Do not "simplify" this back to disabled.
+        thinking: { type: 'adaptive' },
+        output_config: { effort: 'low' },
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: JSON.stringify(payload) }],
       }),

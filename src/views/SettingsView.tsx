@@ -999,10 +999,19 @@ export function SettingsView() {
             )}
           </div>
 
+          {/*
+            `done` is what LANDED, never what was attempted. This line used to
+            read `done + failed` as "done", so a run of one pulse that failed
+            said "1 of 1 done · 1 failed" — two numbers contradicting each
+            other about one pulse, on the surface whose whole job is to say
+            whether anything is owed.
+          */}
           {backfillProgress !== null && (
             <div className="text-sm text-text tabular-nums">
-              {`${backfillProgress.done + backfillProgress.failed} of ${backfillProgress.total} done`}
-              {backfillProgress.failed > 0 && ` · ${backfillProgress.failed} failed, run again`}
+              {backfillProgress.done === 0 && backfillProgress.failed > 0
+                ? `none of ${backfillProgress.total} coded · try again`
+                : `${backfillProgress.done} of ${backfillProgress.total} coded`}
+              {backfillProgress.done > 0 && backfillProgress.failed > 0 && ` · ${backfillProgress.failed} failed, run again`}
             </div>
           )}
 

@@ -61,7 +61,7 @@ afterEach(async () => {
 });
 
 describe('codePulse — request shape', () => {
-  it('sends CODER_MODEL, a capped max_tokens, thinking disabled, and text+context as the user message', async () => {
+  it('sends CODER_MODEL, room for the answer, thinking ON at low effort, and text+context as the user message', async () => {
     const fetchMock = vi.fn(async () => textResponse(VALID_CODING_JSON));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -80,10 +80,22 @@ describe('codePulse — request shape', () => {
 
     const body = JSON.parse(init.body as string);
     expect(body.model).toBe(CODER_MODEL);
-    expect(body.max_tokens).toBeLessThanOrEqual(500);
-    // Disabled: a classification call needs no reasoning, and reasoning would
-    // compete with a tight token ceiling meant entirely for the answer.
-    expect(body.thinking).toEqual({ type: 'disabled' });
+
+    // Thinking is ON, and this assertion is the point of the test rather than
+    // decoration. It was `{ type: 'disabled' }`, on the reasoning that a
+    // classification call needs no reasoning. With nowhere to reason the model
+    // intermittently wrote its reasoning into the VISIBLE text — a prose
+    // preamble and a ```json fence — `JSON.parse` threw, and `codePulse`
+    // returned null, which is indistinguishable from a dead network. The pulse
+    // stayed uncoded and nothing said why. Measured against the real API on
+    // three real pulses, six runs each: 12/18 parsed before, 18/18 after.
+    expect(body.thinking).toEqual({ type: 'adaptive' });
+    expect(body.output_config).toEqual({ effort: 'low' });
+
+    // Thinking spends from the same ceiling as the answer, and a coding cut
+    // off at max_tokens is rejected outright — so the ceiling has to clear
+    // both. Measured spend did not move (189 -> 186 output tokens).
+    expect(body.max_tokens).toBeGreaterThanOrEqual(2000);
 
     const payload = JSON.parse(body.messages[0].content);
     expect(payload).toEqual({ text: 'wrote the plan', ...BASE_CONTEXT });
@@ -141,6 +153,36 @@ describe('codePulse — every failure collapses to null, no error taxonomy (fenc
 
   it('a 429 gets no special handling either — no retry ladder exists to test', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => textResponse({}, { ok: false, status: 429 })));
+    expect(await codePulse('x', BASE_CONTEXT)).toBeNull();
+  });
+
+  it('a coding wrapped in reasoning and a markdown fence — the failure that turned thinking back on', async () => {
+    // Verbatim in shape to what `claude-sonnet-5` returned about a third of
+    // the time with `thinking: {type: 'disabled'}`: the reasoning it had
+    // nowhere to put, then the answer inside a fence. The JSON is perfectly
+    // good and every field is right, and it is still unusable, because
+    // `parseCoding` parses the block and does not go hunting inside it.
+    //
+    // This is pinned as a null so nobody "fixes" it by teaching the parser to
+    // find JSON in prose. That is a string rule over model output, which is
+    // the fence this file's own header names. The fix is upstream: give the
+    // model somewhere to think.
+    const wrapped = [
+      "Looking at this pulse: it's a retrospective log of dinner, no stated",
+      'figures, so estimates are needed.',
+      '',
+      '```json',
+      JSON.stringify(VALID_CODING_JSON),
+      '```',
+    ].join('\n');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ content: [{ type: 'text', text: wrapped }] }),
+      }))
+    );
     expect(await codePulse('x', BASE_CONTEXT)).toBeNull();
   });
 
