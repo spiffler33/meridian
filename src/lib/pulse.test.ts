@@ -36,7 +36,8 @@ import {
   backfillPulseCoding,
   codeCapturedPulse,
   codeUncodedPulses,
-  countPulsesToBackfill,
+  countPulseCodingWork,
+  pulsesToCode,
   createHabit,
   createPulse,
   createTowerItem,
@@ -1244,19 +1245,23 @@ describe('pulsesToBackfill', () => {
     return coderRev === undefined ? base : { ...base, coderRev };
   }
 
-  it('selects a pulse coded at an older rev, and one never coded at all, and skips a current one', () => {
+  it('selects a coded pulse behind the current rev, and skips both a current one and an uncoded one', () => {
     const at = new Date(epochMs + 86_400_000).toISOString();
-    const targets = pulsesToBackfill([
+    const rows = [
       row('old-rev', at, 1),
+      // Coded, but by a build that stamped no rev at all — still behind.
       row('no-rev', at),
       row('current', at, CODER_REV),
-      // Uncoded, so it has no rev either. The plan's wording is literal, and
-      // it is also the right answer: the ambient sweep does twenty per open,
-      // so a long backlog would otherwise never be finished by anything.
+      // Uncoded, so it has no rev either. It used to land here for exactly
+      // that reason, and the day a revision shipped that made the number
+      // meaningless: eighteen already-coded pulses drowned the one the owner
+      // was actually asking about. It is `pulsesToCode`'s now, and the two
+      // sets are disjoint.
       { id: 'uncoded', text: 'uncoded', at },
-    ]);
+    ];
 
-    expect(targets.map(target => target.id)).toEqual(['no-rev', 'old-rev', 'uncoded']);
+    expect(pulsesToBackfill(rows).map(target => target.id)).toEqual(['no-rev', 'old-rev']);
+    expect(pulsesToCode(rows).map(target => target.id)).toEqual(['uncoded']);
   });
 
   it('skips anything older than PULSE_EPOCH, so a restored journal cannot turn one tap into an unbounded bill', () => {
@@ -1297,7 +1302,7 @@ describe('backfillPulseCoding', () => {
     const created = await codedAtOldRev('620 kcal burrito');
     codePulseMock.mockResolvedValue(WITH_FOOD);
 
-    expect(await backfillPulseCoding()).toEqual({ done: 1, failed: 0, total: 1 });
+    expect(await backfillPulseCoding('staleRev')).toEqual({ done: 1, failed: 0, total: 1 });
 
     // Read back through a real re-open, not the live session: what matters is
     // that the enrichment is durable, not that it is in memory.
@@ -1314,7 +1319,7 @@ describe('backfillPulseCoding', () => {
     expect(before?.vocabProposal).toEqual(SAMPLE_CODING.vocabProposal);
 
     codePulseMock.mockResolvedValue(WITH_FOOD);
-    await backfillPulseCoding();
+    await backfillPulseCoding('staleRev');
 
     resetSession();
     const row = (await getPulses()).find(candidate => candidate.id === created.id);
@@ -1333,13 +1338,13 @@ describe('backfillPulseCoding', () => {
     await codedAtOldRev('620 kcal burrito');
     codePulseMock.mockResolvedValue(WITH_FOOD);
 
-    await backfillPulseCoding();
+    await backfillPulseCoding('staleRev');
     expect(codePulseMock).toHaveBeenCalledTimes(1);
 
     resetSession();
-    expect(await backfillPulseCoding()).toEqual({ done: 0, failed: 0, total: 0 });
+    expect(await backfillPulseCoding('staleRev')).toEqual({ done: 0, failed: 0, total: 0 });
     expect(codePulseMock).toHaveBeenCalledTimes(1);
-    expect((await countPulsesToBackfill()).count).toBe(0);
+    expect((await countPulseCodingWork()).staleRev.count).toBe(0);
   });
 
   it('isolates a per-pulse failure: the rest land, the failure is counted, and a rerun picks up only it', async () => {
@@ -1355,7 +1360,7 @@ describe('backfillPulseCoding', () => {
     codePulseMock.mockRejectedValueOnce(new Error('offline'));
     codePulseMock.mockResolvedValue(WITH_FOOD);
 
-    expect(await backfillPulseCoding()).toEqual({ done: 1, failed: 1, total: 2 });
+    expect(await backfillPulseCoding('staleRev')).toEqual({ done: 1, failed: 1, total: 2 });
 
     resetSession();
     let rows = await getPulses();
@@ -1364,7 +1369,7 @@ describe('backfillPulseCoding', () => {
     expect(rows.find(row => row.id === fine.id)?.coderRev).toBe(CODER_REV);
 
     // "run again" does exactly that, and only for what is still behind.
-    expect(await backfillPulseCoding()).toEqual({ done: 1, failed: 0, total: 1 });
+    expect(await backfillPulseCoding('staleRev')).toEqual({ done: 1, failed: 0, total: 1 });
     resetSession();
     rows = await getPulses();
     expect(rows.find(row => row.id === doomed.id)?.coderRev).toBe(CODER_REV);
@@ -1374,7 +1379,7 @@ describe('backfillPulseCoding', () => {
     const created = await codedAtOldRev('unusable model output');
     codePulseMock.mockResolvedValue(null);
 
-    expect(await backfillPulseCoding()).toEqual({ done: 0, failed: 1, total: 1 });
+    expect(await backfillPulseCoding('staleRev')).toEqual({ done: 0, failed: 1, total: 1 });
 
     resetSession();
     // Not stamped. A pulse the coder could not answer for must stay findable.
@@ -1388,7 +1393,7 @@ describe('backfillPulseCoding', () => {
     codePulseMock.mockResolvedValue(WITH_FOOD);
 
     const seen: string[] = [];
-    await backfillPulseCoding(progress => seen.push(`${progress.done}/${progress.failed}/${progress.total}`));
+    await backfillPulseCoding('staleRev', progress => seen.push(`${progress.done}/${progress.failed}/${progress.total}`));
 
     expect(seen).toEqual(['0/1/2', '1/1/2']);
   });
@@ -1399,7 +1404,7 @@ describe('backfillPulseCoding', () => {
     codePulseMock.mockResolvedValue(WITH_FOOD);
 
     const controller = new AbortController();
-    const progress = await backfillPulseCoding(() => controller.abort(), controller.signal);
+    const progress = await backfillPulseCoding('staleRev', () => controller.abort(), controller.signal);
 
     // The first was paid for and stored; the second was never started.
     expect(progress).toEqual({ done: 1, failed: 0, total: 2 });
@@ -1410,9 +1415,61 @@ describe('backfillPulseCoding', () => {
     await codedAtOldRev('one');
     await codedAtOldRev('two');
 
-    const scope = await countPulsesToBackfill();
+    const scope = (await countPulseCodingWork()).staleRev;
     expect(scope.count).toBe(2);
     expect(scope.approxCostUsd).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The two piles are disjoint, and the one the owner asks about is the backlog.
+ *
+ * They used to be one number. Measured on the real journal the day this
+ * changed: one pulse was genuinely uncoded and eighteen were coded at rev 2,
+ * and the owner asking "did my dinner get processed?" was shown 19.
+ */
+describe('countPulseCodingWork splits never-coded from behind-a-revision', () => {
+  dbReset();
+
+  it('counts an uncoded pulse in `uncoded` only, and one behind a rev in `staleRev` only', async () => {
+    const never = await createPulse('never coded');
+    const behind = await createPulse('coded by an older build');
+    await enrichPulse(behind.id, { ...SAMPLE_CODING, coderRev: 1 });
+
+    const work = await countPulseCodingWork();
+    expect(work.uncoded.count).toBe(1);
+    expect(work.staleRev.count).toBe(1);
+
+    const rows = await getPulses();
+    expect(pulsesToCode(rows).map(row => row.id)).toEqual([never.id]);
+    expect(pulsesToBackfill(rows).map(row => row.id)).toEqual([behind.id]);
+  });
+
+  it('leaves a current pulse out of both, so a quiet journal reads as no work owed', async () => {
+    const created = await createPulse('coded at the current rev');
+    await enrichPulse(created.id, SAMPLE_CODING);
+
+    const work = await countPulseCodingWork();
+    expect(work.uncoded.count).toBe(0);
+    expect(work.staleRev.count).toBe(0);
+    expect(work.uncoded.approxCostUsd).toBe(0);
+  });
+
+  it("codes the backlog when asked, without touching a pulse that is merely behind a revision", async () => {
+    const never = await createPulse('never coded');
+    const behind = await createPulse('coded by an older build');
+    await enrichPulse(behind.id, { ...SAMPLE_CODING, coderRev: 1 });
+    codePulseMock.mockClear();
+    codePulseMock.mockResolvedValue(SAMPLE_CODING);
+
+    expect(await backfillPulseCoding('uncoded')).toEqual({ done: 1, failed: 0, total: 1 });
+    expect(codePulseMock).toHaveBeenCalledTimes(1);
+
+    resetSession();
+    const rows = await getPulses();
+    expect(rows.find(row => row.id === never.id)?.signal).toBe(SAMPLE_CODING.signal);
+    // Untouched, and still the other button's business.
+    expect(rows.find(row => row.id === behind.id)?.coderRev).toBe(1);
   });
 });
 

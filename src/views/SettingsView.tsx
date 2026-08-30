@@ -4,7 +4,7 @@
  * Configuration. Theme, habits, data.
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import { useApp } from '../store/AppContext';
 import { useTheme, THEMES } from '../store/ThemeContext';
 import type { HabitDefinition, HabitCategory } from '../types';
@@ -13,14 +13,14 @@ import { saveApiKey, loadApiKey, clearApiKey } from '../services/claude';
 import type { AiTone } from '../services/claude';
 import {
   backfillPulseCoding,
-  countPulsesToBackfill,
+  countPulseCodingWork,
   createHabit,
   updateHabit as updateHabitInDb,
   deleteHabit as deleteHabitInDb,
   getPulseEffectAutoApply,
   setPulseEffectAutoApply,
 } from '../services/data';
-import type { BackfillProgress } from '../services/data';
+import type { BackfillProgress, CodingScope, CodingWork } from '../services/data';
 import { PULSE_EFFECT_TYPES } from '../lib/entities';
 import type { PulseEffectType } from '../lib/entities';
 import { clearToken, getDeviceId, getToken, requestPersistence, setMeta, setToken } from '../lib/db';
@@ -232,9 +232,10 @@ export function SettingsView() {
   const [displayNameDraft, setDisplayNameDraft] = useState<string | null>(null);
   const [kcalTargetDraft, setKcalTargetDraft] = useState<string | null>(null);
   const [personalContextDraft, setPersonalContextDraft] = useState<string | null>(null);
-  // The whole backfill UI is four pieces of state: what a run would cost, what
-  // it has done so far, whether one is running, and the controller that stops it.
-  const [backfillScope, setBackfillScope] = useState<{ count: number; approxCostUsd: number } | null>(null);
+  // The whole coding UI is four pieces of state: the two piles of work and what
+  // they would cost, what a run has done so far, whether one is running, and the
+  // controller that stops it.
+  const [codingWork, setCodingWork] = useState<{ uncoded: CodingScope; staleRev: CodingScope } | null>(null);
   const [backfillProgress, setBackfillProgress] = useState<BackfillProgress | null>(null);
   const [backfilling, setBackfilling] = useState(false);
   const backfillStop = useRef<AbortController | null>(null);
@@ -323,18 +324,26 @@ export function SettingsView() {
   };
 
   /**
-   * Ask how much work a backfill would be, and show it. Answering this costs
-   * nothing — it is a read of the local store — so it is safe to offer as the
-   * first tap, and it is what turns the run itself into a confirmation.
+   * Read both piles of work and show them.
+   *
+   * It runs on mount rather than waiting for a tap. Answering costs nothing —
+   * it is a read of the local store — and the tap it used to require was pure
+   * fuss: the owner had to already suspect something was owed before the app
+   * would tell them. The price still sits next to each run button before it is
+   * pressed, which is the confirmation that matters and the reason there is no
+   * "are you sure" modal.
    */
-  const handleBackfillCount = async () => {
-    setBackfillProgress(null);
+  const refreshCodingWork = useCallback(async () => {
     try {
-      setBackfillScope(await countPulsesToBackfill());
+      setCodingWork(await countPulseCodingWork());
     } catch {
-      setBackfillScope(null);
+      setCodingWork(null);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void refreshCodingWork();
+  }, [refreshCodingWork]);
 
   /**
    * Run it. Sequential inside, so this awaits the whole run; the progress
@@ -344,14 +353,15 @@ export function SettingsView() {
    * how many failed and the button says run again, which is the entire retry
    * story (each success wrote its rev, so a rerun skips what landed).
    */
-  const handleBackfillRun = async () => {
+  const handleBackfillRun = async (which: CodingWork) => {
     const controller = new AbortController();
     backfillStop.current = controller;
+    setBackfillProgress(null);
     setBackfilling(true);
     try {
-      const final = await backfillPulseCoding(setBackfillProgress, controller.signal);
+      const final = await backfillPulseCoding(which, setBackfillProgress, controller.signal);
       setBackfillProgress(final);
-      setBackfillScope(await countPulsesToBackfill());
+      await refreshCodingWork();
     } catch {
       // Nothing here throws in practice — every per-pulse failure is counted
       // rather than raised — and if one ever does, the numbers on screen are
@@ -935,22 +945,59 @@ export function SettingsView() {
           ))}
         </div>
 
-        {/* Re-code history */}
-        <div className="space-y-2">
-          <div className="text-xs text-text-secondary">re-code history</div>
-          <div className="text-xs text-text-muted leading-relaxed">
-            re-reads past pulses through the current coder, so older ones gain the fields newer ones
-            have. it writes coding only — never the text you typed, and no chips about last tuesday.
-            it costs one api call per pulse. resume by pressing it again.
+        {/* Coding: two disjoint piles, two decisions */}
+        <div className="space-y-3">
+          <div className="text-xs text-text-secondary">coding</div>
+
+          {/*
+            The backlog. This is the number that answers "is anything still
+            owed?", and it is normally zero — the sweep walks it on open and
+            again whenever the app comes back to the foreground, so a coding
+            dropped by a bad connection heals when the phone is next picked up.
+            The button is the escape hatch for when that keeps failing, not the
+            way the backlog is meant to be cleared.
+          */}
+          <div className="space-y-1.5">
+            {codingWork !== null && backfillProgress === null && (
+              <div className="text-sm text-text tabular-nums">
+                {codingWork.uncoded.count === 0
+                  ? 'every pulse is coded'
+                  : `${codingWork.uncoded.count} not yet coded, roughly $${codingWork.uncoded.approxCostUsd.toFixed(2)}`}
+              </div>
+            )}
+            {!backfilling && codingWork !== null && codingWork.uncoded.count > 0 && (
+              <button
+                onClick={() => void handleBackfillRun('uncoded')}
+                className="px-3 py-1.5 text-sm rounded border border-accent text-accent hover:bg-bg-hover transition-colors"
+              >
+                code {codingWork.uncoded.count}
+              </button>
+            )}
           </div>
 
-          {backfillScope !== null && backfillProgress === null && (
-            <div className="text-sm text-text tabular-nums">
-              {backfillScope.count === 0
-                ? 'nothing to re-code — every pulse is current'
-                : `${backfillScope.count} ${backfillScope.count === 1 ? 'pulse' : 'pulses'}, roughly $${backfillScope.approxCostUsd.toFixed(2)}`}
+          {/* The catch-up tool. A different decision at a different price. */}
+          <div className="space-y-1.5">
+            <div className="text-xs text-text-muted leading-relaxed">
+              re-reads past pulses through the current coder, so older ones gain the fields newer
+              ones have. it writes coding only — never the text you typed, and no chips about last
+              tuesday. it costs one api call per pulse. resume by pressing it again.
             </div>
-          )}
+            {codingWork !== null && backfillProgress === null && (
+              <div className="text-sm text-text tabular-nums">
+                {codingWork.staleRev.count === 0
+                  ? 'nothing to re-code — every coded pulse is current'
+                  : `${codingWork.staleRev.count} at an older revision, roughly $${codingWork.staleRev.approxCostUsd.toFixed(2)}`}
+              </div>
+            )}
+            {!backfilling && codingWork !== null && codingWork.staleRev.count > 0 && (
+              <button
+                onClick={() => void handleBackfillRun('staleRev')}
+                className="px-3 py-1.5 text-sm rounded border border-border text-text hover:border-accent transition-colors"
+              >
+                re-code {codingWork.staleRev.count}
+              </button>
+            )}
+          </div>
 
           {backfillProgress !== null && (
             <div className="text-sm text-text tabular-nums">
@@ -959,38 +1006,14 @@ export function SettingsView() {
             </div>
           )}
 
-          <div className="flex items-center gap-2">
-            {/*
-              Two taps, always: the first one only counts, and its answer IS the
-              confirmation — a run button that appears next to a price is a
-              confirmation the owner has already read, which a modal asking "are
-              you sure" is not.
-            */}
-            {!backfilling && (
-              <button
-                onClick={() => void handleBackfillCount()}
-                className="px-3 py-1.5 text-sm rounded border border-border text-text hover:border-accent transition-colors"
-              >
-                count
-              </button>
-            )}
-            {!backfilling && backfillScope !== null && backfillScope.count > 0 && (
-              <button
-                onClick={() => void handleBackfillRun()}
-                className="px-3 py-1.5 text-sm rounded border border-accent text-accent hover:bg-bg-hover transition-colors"
-              >
-                re-code {backfillScope.count}
-              </button>
-            )}
-            {backfilling && (
-              <button
-                onClick={() => backfillStop.current?.abort()}
-                className="px-3 py-1.5 text-sm rounded border border-border text-error hover:border-error transition-colors"
-              >
-                stop
-              </button>
-            )}
-          </div>
+          {backfilling && (
+            <button
+              onClick={() => backfillStop.current?.abort()}
+              className="px-3 py-1.5 text-sm rounded border border-border text-error hover:border-error transition-colors"
+            >
+              stop
+            </button>
+          )}
         </div>
       </Section>
 

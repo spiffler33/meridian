@@ -31,6 +31,13 @@ import {
   getPulses,
 } from '../services/data';
 
+/**
+ * The floor between two foreground sweeps. See the foreground effect below for
+ * why a floor exists at all: without it a declined pulse is re-billed on every
+ * pickup.
+ */
+const SWEEP_MIN_INTERVAL_MS = 5 * 60 * 1000;
+
 export interface Pulses {
   /** The day's pulses, oldest first — the page reads downward into the box. */
   today: PulseRow[];
@@ -105,9 +112,13 @@ export function usePulses(day: string, timeZone: string): Pulses {
    * no-op anyway.
    */
   const sweeping = useRef(false);
+  const lastSweptAt = useRef(0);
   const sweepThenRefresh = useCallback(async () => {
     if (sweeping.current) return;
     sweeping.current = true;
+    // Every sweep stamps the clock, not just the foreground one, or a pickup
+    // moments after an open would walk the same backlog twice and pay twice.
+    lastSweptAt.current = Date.now();
     try {
       await codeUncodedPulses(sweeper.current?.signal);
       await refresh();
@@ -129,12 +140,52 @@ export function usePulses(day: string, timeZone: string): Pulses {
         // owner with nothing captured today sees anyway.
         if (import.meta.env.DEV) console.error('Failed to read pulses:', error);
       }
-      // "Uncoded pulses are coded on next open" — this is the open, and the
-      // only place the backlog is walked. Off the render path already: the
-      // initial read above has already settled.
+      // "Uncoded pulses are coded on next open" — this is the open. It is no
+      // longer the ONLY place the backlog is walked; see the foreground sweep
+      // below. Off the render path already: the initial read has settled.
       void sweepThenRefresh();
     })();
   }, [refresh, sweepThenRefresh]);
+
+  /**
+   * Sweep again when the app comes back to the foreground.
+   *
+   * On-save coding swallows every failure silently (`codeRow`), and the mount
+   * sweep above only re-runs when this view is mounted afresh. An installed
+   * PWA that is backgrounded and resumed does neither, so one dropped call
+   * used to leave a pulse uncoded until the app was next launched cold —
+   * measured on real data: a Saturday dinner captured 2026-08-30T01:48Z was
+   * still uncoded hours later, with two pulses either side of it coded fine.
+   * Nothing on screen said so, and the ledger silently lacked a meal.
+   *
+   * Picking the phone back up is now the retry, which is the only retry an
+   * owner should ever have to perform.
+   *
+   * `SWEEP_MIN_INTERVAL_MS` is what keeps that from becoming a bill. A pulse
+   * the coder DECLINES stays uncoded on purpose (fence 2's null coding is a
+   * finished outcome, not a failure), so it is a candidate again on every
+   * sweep; without a floor, a phone picked up fifty times would pay for that
+   * same pulse fifty times. Five minutes keeps the retry feeling immediate
+   * while capping a stubborn pulse at one call per five minutes of use.
+   */
+  useEffect(() => {
+    const onForeground = () => {
+      const now = Date.now();
+      if (now - lastSweptAt.current < SWEEP_MIN_INTERVAL_MS) return;
+      lastSweptAt.current = now;
+      void sweepThenRefresh();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') onForeground();
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('focus', onForeground);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('focus', onForeground);
+    };
+  }, [sweepThenRefresh]);
 
   const capture = useCallback(async (text: string): Promise<boolean> => {
     // An empty Enter is a no-op, not an empty pulse.

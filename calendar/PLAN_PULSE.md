@@ -1360,3 +1360,55 @@ item sum, and a hand-built cross-device journal (A captures, A deletes, B enrich
 is asserted to still resurrect before the reader is asserted to exclude it. That last one is
 the only ledger test that fails if the reader gate alone is removed; the other two are covered
 by the `enrichPulse` guard, which is the division of labour the two deltas were written to.
+
+### 2026-08-30 — the retry is picking your phone back up
+
+Gate 5's third finding, and the first one that is about **fuss** rather than arithmetic.
+*"we need pulse to really be extremely fuss free - else it doesnt work - this is for an adhd
+person."* That is the acceptance criterion this entry is written against.
+
+**What happened.** A Saturday dinner captured at `2026-08-30T01:48:50Z` — *"Btw yesterday
+(Saturday) dinner I had half tandoori roti, half paneer butter masala, and half chole"* — was
+never coded. Diagnosed by folding the real journal: it was the **only** uncoded pulse in it,
+with a pulse two minutes earlier and one an hour later both coded at rev 3. So the key, the
+model and the prompt were all fine; one call was dropped, `codeRow` swallowed it as it swallows
+everything, and nothing on screen said so. The ledger was simply missing a meal.
+
+**Why it stayed broken.** The backlog sweep ran in a `useEffect` with stable deps — **once per
+mount of the Pulse view**. An installed PWA that is backgrounded and resumed does not remount,
+and `codeCapturedPulse` is deliberately one line and not a re-walk, so the next capture did not
+rescue it either. The pulse would have waited for a cold launch.
+
+**The rule now: the sweep also runs on foreground**, on the same `visibilitychange` / `focus`
+pair `installSyncTriggers` already uses. Picking the phone back up is the retry, and it is the
+only retry an owner should ever have to perform.
+
+**`SWEEP_MIN_INTERVAL_MS = 5 min` is what keeps that from becoming a bill**, and it is
+load-bearing rather than tidy. A pulse the coder DECLINES stays uncoded on purpose — fence 2's
+null coding is a finished outcome, not a failure — so it is a candidate again on every sweep.
+Without a floor, a phone picked up fifty times pays for that pulse fifty times. Every sweep
+stamps the clock, not just the foreground one, or a pickup moments after an open walks the same
+backlog twice. Both halves are pinned in `usePulses.test.ts`.
+
+**The count was lying, and that is a second reversal.** `pulsesToBackfill` selected
+`(coderRev ?? 0) < CODER_REV`, which by design lumped *never coded* together with *coded at an
+older rev*. The docstring argued for it explicitly and it was right until a revision shipped.
+Measured on the real journal the day this changed: **1 uncoded, 18 at rev 2** — and the owner
+asking "did my dinner get processed?" was shown *"19 pulses, roughly $0.19"*. The number could
+not answer the only question being asked of it.
+
+**Two disjoint sets, two numbers, two decisions.** `pulsesToCode` is the backlog — never coded,
+and normally zero now that the sweep reaches it unattended. `pulsesToBackfill` keeps the Gate 5
+catch-up tool and now requires the pulse to be *coded* already. `countPulseCodingWork` returns
+both from one read of the journal, so the two figures on screen cannot disagree about it.
+
+**Settings counts on mount instead of waiting for a tap.** The count is a local read and costs
+nothing; requiring a tap meant the owner had to already suspect something was owed before the
+app would tell them, which is the exact fuss this entry is about. The two-tap *confirmation*
+property is untouched — each price still sits beside its own run button before it is pressed,
+which is why there is still no "are you sure" modal.
+
+**The manual button still writes `codingOnly`.** Effects and vocab proposals are omitted on
+both piles, unchanged: a button that could tick something in the app is a fortnight of history
+reaching forward into today. The automatic path is the one that gets a full coding, because it
+runs minutes after capture rather than weeks. That asymmetry is deliberate.

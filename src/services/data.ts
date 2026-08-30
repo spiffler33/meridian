@@ -1121,6 +1121,12 @@ export async function codeUncodedPulses(signal?: AbortSignal): Promise<void> {
  */
 export const PULSE_EPOCH = '2026-08-27T00:00:00.000Z';
 
+/**
+ * Which pile to work through. `uncoded` is the backlog the owner is owed;
+ * `staleRev` is the deliberate re-code of history at the current revision.
+ */
+export type CodingWork = 'uncoded' | 'staleRev';
+
 /** What the backfill has done so far, and what is left. */
 export type BackfillProgress = {
   done: number;
@@ -1129,15 +1135,43 @@ export type BackfillProgress = {
 };
 
 /**
- * The pulses a backfill would re-code: captured at or after `PULSE_EPOCH`,
- * and coded at a revision older than this build's — `coderRev` absent counts
- * as older, which is every pulse coded before phase 5 shipped.
+ * A pulse this replica captured and never coded. `signal` is the one, total
+ * test for uncoded — every enrichment field arrives together.
+ */
+function isUncoded(row: PulseRow): boolean {
+  return row.signal === undefined;
+}
+
+/** In scope for any coding work: captured at or after `PULSE_EPOCH`, with a readable `at`. */
+function inBackfillScope(row: PulseRow): boolean {
+  const atMs = Date.parse(row.at);
+  return Number.isFinite(atMs) && atMs >= Date.parse(PULSE_EPOCH);
+}
+
+/**
+ * The pulses that were never coded at all — the backlog, and the only number
+ * that answers "is anything still owed?".
  *
- * Uncoded pulses are in scope too, and that is the plan's own wording read
- * literally: an uncoded pulse has no `coderRev` either. It is also the right
- * answer — the ambient sweep codes at most twenty per open, so a long backlog
- * would otherwise never be finished by anything, and the tool that exists to
- * catch history up is the natural place for it.
+ * Split out from `pulsesToBackfill`, which used to include these. That was the
+ * plan's wording read literally (an uncoded pulse has no `coderRev` either) and
+ * it made the count useless the day a revision shipped: measured on the real
+ * journal, one pulse was genuinely uncoded and eighteen were already coded at
+ * rev 2, so the owner was shown "19 pulses, roughly $0.19" when the answer to
+ * their question was one. Two disjoint sets, two numbers, two decisions.
+ *
+ * Oldest first, for the reason the backfill is.
+ */
+export function pulsesToCode(rows: readonly PulseRow[]): PulseRow[] {
+  return rows.filter((row) => inBackfillScope(row) && isUncoded(row)).sort(compareOldestFirst);
+}
+
+/**
+ * The pulses a re-code would upgrade: captured at or after `PULSE_EPOCH`,
+ * already coded, and at a revision older than this build's.
+ *
+ * Coded is now a requirement rather than an accident. An uncoded pulse belongs
+ * to `pulsesToCode`, and the ambient sweep — which now also runs on foreground,
+ * not only on open — reaches it without the owner paying attention to anything.
  *
  * Oldest first, so a run that is stopped halfway has done the oldest half and
  * a rerun picks up where the eye left off. A row whose `at` cannot be read as
@@ -1145,20 +1179,28 @@ export type BackfillProgress = {
  * to resolve the utterance against.
  */
 export function pulsesToBackfill(rows: readonly PulseRow[]): PulseRow[] {
-  const floorMs = Date.parse(PULSE_EPOCH);
   return rows
-    .filter((row) => {
-      const atMs = Date.parse(row.at);
-      if (!Number.isFinite(atMs) || atMs < floorMs) return false;
-      return (row.coderRev ?? 0) < CODER_REV;
-    })
+    .filter((row) => inBackfillScope(row) && !isUncoded(row) && (row.coderRev ?? 0) < CODER_REV)
     .sort(compareOldestFirst);
 }
 
-/** How many pulses a backfill would re-code right now, and what it would roughly cost. */
-export async function countPulsesToBackfill(): Promise<{ count: number; approxCostUsd: number }> {
-  const count = pulsesToBackfill(await getPulses()).length;
-  return { count, approxCostUsd: count * APPROX_COST_PER_PULSE_USD };
+/** One button's worth of work: how many pulses, and roughly what they would cost. */
+export type CodingScope = { count: number; approxCostUsd: number };
+
+function scopeOf(rows: readonly PulseRow[]): CodingScope {
+  return { count: rows.length, approxCostUsd: rows.length * APPROX_COST_PER_PULSE_USD };
+}
+
+/**
+ * The two disjoint piles of coding work, counted together so the numbers on
+ * screen cannot disagree about the same journal.
+ *
+ * `uncoded` is what the owner means by "is anything not done?"; `staleRev` is
+ * the Gate 5 catch-up tool, which is a different decision at a different price.
+ */
+export async function countPulseCodingWork(): Promise<{ uncoded: CodingScope; staleRev: CodingScope }> {
+  const rows = await getPulses();
+  return { uncoded: scopeOf(pulsesToCode(rows)), staleRev: scopeOf(pulsesToBackfill(rows)) };
 }
 
 /**
@@ -1210,11 +1252,12 @@ async function recodeRow(row: PulseRow, allRows: readonly PulseRow[]): Promise<b
  * screen moves even through a run that is failing.
  */
 export async function backfillPulseCoding(
+  which: CodingWork,
   onProgress?: (progress: BackfillProgress) => void,
   signal?: AbortSignal
 ): Promise<BackfillProgress> {
   const rows = await getPulses();
-  const targets = pulsesToBackfill(rows);
+  const targets = which === 'uncoded' ? pulsesToCode(rows) : pulsesToBackfill(rows);
 
   const progress: BackfillProgress = { done: 0, failed: 0, total: targets.length };
   for (const row of targets) {

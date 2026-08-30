@@ -12,11 +12,13 @@
  * (`answerFor`), exactly as `views/TowerView.test.tsx` does it. That is not
  * decoration: capture and the sweep both fire their coding without awaiting it
  * (fence 3), so a test ends with a coding still walking `buildCoderContext`,
- * and it reaches `codePulse` inside a LATER test — against a fresh database,
- * where the enrichment resurrects a textless ghost pulse (P2) and schedules a
- * flush for it. Measured: a straggler settling inside the D6 test below makes
- * its flush count 3 instead of 2. A coder that never settles for a line it was
- * not set up for cannot write anything, whenever it happens to be called.
+ * and it reaches `codePulse` inside a LATER test — against a fresh database.
+ * `enrichPulse` now returns without writing when the row is gone, so such a
+ * straggler no longer resurrects a textless ghost, but it can still schedule a
+ * flush and still muddies a count. Measured before that guard: a straggler
+ * settling inside the D6 test below made its flush count 3 instead of 2. A
+ * coder that never settles for a line it was not set up for cannot write
+ * anything, whenever it happens to be called.
  *
  * For the same reason nothing here counts the spy's TOTAL calls: a straggler
  * inflates that too. `codedTimes(line)` is the honest count.
@@ -248,6 +250,77 @@ describe('the lazy coding queue', () => {
 
     expect(codedTimes(LINE)).toBe(1); // no additional call
     second.unmount();
+  });
+});
+
+describe('a coding dropped on save is retried when the app comes back (fuss-free)', () => {
+  const LINE = 'half tandoori roti, half paneer butter masala';
+
+  /** Foreground, the way an installed PWA does it: hidden, then visible again. */
+  function foreground() {
+    document.dispatchEvent(new Event('visibilitychange'));
+  }
+
+  it('codes a pulse whose on-save call failed, without a remount and without the owner asking', async () => {
+    // The real failure this was built for: captured 2026-08-30T01:48Z, the
+    // on-save coding dropped by a bad connection, and still uncoded hours
+    // later with pulses either side of it coded fine. `codeRow` swallows every
+    // error, so nothing on screen ever said so.
+    codePulseMock.mockRejectedValueOnce(new Error('offline'));
+
+    const { result } = renderHook(() => usePulses(DAY, ZONE));
+    await waitFor(() => expect(result.current.today).toEqual([]));
+    await act(async () => {
+      await result.current.capture(LINE);
+    });
+    await waitFor(() => expect(codedTimes(LINE)).toBe(1));
+    // Still uncoded: the call was made and it failed, silently, by design.
+    expect(result.current.today.find((row) => row.text === LINE)?.signal).toBeUndefined();
+
+    // The owner puts the phone down and picks it back up. That is the retry.
+    answerFor(LINE);
+    vi.setSystemTime(new Date(NOW.getTime() + 6 * 60 * 1000));
+    await act(async () => {
+      foreground();
+    });
+
+    await waitFor(() => {
+      expect(result.current.today.find((row) => row.text === LINE)?.signal).toBe('note');
+    });
+  });
+
+  it('does not re-bill a pulse the coder declines, twice inside the interval floor', async () => {
+    // A null coding is fence 2's finished outcome, not a failure, so the pulse
+    // stays uncoded on purpose and is a candidate on every single sweep. A
+    // phone picked up fifty times must not pay for it fifty times.
+    answerFor(LINE, null);
+
+    const { result } = renderHook(() => usePulses(DAY, ZONE));
+    await waitFor(() => expect(result.current.today).toEqual([]));
+    await act(async () => {
+      await result.current.capture(LINE);
+    });
+    await waitFor(() => expect(codedTimes(LINE)).toBe(1));
+
+    // Four foregrounds in the same minute. The floor absorbs all of them.
+    for (let i = 0; i < 4; i += 1) {
+      await act(async () => {
+        foreground();
+      });
+    }
+    expect(codedTimes(LINE)).toBe(1);
+
+    // Past the floor, it is tried once more — and only once more.
+    vi.setSystemTime(new Date(NOW.getTime() + 6 * 60 * 1000));
+    await act(async () => {
+      foreground();
+    });
+    await waitFor(() => expect(codedTimes(LINE)).toBe(2));
+
+    await act(async () => {
+      foreground();
+    });
+    expect(codedTimes(LINE)).toBe(2);
   });
 });
 
