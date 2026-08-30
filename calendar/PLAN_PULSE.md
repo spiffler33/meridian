@@ -11,7 +11,7 @@ of the owner's utterances. Authored-AI prose returns only where there is content
 synthesize (ask-the-library, its own future plan). The day-shape briefing is dead
 (see PLAN_CALENDAR amendment).
 
-## Status — all six phases built and deployed, 2026-08-29
+## Status — all six phases built and deployed; fuss-free pass closed 2026-08-30
 
 Phases 0, 1, 2 and 3 are on `main` and live at meridian.spiffler.xyz. What is left of them
 is the owner's: **Gate 0** (does Read feel cleaner without Week as a view?), **Gate 2** (a
@@ -19,6 +19,14 @@ week of coded living, then judge 20 pulses like an ATUS supervisor), and **Gate 
 weeks of ledger). Gate 2 was not run before Phase 3 was built — recorded, with the reason,
 in that phase's run-log entry. Each gate's verdict is an amendment to this file, not a new
 plan.
+
+**A fuss-free pass closed 2026-08-30**, opened by the owner's standing bar for this feature:
+*"we need pulse to really be extremely fuss free - else it doesnt work - this is for an adhd
+person."* Six run-log entries below record it. Nothing here changed what Pulse *is*; it changed
+whether its fixes could reach the person using it. Coding now manages itself — the backlog on
+foreground, the coder revision once per device — and the two Settings blocks that asked the owner
+to operate it are deleted, replaced by a read-only `coding` section that always prints a number.
+**`CODER_REV` is 4.** Gates 0, 2 and 3 are untouched by this and remain the owner's.
 
 **Phases 4 and 5 were added 2026-08-29 by the owner**, integrated from the addendum
 `calendar/PLAN_PULSE_PHASES_4_5.md` (archived), together with **hard fence 9**. Phase 4 retires the
