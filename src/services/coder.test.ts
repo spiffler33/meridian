@@ -39,7 +39,7 @@ const VALID_CODING_JSON = {
   links: { eventId: null },
   nutrition: null,
   corrections: [],
-  coderRev: 3,
+  coderRev: CODER_REV,
   effects: [],
   vocabProposal: null,
 };
@@ -316,9 +316,14 @@ describe('codePulse — a valid response degrades missing fields to safe default
     expect(result?.effects).toEqual([{ type: 'claimEvent', eventId: 'evt-1' }]);
   });
 
-  it('returns the full coding on a well-formed response', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => textResponse(VALID_CODING_JSON)));
-    expect(await codePulse('x', BASE_CONTEXT)).toEqual(VALID_CODING_JSON);
+  it('returns the full coding on a well-formed response, stamping coderRev locally', async () => {
+    // The fixture is the MODEL's answer, and it carries a stale rev on purpose:
+    // `coderRev` is stamped from this build's own constant and never read off
+    // the response, so a model echoing an old number — or inventing a new one —
+    // cannot make a pulse look current to the backfill.
+    const modelSaid = { ...VALID_CODING_JSON, coderRev: 3 };
+    vi.stubGlobal('fetch', vi.fn(async () => textResponse(modelSaid)));
+    expect(await codePulse('x', BASE_CONTEXT)).toEqual({ ...VALID_CODING_JSON, coderRev: CODER_REV });
   });
 });
 
@@ -342,6 +347,24 @@ describe('the system prompt — the only place the model is told any of this', (
     const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>;
     return JSON.parse(calls[0][1].body as string).system as string;
   }
+
+  it('tells the model where on the clock an unstated meal time goes (rev 4)', async () => {
+    // `RULES` answers "which day" and said nothing about "which hour", so the
+    // model guessed. Measured against the real API, eight runs each: "had
+    // dinner - dal, rice and some bhindi" landed at `now` — 09:48 on a Sunday
+    // morning — in seven of eight, and a back-dated breakfast landed at
+    // midnight in one of eight. The hour is not cosmetic: it picks the local
+    // day the food counts on, and whether the item falls before or after a
+    // correction stated that day. Everything before a waterline is subsumed by
+    // it, so a dinner placed at lunchtime is a meal that silently does not
+    // count — which is exactly what put 1,309 on a Saturday that was 1,749.
+    const prompt = await systemPrompt();
+    expect(prompt).toContain('when it was EATEN');
+    expect(prompt).toContain('Never place a dinner before the afternoon');
+    // The judgment stays in prose the model reads. A table of meal times in
+    // code would be a clock rule over natural language — fence 2.
+    expect(prompt).toContain('ordinary local time for that meal in tz');
+  });
 
   it('names every effect type and every payload key the chips actually read', async () => {
     const system = await systemPrompt();

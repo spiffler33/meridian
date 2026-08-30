@@ -1453,3 +1453,46 @@ failures alongside a non-zero success count.
 **Not built, and worth naming.** `SettingsView` has no test file, so the progress line is fixed
 and unpinned — a test for it would mean standing up a render harness for one display string.
 Ask before building it.
+
+### 2026-08-30 — a dinner at lunchtime, and the waterline that ate it (coder rev 4)
+
+Saturday read **1,309** when it should have read **1,749**. The arithmetic was right, every
+time — 880 (the ratification) + 100 (tofu) + 329 (smoothie). The 440-kcal dinner was missing,
+and the reason was one field.
+
+**What happened.** The retry shipped that morning worked and the Saturday dinner finally coded:
+440 kcal, `approx: true`, the right day. Its span start was
+`2026-08-29T12:30:00.000+08:00` — **half past twelve, for a dinner.** The day's correction was
+stated at 13:56 local, and a correction subsumes everything eaten before it, so the meal landed
+an hour and a half on the wrong side of the waterline and contributed nothing. Nothing on
+screen could say so: a subsumed item looks exactly like an item that was never there.
+
+**Why the model guessed.** `RULES` said only *"time expressions resolved against now and tz"*.
+That answers **which day** and says nothing about **which hour**, so for an utterance naming the
+meal but not the clock, there was no rule to follow. This is `schema-before-model` exactly: the
+wrong answer was a missing instruction, not a weak model.
+
+**Measured before changing anything**, eight runs per case against the real API:
+
+| utterance | before | after |
+|---|---|---|
+| "yesterday (Saturday) dinner…" | Sat 19:30 ×8 | Sat 19:00/19:30 ×8 |
+| "had dinner - dal, rice and some bhindi" | **`now` — Sun 09:48 ×7**, Sat 19:30 ×1 | evening ×7, ×1 wrong day |
+| "yesterday's breakfast was 2 idlis and sambar" | Sat 08:00 ×5, 08:30, 09:00, **00:00** | Sat 08:00 ×8 |
+
+The pulse that started this is not the interesting row — it codes correctly eight times out of
+eight. **A plain "had dinner" landing at `now` seven times out of eight is**, and that had been
+true of every meal logged without a clock time since phase 5 shipped.
+
+**The rule now (`SPAN_RULES`):** a meal's span is when it was EATEN; with no clock time given,
+place it at the ordinary local hour for that meal in `tz` and set `approx`; never place a dinner
+before the afternoon. It states *why* in the prompt too — the hour decides the day the food
+counts on and which side of a correction it falls on — because that is the part the model was
+never told mattered. Judgment in prose the model reads; there is no meal-time table in the
+codebase and there must never be one (fence 2).
+
+**`CODER_REV` 3 → 4, and this is the first bump for a PROMPT change rather than a schema one.**
+That is deliberate and it is the right use of the mechanism: a rev-3 coding can carry a meal at
+an hour that makes it silently not count, and only a re-code can fix such a row. It is also what
+gives the owner a way to repair Saturday — the re-code button, which now has 19 pulses in scope.
+A bump is a bill, and this one buys back a day that was wrong.

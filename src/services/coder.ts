@@ -46,16 +46,26 @@ export const CODER_MODEL = 'claude-sonnet-5';
 /**
  * The revision of the coding schema this build produces.
  *
- * Rev 2 carried `nutrition`; rev 3 adds `corrections`. It exists for exactly one reader:
+ * Rev 2 carried `nutrition`; rev 3 added `corrections`; rev 4 adds the meal-
+ * placement rule. It exists for exactly one reader:
  * the owner-invoked backfill, which selects pulses coded at a lower rev and
  * re-codes them. Nothing else may branch on it — in particular the ambient
  * sweep must not, or every re-open would re-code the entire history at the
  * owner's expense (a regression test pins that).
  *
- * Bump it when a schema change makes an older coding worth redoing, and only
- * then: a bump is a bill.
+ * Bump it when a change makes an older coding worth redoing, and only then:
+ * a bump is a bill.
+ *
+ * Rev 4 is the first bump for a PROMPT change rather than a schema one, and
+ * that is deliberate. A stored coding from rev 3 can carry a meal at the wrong
+ * hour — measured: "had dinner - dal, rice and some bhindi" landed at `now`,
+ * 09:48, in seven of eight runs — and a wrong hour is not cosmetic. It decides
+ * the day the food counts on, and which side of a correction it falls on. The
+ * pulse that forced this had a Saturday dinner placed at 12:30, before a 13:56
+ * waterline, so its 440 kcal was subsumed and the day read 1,309 instead of
+ * 1,749. Nothing but a re-code can fix a row like that.
  */
-export const CODER_REV = 3;
+export const CODER_REV = 4;
 
 /**
  * A rough per-pulse cost, in US dollars, for the backfill's confirmation line.
@@ -292,6 +302,34 @@ const NUTRITION_RULES =
   'buffet"), return nutrition with kcal null — recognized, uncounted. Omit nutrition ' +
   'only when the utterance is not about the owner consuming anything.';
 
+/**
+ * Where a meal sits on the clock (rev 4).
+ *
+ * `RULES` said only "time expressions resolved against now and tz", which
+ * answers "which day" and says nothing about "which hour" — so for an
+ * utterance that names the meal but not the time, the model guessed. Measured
+ * against the real API, eight runs each: "had dinner - dal, rice and some
+ * bhindi" landed at `now` (09:48 on a Sunday morning) in 7/8, and a
+ * back-dated breakfast landed at midnight in 1/8.
+ *
+ * The hour is load-bearing, which is why this is worth prompt space. It picks
+ * the local day the food counts on, and it decides whether the item falls
+ * before or after a correction stated that day — and everything before a
+ * waterline is subsumed by it. A dinner placed at lunchtime is not a slightly
+ * wrong chart, it is a meal that silently does not count.
+ *
+ * Sits last in the prompt because that is where it was measured; with it,
+ * every case above reads as an ordinary meal hour. This is judgment given to
+ * the model in prose, not a table of meal times in code — there is no clock
+ * rule anywhere in this codebase and there must never be one (fence 2).
+ */
+const SPAN_RULES =
+  "span: a meal's span is when it was EATEN. When the utterance names the meal but not " +
+  'the clock time, place it at the ordinary local time for that meal in tz — breakfast ' +
+  'morning, lunch midday, dinner evening — and set approx true. Never place a dinner ' +
+  'before the afternoon. The placement is load-bearing: it decides the day the food ' +
+  'counts on and whether it falls before or after a correction stated that day.';
+
 const SYSTEM_PROMPT = `You classify one captured utterance (pulse) for Meridian, the way a time-use \
 survey's trained coders classify a diary entry — judgment over the utterance and the context you \
 are given, never string matching. Respond with strict JSON only, matching exactly this shape — no \
@@ -307,7 +345,9 @@ Rules given to the model: ${RULES}
 
 ${NUTRITION_RULES}
 
-${CORRECTION_RULES}`;
+${CORRECTION_RULES}
+
+${SPAN_RULES}`;
 
 /**
  * One Anthropic call: classify `text` against `context`. Returns the coding,
