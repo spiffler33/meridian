@@ -1234,7 +1234,7 @@ describe('pulsesToBackfill', () => {
       { id: 'uncoded', text: 'uncoded', at },
     ];
 
-    expect(pulsesToBackfill(rows).map(target => target.id)).toEqual(['no-rev', 'old-rev']);
+    expect(pulsesToBackfill(rows).map(target => target.id)).toEqual(['old-rev', 'no-rev']);
     expect(pulsesToCode(rows).map(target => target.id)).toEqual(['uncoded']);
   });
 
@@ -1248,10 +1248,16 @@ describe('pulsesToBackfill', () => {
     expect(pulsesToBackfill([row('broken', 'not-a-date')])).toEqual([]);
   });
 
-  it('returns oldest first, so a stopped run has done the oldest half', () => {
+  it('returns NEWEST first, so what the owner can see is fixed first', () => {
+    // Reversed when the catch-up stopped being a button and became automatic.
+    // Oldest-first made sense while the owner pressed and watched. Running by
+    // itself a few per foreground, the order decides when anything visibly
+    // changes — and measured: rev 4 fixed a Saturday dinner, the catch-up spent
+    // its first passes on pulses from days earlier, and the owner reloaded over
+    // and over and reported "nothing is changing".
     const first = new Date(epochMs + 1000).toISOString();
     const second = new Date(epochMs + 2000).toISOString();
-    expect(pulsesToBackfill([row('b', second), row('a', first)]).map(r => r.id)).toEqual(['a', 'b']);
+    expect(pulsesToBackfill([row('a', first), row('b', second)]).map(r => r.id)).toEqual(['b', 'a']);
   });
 });
 
@@ -1330,7 +1336,9 @@ describe('backfillPulseCoding', () => {
     vi.setSystemTime(new Date(NOW.getTime() + 1000));
     const fine = await codedAtOldRev('will succeed');
 
-    // Oldest first, so `doomed` is attempted first.
+    // Newest first, so `fine` (captured a second later) is attempted first and
+    // `doomed` takes the one rejection.
+    codePulseMock.mockResolvedValueOnce(WITH_FOOD);
     codePulseMock.mockRejectedValueOnce(new Error('offline'));
     codePulseMock.mockResolvedValue(WITH_FOOD);
 

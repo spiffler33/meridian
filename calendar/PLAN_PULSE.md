@@ -1565,3 +1565,22 @@ The owner still has to be able to see whether anything is owed. It now reads
 *"27 being brought up to date — happens on its own, a few at a time"* or *"every pulse is coded,
 and current."* — a read of the local store, with nothing to press. Visibility is not fuss;
 being asked to act is.
+
+### 2026-08-30 — newest first: the queue was fixing what nobody could see
+
+*"i dont see count, nor do i see saturday 1749 .. i have reopned multiple times on phone and
+cmd+r on laptop - nothing is changing"*. It was changing. Verified from the journal: nine
+pulses had already been re-coded to rev 4 at 04:46–04:48Z, and the live bundle contained every
+line of the fix. The owner was right anyway, because none of the nine were rows they could see.
+
+**`pulsesToBackfill` sorted oldest first, so the Saturday dinner was 27th of 27.** Oldest-first
+was correct while this was a button the owner pressed and watched — a stopped run had finished
+the oldest half, and pressing again resumed where the eye left off. The moment the catch-up
+became automatic and paced (a few per foreground, floored at five minutes), that same order
+decided **when the owner sees anything change at all** — and what an owner looks at is this
+week. Reversed to newest first.
+
+**The lesson repeats, and it is worth naming.** Every failure this week was a fix that was
+correct and unreachable: a coding retried only on cold launch, a build the phone would not
+load, and now a queue working backwards from the wrong end. Being right is not the same as
+landing, and the only test that counts is the owner seeing the number change.

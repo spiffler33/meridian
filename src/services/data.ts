@@ -1192,6 +1192,16 @@ export function pulsesToCode(rows: readonly PulseRow[]): PulseRow[] {
  * to `pulsesToCode`, and the ambient sweep — which now also runs on foreground,
  * not only on open — reaches it without the owner paying attention to anything.
  *
+ * **Newest first**, which is a reversal. Oldest-first was right while this was
+ * a button the owner pressed and watched: a stopped run had finished the oldest
+ * half, and pressing again resumed where the eye left off. Now that the
+ * catch-up runs by itself, a few per foreground, the order decides WHEN the
+ * owner sees anything change — and what they are looking at is this week.
+ * Measured: rev 4 fixed a Saturday dinner placed at the wrong hour, the
+ * catch-up got through nine pulses from days earlier, and the owner reloaded
+ * repeatedly and reported "nothing is changing", because the one row they
+ * could see was last in a queue of twenty-seven.
+ *
  * Oldest first, so a run that is stopped halfway has done the oldest half and
  * a rerun picks up where the eye left off. A row whose `at` cannot be read as
  * an instant is skipped for the reason the sweep skips it: there is no moment
@@ -1200,7 +1210,7 @@ export function pulsesToCode(rows: readonly PulseRow[]): PulseRow[] {
 export function pulsesToBackfill(rows: readonly PulseRow[]): PulseRow[] {
   return rows
     .filter((row) => inBackfillScope(row) && !isUncoded(row) && (row.coderRev ?? 0) < CODER_REV)
-    .sort(compareOldestFirst);
+    .sort((a, b) => compareOldestFirst(b, a));
 }
 
 /** One button's worth of work: how many pulses, and roughly what they would cost. */
